@@ -79,7 +79,7 @@ ENV_FILE=/absolute/path/.env ./update.sh origin/main задає інший фа�
 ~~~bash
 ./service.sh ps
 ./service.sh logs --tail=100 web nginx db
-curl --fail http://127.0.0.1:8080/healthz/
+curl --fail http://127.0.0.1:8085/healthz/
 ~~~
 
 service.sh автоматично враховує .release-image.yaml. Для ручних Compose-команд після update/restore додавайте -f compose.yaml -f .release-image.yaml, якщо цей файл існує.

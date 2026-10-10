@@ -44,6 +44,17 @@
         <p class="integration-url">{{ connection.url }}</p>
         <p class="text-muted">Останнє отримання: {{ connection.last_pulled_at|date:'d.m.Y H:i'|default:'ще не було' }}. {% if connection.api_key %}Ключ збережено.{% endif %}</p>
         <a href="?edit={{ connection.pk }}#connectionEditor">Змінити налаштування</a>
+        {% if connection.contract_version == 2 %}
+        <details><summary>Явне зіставлення учнів для API v2</summary>
+          <p>Виберіть учня журналу та введіть його ID на сайті джерела. Однаковий ПІБ не є підставою для об’єднання.</p>
+          {% for mapping in connection.student_mappings.all %}<p>ID {{ mapping.external_id }} → {{ mapping.student.get_full_name_ukr }} (ID журналу {{ mapping.student_id }})</p>{% endfor %}
+          <form method="post">{% csrf_token %}<input type="hidden" name="action" value="student_mapping"><input type="hidden" name="mapping_connection_id" value="{{ connection.pk }}">
+            <p><label>ID учня на сайті джерела <input class="form-control" name="external_student_id" maxlength="100" required></label></p>
+            <p><label>Учень журналу <select class="form-control" name="student_id" required>{% for student in mapping_students %}<option value="{{ student.pk }}">{{ student.get_full_name_ukr }} · ID {{ student.pk }}</option>{% endfor %}</select></label></p>
+            <button class="btn btn-outline-primary">Зберегти зіставлення</button>
+          </form>
+        </details>
+        {% endif %}
         {% if connection.enabled %}<form method="post" action="{% url 'portal:pull_external_grades' journal.id connection.pk %}" class="integration-pull-form">{% csrf_token %}{{ pull_form.as_p }}<button class="btn btn-primary">Отримати оцінки</button></form>{% endif %}
       </article>
     {% empty %}<p>Підключень поки немає.</p>{% endfor %}

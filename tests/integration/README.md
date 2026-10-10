@@ -1,0 +1,10 @@
+# Три образи, реальний HTTP і окремий PostgreSQL
+
+Потрібні локально зібрані version-tagged образи з INTEGRATION.md та Docker Compose. Це окремий проєкт `school-api-checks`, без робочих `.env`, томів чи БД. Дані вигадані, PostgreSQL у tmpfs. Порти 19000/19080/19085 слухають лише 127.0.0.1; перевірте, що вони вільні.
+
+```bash
+docker compose -f tests/integration/compose.yaml up -d --wait
+python3 tests/integration/run.py
+```
+
+Скрипт ініціалізує фікстури один раз та перевіряє списки, конфлікти, offline/retry, кнопки, CSRF/права, шкали, ретейки, пагінацію та restart вебконтейнерів. Повторний запуск потребує свіжих тестових DB-контейнерів. Після перевірки `docker compose -f tests/integration/compose.yaml down` прибере лише цей тестовий проєкт, без `-v` і без глобального очищення. Перезапуск DB-контейнера стирає лише його тестовий tmpfs.

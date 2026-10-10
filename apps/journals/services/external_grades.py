@@ -50,6 +50,9 @@ def validate_api_url(url, resolve=False):
 
 
 def fetch_grade_payload(connection, date_from, date_to):
+    if connection.contract_version == 2:
+        from .school_api import fetch_v2_grades
+        return fetch_v2_grades(connection, date_from, date_to)
     if not connection.enabled:
         raise ExternalAPIError('Підключення вимкнене.')
     try:
@@ -100,28 +103,36 @@ def import_grade_records(connection, rows, user, date_from, date_to):
         identifier = str(getattr(student, connection.student_identifier) or '')
         if identifier:
             students.setdefault(identifier, []).append(student)
-    counts = {'applied': 0, 'pending': 0, 'conflicts': 0, 'unchanged': 0, 'errors': 0}
+    counts = {'applied': 0, 'added': 0, 'updated': 0, 'pending': 0, 'conflicts': 0, 'unchanged': 0, 'errors': 0}
     errors = []
     seen = set()
-    if not isinstance(rows, list) or len(rows) > 1000:
+    if not isinstance(rows, list) or len(rows) > (50000 if connection.contract_version == 2 else 1000):
         raise ExternalAPIError('Завелика або некоректна відповідь API.')
     for index, row in enumerate(rows, 1):
         try:
             if not isinstance(row, dict):
                 raise ValueError('Очікується об’єкт оцінки.')
-            raw_id = json_field(row, connection.id_key)
+            source_payload = {}
+            if connection.contract_version == 2:
+                from .school_api import normalize_v2_grade
+                row, source_payload = normalize_v2_grade(connection, row)
+            raw_id = row.get('id') if connection.contract_version == 2 else json_field(row, connection.id_key)
             if not isinstance(raw_id, (str, int)) or isinstance(raw_id, bool) or not str(raw_id).strip() or len(str(raw_id)) > 200:
                 raise ValueError('Потрібен стабільний ID оцінки / роботи.')
             external_id = str(raw_id)
             if external_id in seen:
                 raise ValueError('Повторний ID оцінки в одній відповіді API.')
             seen.add(external_id)
-            candidates = students.get(str(json_field(row, connection.student_key)), [])
+            if connection.contract_version == 2:
+                candidates = [student for student in journal_students(journal)
+                    if student.pk == row['student_id']]
+            else:
+                candidates = students.get(str(json_field(row, connection.student_key)), [])
             if len(candidates) != 1:
                 raise ValueError('ID учня відсутній у журналі або не є унікальним.')
             student = candidates[0]
             try:
-                date_text = json_field(row, connection.date_key)
+                date_text = row.get('date') if connection.contract_version == 2 else json_field(row, connection.date_key)
                 if not isinstance(date_text, str) or len(date_text) != 10:
                     raise ValueError
                 date = dt.date.fromisoformat(date_text)
@@ -130,7 +141,7 @@ def import_grade_records(connection, rows, user, date_from, date_to):
             if not date_from <= date <= date_to or not journal.academic_year.start_date <= date <= journal.academic_year.end_date:
                 raise ValueError('Дата оцінки поза вибраним періодом / навчальним роком.')
             lessons = journal.lessons.filter(date=date).exclude(lesson_type__in=SUMMARY_TYPES)
-            number = json_field(row, connection.lesson_key)
+            number = row.get('lesson_number') if connection.contract_version == 2 else json_field(row, connection.lesson_key)
             if number is not None:
                 if isinstance(number, bool) or not str(number).isdigit() or int(number) < 1:
                     raise ValueError('Некоректний номер уроку на дату.')
@@ -138,15 +149,21 @@ def import_grade_records(connection, rows, user, date_from, date_to):
             if lessons.count() != 1:
                 raise ValueError('Не знайдено однозначний урок на дату. Створіть урок або надайте lesson_number.')
             lesson = lessons.first()
-            raw_value = json_field(row, connection.value_key)
+            raw_value = row.get('value') if connection.contract_version == 2 else json_field(row, connection.value_key)
             if isinstance(raw_value, bool) or not str(raw_value).isdigit() or not 1 <= int(raw_value) <= 12:
                 raise ValueError('Оцінка має бути цілим числом від 1 до 12.')
             value = str(int(raw_value))
-            is_ai = _boolean(row, connection.ai_key, True)
-            externally_approved = _boolean(row, connection.approved_key, False)
+            is_ai = _boolean(row, 'is_ai' if connection.contract_version == 2 else connection.ai_key, True)
+            externally_approved = _boolean(row, 'approved_by_teacher' if connection.contract_version == 2 else connection.approved_key, False)
             fingerprint = hashlib.sha256(json.dumps([student.pk, lesson.pk, value, is_ai, externally_approved]).encode()).hexdigest()
             record = ExternalGrade.objects.filter(connection=connection, external_id=external_id).first()
+            if record and source_payload:
+                from .school_api import check_revision
+                check_revision(record.source_payload, source_payload)
             if record and record.fingerprint == fingerprint:
+                if source_payload:
+                    record.source_payload = source_payload
+                    record.save(update_fields=['source_payload', 'updated_at'])
                 counts['unchanged'] += 1
                 continue
             grade = Grade.objects.filter(lesson=lesson, student=student).first()
@@ -156,7 +173,9 @@ def import_grade_records(connection, rows, user, date_from, date_to):
             if record and previous_cell != (lesson.pk, student.pk):
                 raise ValueError('API змінив учня або урок для існуючого ID. Надайте новий ID оцінки.')
             can_apply = not grade or (not grade.value and grade.is_synced_to_nz) or (
-                record and grade.import_record_id == record.pk and grade.value == previous_value and not grade.is_approved)
+                record and grade.import_record_id == record.pk and grade.value == previous_value and (
+                    not grade.is_approved or (connection.contract_version == 2 and record.reviewed_by_id is None
+                        and record.status == ExternalGrade.Status.APPLIED)))
             if attendance and attendance.status != Attendance.Status.PRESENT:
                 can_apply = False
             pending = is_ai and not externally_approved
@@ -166,7 +185,7 @@ def import_grade_records(connection, rows, user, date_from, date_to):
             record, _ = ExternalGrade.objects.update_or_create(connection=connection, external_id=external_id,
                 defaults={'student': student, 'lesson': lesson, 'value': value, 'is_ai': is_ai,
                     'externally_approved': externally_approved, 'status': status, 'fingerprint': fingerprint,
-                    'reviewed_by': None, 'reviewed_at': None})
+                    'reviewed_by': None, 'reviewed_at': None, 'source_payload': source_payload})
             if can_apply:
                 if not grade:
                     grade = Grade(lesson=lesson, student=student)
@@ -176,6 +195,7 @@ def import_grade_records(connection, rows, user, date_from, date_to):
                 grade.created_by = user
                 grade.is_synced_to_nz = False
                 grade.save()
+                counts['added' if previous_value is None else 'updated'] += 1
             counts['conflicts' if not can_apply else 'pending' if pending else 'applied'] += 1
         except (ValueError, TypeError, OverflowError) as error:
             counts['errors'] += 1

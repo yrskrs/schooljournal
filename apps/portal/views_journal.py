@@ -1,4 +1,5 @@
 import datetime
+import calendar
 from django.shortcuts import render, redirect, get_object_or_404
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
@@ -228,7 +229,19 @@ def journal_detail(request, journal_id):
         except ValueError:
             pass
 
+    integration_start = selected_semester.start_date if selected_semester else journal.academic_year.start_date
+    integration_end = selected_semester.end_date if selected_semester else journal.academic_year.end_date
+    if selected_month != 'all':
+        if '-' in selected_month:
+            year_number, month_number = map(int, selected_month.split('-'))
+        else:
+            month_number = int(selected_month)
+            year_number = journal.academic_year.start_date.year if month_number >= journal.academic_year.start_date.month else journal.academic_year.end_date.year
+        integration_start = max(integration_start, datetime.date(year_number, month_number, 1))
+        integration_end = min(integration_end, datetime.date(year_number, month_number, calendar.monthrange(year_number, month_number)[1]))
     context = {
+        'integration_date_from': integration_start.isoformat(),
+        'integration_date_to': integration_end.isoformat(),
         'journal': journal,
         'can_edit': can_edit,
         'show_withdrawn': show_withdrawn,
@@ -366,6 +379,10 @@ def update_grade(request, journal_id):
     old_grade_val = grade.value if grade else ""
     old_att_status = att.status if att else Attendance.Status.PRESENT
 
+    if grade and grade.import_record_id:
+        grade.import_record = None
+        grade.save(update_fields=['import_record'])
+
     if is_attendance:
         new_status = att_mapping[clean_val]
         if att:
@@ -394,6 +411,10 @@ def update_grade(request, journal_id):
             )
 
     elif is_grade:
+        if grade and grade.import_record_id:
+            # An explicit manual edit owns the cell even if its value is unchanged.
+            grade.import_record = None
+            grade.save(update_fields=['import_record'])
         if grade:
             if grade.value != clean_val:
                 grade.value = clean_val

@@ -1,3 +1,4 @@
+from school_sync.django_backend import LocalRosterMixin
 from django.db import models
 from django.core.exceptions import ValidationError
 from django.core.validators import MinValueValidator, MaxValueValidator
@@ -82,7 +83,8 @@ class Subject(models.Model):
         return self.name
 
 
-class StudentClass(models.Model):
+class StudentClass(LocalRosterMixin, models.Model):
+    integration_active = models.BooleanField(default=True)
     school = models.ForeignKey(
         School,
         on_delete=models.CASCADE,
@@ -117,7 +119,7 @@ class StudentClass(models.Model):
         return f"{self.name} ({self.academic_year.name})"
 
 
-class Student(models.Model):
+class Student(LocalRosterMixin, models.Model):
     class Status(models.TextChoices):
         ACTIVE = 'ACTIVE', 'Навчається'
         TRANSFERRED = 'TRANSFERRED', 'Переведено'
@@ -176,7 +178,7 @@ class Student(models.Model):
         return f"{self.get_full_name_ukr()} [{self.internal_id or 'без ID'}]"
 
 
-class ClassEnrollment(models.Model):
+class ClassEnrollment(LocalRosterMixin, models.Model):
     """
     Зберігає історію зарахування та перебування учня в конкретному класі.
     Забезпечує збереження історичного журналу при переведенні чи вибутті.

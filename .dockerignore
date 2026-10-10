@@ -35,3 +35,12 @@ staticfiles/
 .ssh/
 .maintenance.lock
 .release-image.yaml
+
+.env*
+!.env.example
+*.dump
+*.tar.gz
+compose.override.yaml
+.release-image.yaml
+.local-audits/
+test_media*/

@@ -581,4 +581,4 @@ class NZSyncLog(models.Model):
 
 
 
-from .integration_models import StudentAPIGrant, GradeAPIConnection, ExternalGrade, GradePullLog  # noqa: E402,F401
+from .integration_models import StudentAPIGrant, GradeAPIConnection, GradeStudentMapping, ExternalGrade, GradePullLog, RosterReplica, RosterState  # noqa: E402,F401

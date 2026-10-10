@@ -24,7 +24,7 @@ class GradeAPIConnectionForm(forms.ModelForm):
 
     class Meta:
         model = GradeAPIConnection
-        fields = ['name', 'url', 'enabled', 'api_key', 'student_identifier', 'records_key', 'id_key',
+        fields = ['name', 'source', 'contract_version', 'source_class_id', 'source_subject_id', 'url', 'enabled', 'api_key', 'student_identifier', 'records_key', 'id_key',
             'student_key', 'date_key', 'value_key', 'ai_key', 'approved_key', 'lesson_key']
         widgets = {'api_key': forms.PasswordInput(render_value=False, attrs={'autocomplete': 'new-password'})}
 
@@ -46,6 +46,12 @@ class GradeAPIConnectionForm(forms.ModelForm):
 
     def clean(self):
         data = super().clean()
+        if data.get('contract_version') == 2:
+            if data.get('source') not in ('schooltest', 'schoolwork'):
+                self.add_error('source', 'Оберіть сайт тестування або завдань для API v2.')
+            for key in ('source_class_id', 'source_subject_id'):
+                if not data.get(key):
+                    self.add_error(key, 'Для API v2 потрібне явне зіставлення класу та предмета.')
         for key in ('records_key', 'id_key', 'student_key', 'date_key', 'value_key', 'ai_key', 'approved_key', 'lesson_key'):
             value = data.get(key, '')
             if value and not re.fullmatch(r'[A-Za-z_][A-Za-z_0-9]*(?:\.[A-Za-z_][A-Za-z_0-9]*)*', value):

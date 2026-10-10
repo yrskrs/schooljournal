@@ -3,6 +3,16 @@ from django.conf import settings
 from django.db import models
 
 
+class RosterReplica(models.Model):
+    ref = models.CharField(max_length=100, primary_key=True)
+    data = models.JSONField(default=dict)
+
+
+class RosterState(models.Model):
+    id = models.PositiveSmallIntegerField(primary_key=True, default=1)
+    data = models.JSONField(default=dict)
+
+
 def default_student_fields():
     return ['id', 'name']
 
@@ -17,6 +27,11 @@ class StudentAPIGrant(models.Model):
 
 
 class GradeAPIConnection(models.Model):
+    source = models.CharField(max_length=16, default='generic', choices=[
+        ('generic', 'Інший API'), ('schooltest', 'Сайт тестування'), ('schoolwork', 'Сайт завдань')])
+    contract_version = models.PositiveSmallIntegerField(default=1, choices=[(1, 'Чинний API v1'), (2, 'Спільний контракт v2')])
+    source_class_id = models.CharField(max_length=100, blank=True, verbose_name='ID класу на сайті джерела')
+    source_subject_id = models.CharField(max_length=100, blank=True, verbose_name='ID предмета на сайті джерела')
     journal = models.ForeignKey('journals.Journal', on_delete=models.CASCADE, related_name='grade_apis')
     name = models.CharField(max_length=100, verbose_name='Назва сервера робіт')
     url = models.URLField(max_length=500, verbose_name='Адреса API оцінок')
@@ -40,6 +55,18 @@ class GradeAPIConnection(models.Model):
         return self.name
 
 
+class GradeStudentMapping(models.Model):
+    connection = models.ForeignKey(GradeAPIConnection, on_delete=models.CASCADE, related_name='student_mappings')
+    external_id = models.CharField(max_length=100)
+    student = models.ForeignKey('curriculum.Student', on_delete=models.PROTECT)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=['connection', 'external_id'], name='grade_mapping_external_unique'),
+            models.UniqueConstraint(fields=['connection', 'student'], name='grade_mapping_student_unique'),
+        ]
+
+
 class ExternalGrade(models.Model):
     class Status(models.TextChoices):
         PENDING = 'PENDING', 'Очікує схвалення'
@@ -56,6 +83,7 @@ class ExternalGrade(models.Model):
     externally_approved = models.BooleanField(default=False)
     status = models.CharField(max_length=15, choices=Status.choices, default=Status.PENDING)
     fingerprint = models.CharField(max_length=64)
+    source_payload = models.JSONField(default=dict, blank=True)
     reviewed_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True)
     reviewed_at = models.DateTimeField(null=True, blank=True)
     updated_at = models.DateTimeField(auto_now=True)

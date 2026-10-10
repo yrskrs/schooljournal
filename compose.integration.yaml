@@ -1,0 +1,11 @@
+# Optional shared bridge; private database networks stay isolated.
+services:
+  web:
+    networks:
+      journal_net: {}
+      integration:
+        aliases: [schooljournal-api]
+networks:
+  integration:
+    external: true
+    name: ${INTEGRATION_NETWORK:-school-integration}

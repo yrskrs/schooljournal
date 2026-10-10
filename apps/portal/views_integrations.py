@@ -4,7 +4,7 @@ import secrets
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.core.exceptions import PermissionDenied
-from django.db import transaction
+from django.db import transaction, IntegrityError
 from django.http import JsonResponse, HttpResponseBadRequest
 from django.shortcuts import render, redirect, get_object_or_404
 from django.urls import reverse
@@ -14,7 +14,7 @@ from django.views.decorators.debug import sensitive_post_parameters
 from django.views.decorators.http import require_http_methods, require_POST, require_GET
 
 from apps.accounts.personal import ensure_personal_account
-from apps.journals.models import Journal, Grade, Attendance, StudentAPIGrant, GradeAPIConnection, ExternalGrade, AuditLog
+from apps.journals.models import Journal, Grade, Attendance, StudentAPIGrant, GradeAPIConnection, GradeStudentMapping, ExternalGrade, AuditLog
 from apps.journals.services.assessment import journal_students
 from apps.journals.services.external_grades import fetch_grade_payload, import_grade_records, review_external_grade, ExternalAPIError
 from apps.portal.forms_integrations import StudentAPIForm, GradeAPIConnectionForm, PullGradesForm, LocalProfileLinkForm, STUDENT_FIELDS
@@ -107,6 +107,28 @@ def journal_integrations(request, journal_id):
                         target_model='GradeAPIConnection', target_id=str(connection.pk), description='Збережено підключення API оцінок.')
                     messages.success(request, 'Підключення API оцінок збережено.')
                     return redirect(destination)
+            elif action == 'student_mapping':
+                connection = get_object_or_404(connections, pk=request.POST.get('mapping_connection_id') if
+                    str(request.POST.get('mapping_connection_id', '')).isdigit() else 0)
+                external_id = request.POST.get('external_student_id', '').strip()
+                student = get_object_or_404(journal_students(journal), pk=request.POST.get('student_id') if
+                    str(request.POST.get('student_id', '')).isdigit() else 0)
+                if not external_id or len(external_id) > 100:
+                    return HttpResponseBadRequest('Потрібен ID учня на сайті джерела (до 100 символів).')
+                existing = connection.student_mappings.filter(external_id=external_id).first()
+                if existing and existing.student_id != student.pk and connection.records.filter(student=existing.student).exists():
+                    messages.error(request, 'Для учня вже імпортовано результати. Переприв’язування може змінити їхню належність і заборонене.')
+                else:
+                    try:
+                        with transaction.atomic():
+                            GradeStudentMapping.objects.update_or_create(connection=connection, external_id=external_id,
+                                defaults={'student': student})
+                        AuditLog.objects.create(school=journal.school, user=request.user, action=AuditLog.Action.UPDATE,
+                            target_model='GradeStudentMapping', target_id=str(connection.pk), description='Явно зіставлено ID учня зовнішнього API.')
+                        messages.success(request, 'ID учня зіставлено. Оцінки ще не імпортовано.')
+                    except IntegrityError:
+                        messages.error(request, 'Цей учень уже зіставлений з іншим ID цього підключення.')
+                return redirect(destination)
             elif action == 'link_profile':
                 if not can_link:
                     raise PermissionDenied('Прив’язку змінює власник особистого акаунта nz.ua.')
@@ -137,6 +159,7 @@ def journal_integrations(request, journal_id):
     response = render(request, 'portal/journal/integrations.html', {
         'journal': journal, 'grant': grant, 'api_form': api_form, 'connections': connections,
         'connection_form': connection_form, 'editing_connection': instance, 'link_form': link_form,
+        'mapping_students': journal_students(journal),
         'can_link': can_link, 'can_unlink': can_unlink,
         'can_edit': has_journal_access(request.user, journal, write=True),
         'api_url': request.build_absolute_uri(reverse('portal:student_list_api', kwargs={'journal_id': journal.pk})),
@@ -162,9 +185,37 @@ def pull_external_grades(request, journal_id, connection_id):
             rows = fetch_grade_payload(connection, start, end)
             log = import_grade_records(connection, rows, request.user, start, end)
             counts = log.counts
-            messages.success(request, f"Додано: {counts['applied']}; очікують схвалення: {counts['pending']}; конфлікти: {counts['conflicts']}; без змін: {counts['unchanged']}; помилки: {counts['errors']}.")
+            messages.success(request, f"Додано: {counts['added']}; оновлено: {counts['updated']}; очікують схвалення: {counts['pending']}; конфлікти: {counts['conflicts']}; без змін: {counts['unchanged']}; помилки: {counts['errors']}.")
         except ExternalAPIError as error:
             messages.error(request, str(error))
+    return redirect('portal:external_grade_review', journal_id=journal.pk)
+
+
+@login_required
+@require_POST
+def pull_source_grades(request, journal_id, source):
+    journal = _get_journal_or_403(request.user, journal_id, write=True)
+    if source not in ('schooltest', 'schoolwork'):
+        return HttpResponseBadRequest('Невідоме джерело.')
+    form = PullGradesForm(request.POST)
+    if not form.is_valid():
+        messages.error(request, 'Оберіть коректний період синхронізації.')
+        return redirect('portal:journal_detail', journal_id=journal.pk)
+    start, end = form.cleaned_data['date_from'], form.cleaned_data['date_to']
+    if not journal.academic_year.start_date <= start <= end <= journal.academic_year.end_date:
+        messages.error(request, 'Період має бути в межах навчального року цього журналу.')
+        return redirect('portal:journal_detail', journal_id=journal.pk)
+    connections = journal.grade_apis.filter(source=source, enabled=True)
+    if not connections.exists():
+        messages.error(request, 'Додайте й увімкніть відповідне підключення в «Профілі та API».')
+    for connection in connections:
+        try:
+            rows = fetch_grade_payload(connection, start, end)
+            log = import_grade_records(connection, rows, request.user, start, end)
+            counts = log.counts
+            messages.success(request, f"{connection.name}: додано {counts['added']}, оновлено {counts['updated']}, без змін {counts['unchanged']}, конфлікти {counts['conflicts']}, помилки {counts['errors']}.")
+        except ExternalAPIError as error:
+            messages.error(request, f'{connection.name}: {error}')
     return redirect('portal:external_grade_review', journal_id=journal.pk)
 
 

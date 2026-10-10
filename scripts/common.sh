@@ -13,6 +13,7 @@ docker compose version >/dev/null
 dc() {
     local -a options=(--env-file "$ENV_FILE" -f "$JOURNAL_ROOT/compose.yaml")
     [[ ! -f "$JOURNAL_ROOT/.release-image.yaml" ]] || options+=(-f "$JOURNAL_ROOT/.release-image.yaml")
+    [[ ! -f "$JOURNAL_ROOT/compose.override.yaml" ]] || options+=(-f "$JOURNAL_ROOT/compose.override.yaml")
     docker compose "${options[@]}" "$@"
 }
 lock_maintenance() {
@@ -25,5 +26,6 @@ lock_maintenance() {
 }
 healthy() {
     dc up -d --wait --wait-timeout "${HEALTH_WAIT_TIMEOUT:-180}" || return
+    python3 "$JOURNAL_ROOT/scripts/configure_integration_network.py" || return
     dc exec -T -e EXPECTED_VERSION="$(cat "$JOURNAL_ROOT/VERSION")" web python -c 'import json, os, urllib.request; from pathlib import Path; d=json.load(urllib.request.urlopen("http://localhost:8000/healthz/")); assert d["status"] == "ok" and d["version"] == Path("/app/VERSION").read_text().strip() == os.environ["EXPECTED_VERSION"]'
 }

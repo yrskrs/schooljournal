@@ -140,3 +140,12 @@ SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
 SESSION_COOKIE_SECURE = os.getenv('SESSION_COOKIE_SECURE', 'False').lower() in ('true', '1')
 CSRF_COOKIE_SECURE = os.getenv('CSRF_COOKIE_SECURE', 'False').lower() in ('true', '1')
 SECURE_SSL_REDIRECT = os.getenv('SECURE_SSL_REDIRECT', 'False').lower() in ('true', '1')
+
+# Server-only, optional peer-to-peer roster integration.
+import json as _roster_json
+ROSTER_BACKEND = 'apps.journals.services.roster_backend'
+ROSTER_SYNC_TOKEN = os.getenv("ROSTER_SYNC_TOKEN", "")
+ROSTER_PEERS = _roster_json.loads(os.getenv("ROSTER_PEERS", "[]"))
+ROSTER_SYNC_INTERVAL = int(os.getenv("ROSTER_SYNC_INTERVAL", "30"))
+ROSTER_SCHOOL_ID = int(os.getenv("ROSTER_SCHOOL_ID", "0"))
+ROSTER_YEAR_ID = int(os.getenv("ROSTER_YEAR_ID", "0"))

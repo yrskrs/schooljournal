@@ -24,7 +24,7 @@
   {% empty %}<div class="schedule-card"><p>Немає оцінок, що потребують рішення.</p></div>{% endfor %}
   {% if page.has_other_pages %}<p>{% if page.has_previous %}<a href="?page={{ page.previous_page_number }}{% if not for_review %}&amp;all=1{% endif %}">Попередні</a>{% endif %} · {{ page.number }} / {{ page.paginator.num_pages }} · {% if page.has_next %}<a href="?page={{ page.next_page_number }}{% if not for_review %}&amp;all=1{% endif %}">Наступні</a>{% endif %}</p>{% endif %}
   {% for log in pull_logs %}<details class="schedule-card"><summary>{{ log.connection.name }} — {{ log.created_at|date:'d.m.Y H:i' }}</summary>
-    <p>Додано: {{ log.counts.applied }} · попередні: {{ log.counts.pending }} · конфлікти: {{ log.counts.conflicts }} · без змін: {{ log.counts.unchanged }} · помилки: {{ log.counts.errors }}</p>
+    <p>Додано: {{ log.counts.added|default:0 }} · оновлено: {{ log.counts.updated|default:0 }} · попередні: {{ log.counts.pending }} · конфлікти: {{ log.counts.conflicts }} · без змін: {{ log.counts.unchanged }} · помилки: {{ log.counts.errors }}</p>
     {% for error in log.errors %}<p>Запис {{ error.row }}: {{ error.message }}</p>{% endfor %}
   </details>{% endfor %}
 </div>
