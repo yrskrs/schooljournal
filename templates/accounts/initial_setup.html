@@ -1,0 +1,27 @@
+{% extends 'base.html' %}
+{% block title %}Початкове налаштування | Шкільний журнал{% endblock %}
+{% block content %}
+<div class="registration-page card">
+  <h1>Створити суперадміністратора</h1>
+  <p>Вітаємо у шкільному журналі. Створіть обліковий запис адміністратора сервісу: він керуватиме всіма школами та матиме доступ до технічної панелі.</p>
+  <p>Ця форма доступна лише під час початкового налаштування. Після створення адміністратора відкриється його кабінет.</p>
+  {% if setup_unconfigured %}
+    <div class="alert alert-error" role="alert">Код початкового налаштування ще не задано.</div>
+    <p>На сервері виконайте <code>./setup.sh</code>, щоб додати код <code>INITIAL_SETUP_TOKEN</code> до файлу <code>.env</code>. Перезапустіть контейнер web командою <code>./service.sh up -d --force-recreate web</code> та оновіть цю сторінку. Код має містити щонайменше 32 символи.</p>
+  {% else %}
+    <form method="post">
+      {% csrf_token %}
+      {% if form.non_field_errors %}<div class="alert alert-error">{{ form.non_field_errors }}</div>{% endif %}
+      {% for field in form %}
+        <div class="form-group">
+          <label class="form-label" for="{{ field.id_for_label }}">{{ field.label }}{% if field.field.required %} *{% endif %}</label>
+          {{ field }}
+          {% if field.errors %}<div class="field-errors" role="alert">{{ field.errors }}</div>{% endif %}
+          {% if field.help_text %}<div class="form-help">{{ field.help_text|safe }}</div>{% endif %}
+        </div>
+      {% endfor %}
+      <button class="btn btn-primary" type="submit">Створити суперадміністратора</button>
+    </form>
+  {% endif %}
+</div>
+{% endblock %}

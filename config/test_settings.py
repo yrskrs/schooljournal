@@ -10,3 +10,5 @@ ALLOWED_HOSTS = ['testserver', 'localhost', '127.0.0.1']
 PASSWORD_HASHERS = ['django.contrib.auth.hashers.MD5PasswordHasher']
 MEDIA_ROOT = '/tmp/schooljournal-test-media'
 EMAIL_BACKEND = 'django.core.mail.backends.locmem.EmailBackend'
+INITIAL_SETUP_ENABLED = False
+INITIAL_SETUP_TOKEN = ''

@@ -10,6 +10,8 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 SECRET_KEY = os.getenv('SECRET_KEY', 'default-unsecure-key-change-in-production')
 DEBUG = os.getenv('DEBUG', 'False').lower() in ('true', '1', 't')
 SCHOOL_REGISTRATION_ENABLED = os.getenv('SCHOOL_REGISTRATION_ENABLED', 'True').lower() in ('true', '1', 't')
+INITIAL_SETUP_ENABLED = os.getenv('INITIAL_SETUP_ENABLED', 'True').lower() in ('true', '1', 't')
+INITIAL_SETUP_TOKEN = os.getenv('INITIAL_SETUP_TOKEN', '').strip()
 
 ALLOWED_HOSTS = [h.strip() for h in os.getenv('ALLOWED_HOSTS', 'localhost,127.0.0.1').split(',') if h.strip()]
 
@@ -40,6 +42,7 @@ MIDDLEWARE = [
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
+    'apps.accounts.middleware.InitialSetupMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
 ]

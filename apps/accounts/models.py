@@ -2,6 +2,14 @@ from django.db import models
 from django.contrib.auth.models import AbstractUser
 from apps.schools.models import School
 
+
+class InitialSetupState(models.Model):
+    """Persist completion even if the first administrator is later deleted."""
+
+    id = models.PositiveSmallIntegerField(primary_key=True, default=1, editable=False)
+    completed_at = models.DateTimeField(null=True, blank=True)
+
+
 class User(AbstractUser):
     class Role(models.TextChoices):
         SUPERADMIN = 'SUPERADMIN', 'Суперадміністратор'

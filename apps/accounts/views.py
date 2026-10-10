@@ -7,12 +7,14 @@ from django.contrib import messages
 from django.utils import timezone
 from django.utils.http import url_has_allowed_host_and_scheme
 from django.views.decorators.debug import sensitive_post_parameters
-from .forms import CustomLoginForm, SchoolRegistrationForm
+from .forms import CustomLoginForm, SchoolRegistrationForm, InitialSuperadminForm
 from django.conf import settings
 from django.db import transaction, IntegrityError
 from django.http import Http404
 from django.views.decorators.http import require_http_methods
-from .models import User
+from .models import User, InitialSetupState
+from .bootstrap import initial_setup_required, global_admin_exists
+from django.views.decorators.cache import never_cache
 from apps.schools.models import School
 from apps.journals.models import NZAccount
 from apps.journals.services.nz_service import NZService
@@ -20,6 +22,44 @@ from .nz_trust import COOKIE, trusted_account, remember_account
 from .personal import ensure_personal_account
 
 logger = logging.getLogger(__name__)
+
+
+@never_cache
+@sensitive_post_parameters('setup_token', 'password1', 'password2')
+@require_http_methods(['GET', 'POST'])
+def initial_setup(request):
+    if not initial_setup_required():
+        return redirect('login')
+    if len(settings.INITIAL_SETUP_TOKEN) < 32:
+        return render(request, 'accounts/initial_setup.html', {'setup_unconfigured': True}, status=503)
+
+    form = InitialSuperadminForm(request.POST if request.method == 'POST' else None)
+    if request.method == 'POST' and form.is_valid():
+        try:
+            with transaction.atomic():
+                state = InitialSetupState.objects.select_for_update().get(pk=1)
+                if state.completed_at or global_admin_exists():
+                    return redirect('login')
+                user = form.save(commit=False)
+                user.role = User.Role.SUPERADMIN
+                user.is_superuser = True
+                user.is_staff = True
+                user.is_active = True
+                user.school = None
+                user.save()
+                state.completed_at = timezone.now()
+                state.save(update_fields=['completed_at'])
+                from apps.journals.models import AuditLog
+                AuditLog.objects.create(user=user, action=AuditLog.Action.CREATE,
+                    target_model='User', target_id=str(user.pk),
+                    description='Суперадміністратора створено під час початкового налаштування через браузер.')
+        except IntegrityError:
+            form.add_error('username', 'Цей логін уже зайнято. Виберіть інший.')
+        else:
+            login(request, user)
+            messages.success(request, 'Суперадміністратора створено. Початкове налаштування завершено.')
+            return redirect('portal:superadmin_dashboard')
+    return render(request, 'accounts/initial_setup.html', {'form': form})
 
 
 @sensitive_post_parameters('password1', 'password2')
