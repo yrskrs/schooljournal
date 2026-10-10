@@ -16,7 +16,7 @@ services:
       retries: 12
     networks: [journal_net]
   web:
-    image: ${JOURNAL_IMAGE:-schooljournal-web:1.2.0}
+    image: ${JOURNAL_IMAGE:-schooljournal-web:1.2.1}
     build:
       context: .
       args:

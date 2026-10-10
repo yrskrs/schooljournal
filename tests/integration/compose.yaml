@@ -64,7 +64,7 @@ services:
     depends_on:
       work: {condition: service_healthy}
   journal:
-    image: schooljournal-web:1.2.0
+    image: schooljournal-web:1.2.1
     environment:
       SECRET_KEY: synthetic-journal-integration-secret
       ALLOWED_HOSTS: 'journal,localhost,127.0.0.1'

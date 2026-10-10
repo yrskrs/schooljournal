@@ -40,7 +40,7 @@ main() {
     trap cleanup_update EXIT
     local candidate="schooljournal-candidate:${target:0:12}"
     docker build --build-arg VCS_REF="$target" -t "$candidate" "$workdir"
-    docker run --rm --env-file "$ENV_FILE" -e SKIP_INIT=1 --entrypoint python "$candidate" manage.py check
+    dc config --format json | python3 "$JOURNAL_ROOT/scripts/check_candidate.py" "$candidate"
     # Закриваємо запис перед узгодженою резервною копією.
     dc stop nginx web
     if ! backup=$("$JOURNAL_ROOT/scripts/backup.sh" --quiesced); then
