@@ -85,3 +85,7 @@ ROSTER_SYNC_INTERVAL=30
 ## Перевірки
 
 Спільні сценарії протоколу: `python -m unittest school_sync.tests.test_protocol`. Тести працюють лише з вигаданими даними. Повний сценарій трьох образів, PostgreSQL, HTTP-кнопок, відсутності зв’язку та restart запускається в окремому Compose-проєкті `tests/integration/` у репозиторії schooljournal. Звіт фактично виконаних перевірок: `INTEGRATION_CHECKS.md`. Цей контракт не стверджує доступність зовнішніх хостів чи роботу неперевірених reverse proxy.
+
+## Дозволений хост внутрішнього API журналу
+
+У `.env` журналу включіть `web,schooljournal-api` до `ALLOWED_HOSTS` поряд із браузерною IP-адресою чи доменом. Django перевіряє Host також для серверних API-запитів: правильний ключ не усуває HTTP 400 від відсутнього API alias. Після зміни `.env` перестворіть web, налаштуйте унікальні aliases командою `python3 scripts/configure_integration_network.py` та перезапустіть nginx. CSRF_TRUSTED_ORIGINS задає браузерні адреси; ключі для API передаються лише між серверами.
