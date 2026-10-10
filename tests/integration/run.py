@@ -151,10 +151,14 @@ def main():
     until(lambda:'Конфлікт' in get('work','/teacher/roster-sync/').text,'concurrent native edits produce a visible manual conflict')
     page=get('work','/teacher/roster-sync/');soup=BeautifulSoup(page.text,'html.parser')
     for form in soup.select('form'):
+        action=form.select_one('input[name=action]')
+        if not action or action.get('value')!='resolve':continue
         ref=form.select_one('input[name=ref]')
         if ref and any(row['ref']==ref['value'] and row['kind']=='student' for row in snapshot('work')['records']):
             data={field['name']:field.get('value','') for field in form.select('input[name]') if field.get('type')!='checkbox'}
-            data['choice']='local';post('work','/teacher/roster-sync/',data);break
+            data['choice']='local';response=post('work','/teacher/roster-sync/',data)
+            assert response.status_code==200 and 'Рішення збережено.' in response.text
+            break
     else:raise AssertionError('No conflict decision form')
     until(lambda:len({next(row['payload']['first_name'] for row in snapshot(s)['records'] if row['kind']=='student' and row['payload']['last_name']=='Вигаданий' and row['payload']['first_name']!='Новий') for s in BASE})==1,'teacher conflict decision propagates to all replicas')
     dc('stop','journal','test')
