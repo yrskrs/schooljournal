@@ -74,11 +74,11 @@ schooltest5: початкові 16 перевірок основних сцен�
 
 Перед відкатом зупиніть запис, зробіть **нову** копію та додайте відповідний `rollback-image.yaml` останнім override до чинних Compose-файлів. Це вимикає peers, повертає попередній образ і зберігає томи, включно з новим томом загальних завантажень тестів. Повне відновлення старої БД потребує окремого рішення щодо накопичених даних. Не видаляйте томи й не застосовуйте зворотні міграції integration metadata. Обмеження попереднього коду щодо однакових ПІБ описано в INTEGRATION.md.
 
-Перевірено diff та шляхи публікації, відсутність фактичних ключів із серверних конфігурацій у доданих рядках. Секрети, робочі `.env`, override, бази, резервні копії й завантаження у Git не включені. Гілка кожного репозиторію: `feature/service-api-integration`; main не зливається, force push не використовується.
+Перевірено diff та шляхи публікації, відсутність фактичних ключів із серверних конфігурацій у доданих рядках. Секрети, робочі `.env`, override, бази, резервні копії й завантаження у Git не включені. Спочатку перевірені версії опубліковано у `feature/service-api-integration`. За окремою вказівкою користувача всі три версії перенесено в `main` відповідних репозиторіїв через fast-forward; історію збережено, force push не використовується. Після перевіреного коду додано лише документацію про публікацію.
 
-- [school_test](https://github.com/yrskrs/school_test/tree/feature/service-api-integration)
-- [schoolwork2](https://github.com/yrskrs/schoolwork2/tree/feature/service-api-integration)
-- [schooljournal](https://github.com/yrskrs/schooljournal/tree/feature/service-api-integration)
+- [school_test](https://github.com/yrskrs/school_test/tree/main)
+- [schoolwork2](https://github.com/yrskrs/schoolwork2/tree/main)
+- [schooljournal](https://github.com/yrskrs/schooljournal/tree/main)
 
 ## Межі перевірки
 
