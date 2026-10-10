@@ -11,6 +11,7 @@ x-db: &db
     interval: 2s
     retries: 30
 x-work-env: &work-env
+  JOURNAL_API_BASE_URL: 'http://work:8000'
   SECRET_KEY: synthetic-work-integration-secret-for-tests-only
   DEBUG: 'False'
   DATABASE_URL: postgresql://checks:synthetic-checks-only@workdb:5432/checks
@@ -29,11 +30,12 @@ services:
   workdb: *db
   journaldb: *db
   test:
-    image: schooltest5-app:1.3.1
+    image: schooltest5-app:1.4.0
     environment:
       SECRET_KEY: synthetic-test-integration-secret
       DATABASE_URL: postgresql://checks:synthetic-checks-only@testdb:5432/checks
       DEBUG: 'False'
+      JOURNAL_API_BASE_URL: 'http://test:8000'
       ROSTER_SYNC_TOKEN: synthetic-test-roster-token
       ROSTER_SYNC_INTERVAL: '2'
       ROSTER_PEERS: '[{"url":"http://work:8000/api/v2/roster-sync/","token":"synthetic-work-roster-token"},{"url":"http://journal:8000/api/v2/roster-sync/","token":"synthetic-journal-roster-token"}]'
@@ -45,7 +47,7 @@ services:
       interval: 2s
       retries: 30
   work:
-    image: schoolwork2-app:4.2.1
+    image: schoolwork2-app:4.3.0
     environment: *work-env
     depends_on:
       workdb: {condition: service_healthy}
@@ -56,13 +58,13 @@ services:
       retries: 30
       start_period: 20s
   worker:
-    image: schoolwork2-app:4.2.1
+    image: schoolwork2-app:4.3.0
     environment: *work-env
     command: [python, manage.py, process_ai_jobs]
     depends_on:
       work: {condition: service_healthy}
   journal:
-    image: schooljournal-web:1.1.1
+    image: schooljournal-web:1.2.0
     environment:
       SECRET_KEY: synthetic-journal-integration-secret
       ALLOWED_HOSTS: 'journal,localhost,127.0.0.1'

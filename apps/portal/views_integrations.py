@@ -207,7 +207,8 @@ def pull_source_grades(request, journal_id, source):
         return redirect('portal:journal_detail', journal_id=journal.pk)
     connections = journal.grade_apis.filter(source=source, enabled=True)
     if not connections.exists():
-        messages.error(request, 'Додайте й увімкніть відповідне підключення в «Профілі та API».')
+        messages.info(request, 'Спершу підключіть сайт: вставте його код підключення та виберіть клас і предмет за назвою.')
+        return redirect(reverse('portal:connect_source', kwargs={'journal_id': journal.pk}) + '?source=' + source)
     for connection in connections:
         try:
             rows = fetch_grade_payload(connection, start, end)

@@ -10,10 +10,16 @@ main() {
     git rev-parse --is-inside-work-tree >/dev/null 2>&1 || { echo "Deploy from a Git clone; this folder has no Git metadata." >&2; return 1; }
     [[ -z "$(git status --porcelain --untracked-files=normal)" ]] || { echo "Commit or stash local source changes before updating." >&2; return 1; }
     old_commit=$(git rev-parse HEAD)
-    git fetch --prune origin
+    python3 "$JOURNAL_ROOT/scripts/fetch_update.py"
     target=$(git rev-parse --verify "$ref^{commit}")
     git merge-base --is-ancestor "$old_commit" "$target" || { echo "Target is not a forward update. Use restore.sh for rollback." >&2; return 1; }
-    [[ "$old_commit" != "$target" ]] || { echo "Already at requested revision."; return 0; }
+    if [[ "$old_commit" == "$target" ]]; then
+        if dc exec -T -e EXPECTED_VERSION="$(cat "$JOURNAL_ROOT/VERSION")" web python -c 'import json, os, urllib.request; d=json.load(urllib.request.urlopen("http://localhost:8000/healthz/", timeout=10)); assert d["status"] == "ok" and d["version"] == os.environ["EXPECTED_VERSION"]'; then
+            echo "Already at requested revision; running version verified."
+            return 0
+        fi
+        echo "Git is current, but the running version needs deployment."
+    fi
     # Збірка в окремому worktree: робочий сервіс ще використовує попередній код.
     workdir=$(mktemp -d /tmp/schooljournal-build.XXXXXX)
     git worktree add --detach "$workdir" "$target"

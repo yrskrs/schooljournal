@@ -1,5 +1,6 @@
 from django.urls import path
 from . import views_integrations
+from . import views_connection_setup
 from school_sync import django_backend as roster_views
 from . import views_public
 from django.shortcuts import redirect
@@ -22,6 +23,7 @@ urlpatterns = [
     path('roster-sync/', roster_views.roster_ui, name='roster_sync'),
     path('api/v1/journals/<int:journal_id>/students/', views_integrations.student_list_api, name='student_list_api'),
     path('journal/<int:journal_id>/integrations/', views_integrations.journal_integrations, name='journal_integrations'),
+    path('journal/<int:journal_id>/connect/', views_connection_setup.connect_source, name='connect_source'),
     path('journal/<int:journal_id>/integrations/<int:connection_id>/pull/', views_integrations.pull_external_grades, name='pull_external_grades'),
     path('journal/<int:journal_id>/sync/<str:source>/', views_integrations.pull_source_grades, name='pull_source_grades'),
     path('journal/<int:journal_id>/external-grades/', views_integrations.external_grade_review, name='external_grade_review'),

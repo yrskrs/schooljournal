@@ -1,0 +1,32 @@
+{% extends 'base.html' %}
+{% block title %}Підключити тести та завдання | Журнал{% endblock %}
+{% block content %}
+<div class="schedule-page integration-page">
+  <div class="schedule-page-header"><div><h1>Підключити тести та завдання</h1><p>Журнал: {{ journal.student_class.name }} · {{ journal.subject.name }}</p></div><a class="btn btn-outline-primary" href="{% url 'portal:journal_detail' journal.pk %}">До журналу</a></div>
+  <p>Один раз підключіть сайт і підтвердьте учнів. Надалі оцінки отримуються двома кнопками у журналі.</p>
+  {% for item in connections %}<p><a href="?connection={{ item.pk }}">{{ item.get_source_display }}{% if item.enabled %} — підключено{% else %} — завершіть налаштування{% endif %}</a></p>{% endfor %}
+  {% if connection %}
+  <section class="schedule-card"><h2>1. Збережені назви: {{ connection.get_source_display }}</h2><p>Назви збережені у журналі. Останнє отримання: {{ connection.roster_checked_at|date:'d.m.Y H:i' }}. Під час недоступності сайту ці дані залишаються.</p>
+    <form method="post">{% csrf_token %}<input type="hidden" name="connection_id" value="{{ connection.pk }}"><button name="action" value="refresh" class="btn btn-outline-primary">Оновити назви класів та учнів</button></form>
+  </section>
+  <section class="schedule-card"><h2>2. Виберіть клас і предмет</h2><p>Ці результати надходитимуть до {{ journal.student_class.name }} · {{ journal.subject.name }}.</p>
+    {% if not connection.roster_cache.classes %}<p role="alert">На сайті ще немає доступних класів. У тестах виберіть клас і предмет для сесії; у завданнях призначте роботу класу. Потім оновіть назви тут.</p>{% endif %}
+    <form method="post">{% csrf_token %}<input type="hidden" name="connection_id" value="{{ connection.pk }}">{{ context_form.as_p }}<button name="action" value="context" class="btn btn-primary">Підтвердити клас і предмет</button></form>
+  </section>
+  {% if mapping_form %}<section class="schedule-card" id="students"><h2>3. Перевірте учнів</h2><p>Зліва — ім’я на сайті джерела, у списку — учень цього журналу. Однакові імена є лише підказкою: відповідність зберігається після вашого підтвердження. Для різних учнів з однаковими іменами виберіть записи вручну. Відсутнього учня можна явно додати як нового.</p>
+    <form method="post">{% csrf_token %}<input type="hidden" name="connection_id" value="{{ connection.pk }}">{{ mapping_form.non_field_errors }}{{ mapping_form.version }}
+      {% for field in mapping_form %}{% if field.name != 'version' and field.name != 'confirm' %}<p>{{ field.label_tag }} {{ field }} {{ field.errors }}</p>{% endif %}{% endfor %}
+      <p>{{ mapping_form.confirm }} {{ mapping_form.confirm.label_tag }} {{ mapping_form.confirm.errors }}</p>
+      <button name="action" value="students" class="btn btn-primary">Зберегти підключення</button>
+    </form>
+  </section>{% endif %}
+  <details class="schedule-card"><summary>Підключити інший сайт або змінити ключ</summary>
+  {% else %}<section class="schedule-card"><h2>1. Вставте дані із сайту</h2><p>У тестах відкрийте «Підключення до журналу», у завданнях — «Налаштування → API та журнал». Створіть ключ і скопіюйте код підключення сюди.</p>{% endif %}
+    <form method="post">{% csrf_token %}{{ setup_form.non_field_errors }}<p>{{ setup_form.connection_code.label_tag }} {{ setup_form.connection_code }} {{ setup_form.connection_code.errors }}</p>
+      <details {% if setup_form.errors %}open{% endif %}><summary>Або введіть адресу й ключ окремо</summary><p>{{ setup_form.source.label_tag }} {{ setup_form.source }} {{ setup_form.source.errors }}</p><p>{{ setup_form.site_url.label_tag }} {{ setup_form.site_url }} {{ setup_form.site_url.errors }}</p><p>{{ setup_form.api_key.label_tag }} {{ setup_form.api_key }} {{ setup_form.api_key.errors }}</p></details>
+      <p><button name="action" value="connect" class="btn btn-primary">Підключити й отримати назви</button></p>
+    </form>
+  {% if connection %}</details>{% else %}</section>{% endif %}
+  <p>Ця сторінка не імпортує оцінок. Відкрийте журнал і натисніть «Синхронізувати з тестами» або «Синхронізувати із завданнями» за потрібний період.</p>
+</div>
+{% endblock %}

@@ -25,7 +25,11 @@ lock_maintenance() {
     fi
 }
 healthy() {
-    dc up -d --wait --wait-timeout "${HEALTH_WAIT_TIMEOUT:-180}" || return
+    dc up -d --wait --wait-timeout "${HEALTH_WAIT_TIMEOUT:-180}" db web || return
     python3 "$JOURNAL_ROOT/scripts/configure_integration_network.py" || return
+    # nginx resolves web at startup; reload it after web obtains a new address.
+    dc up -d nginx || return
+    dc restart nginx || return
+    dc up -d --wait --wait-timeout "${HEALTH_WAIT_TIMEOUT:-180}" || return
     dc exec -T -e EXPECTED_VERSION="$(cat "$JOURNAL_ROOT/VERSION")" web python -c 'import json, os, urllib.request; from pathlib import Path; d=json.load(urllib.request.urlopen("http://localhost:8000/healthz/")); assert d["status"] == "ok" and d["version"] == Path("/app/VERSION").read_text().strip() == os.environ["EXPECTED_VERSION"]'
 }

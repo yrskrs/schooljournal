@@ -49,6 +49,8 @@ class GradeAPIConnection(models.Model):
     approved_key = models.CharField(max_length=80, default='approved_by_teacher', verbose_name='Схвалено вчителем')
     lesson_key = models.CharField(max_length=80, default='lesson_number', verbose_name='Номер уроку на дату')
     last_pulled_at = models.DateTimeField(null=True, blank=True)
+    roster_cache = models.JSONField(default=dict, db_default={}, blank=True)
+    roster_checked_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):

@@ -29,6 +29,7 @@
     <!-- Кнопки дій -->
     <div style="display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: center;">
       {% if can_edit %}
+        <a class="btn btn-outline-primary btn-sm" href="{% url 'portal:connect_source' journal.id %}">Підключити тести / завдання</a>
         <a class="btn btn-outline-primary btn-sm" href="{% url 'portal:journal_integrations' journal.id %}">Профілі та API</a>
         <a class="btn btn-outline-primary btn-sm" href="{% url 'portal:external_grade_review' journal.id %}">Оцінки з робіт{% if external_review_count %} ({{ external_review_count }}){% endif %}</a>
         <form method="post" action="{% url 'portal:pull_source_grades' journal.id 'schooltest' %}">{% csrf_token %}
@@ -39,7 +40,7 @@
           <input type="hidden" name="date_from" value="{{ integration_date_from }}"><input type="hidden" name="date_to" value="{{ integration_date_to }}">
           <button class="btn btn-outline-primary btn-sm">Синхронізувати із завданнями</button>
         </form>
-        <p class="text-muted" style="flex-basis:100%;font-size:.85rem">Тести — остаточні результати тестів; завдання — перевірені вчителем роботи. Період: {{ integration_date_from }} — {{ integration_date_to }}. Оцінки імпортуються лише після натискання; ручні оцінки збережено. Підключення та ID налаштовуються у «Профілі та API».</p>
+        <p class="text-muted" style="flex-basis:100%;font-size:.85rem">Тести — остаточні результати тестів; завдання — перевірені вчителем роботи. Період: {{ integration_date_from }} — {{ integration_date_to }}. Оцінки імпортуються лише після натискання; ручні оцінки збережено. Для першого підключення натисніть «Підключити тести / завдання»: адреса й ключ, вибір назв і підтвердження учнів.</p>
         <!-- Синхронізація з nz.ua (Нові знання) -->
         <div style="display: inline-flex; gap: 0.35rem; align-items: center; background: #f8fafc; padding: 0.2rem; border-radius: var(--radius-sm); border: 1px solid #cbd5e1;">
           {% if journal.nz_journal_id %}

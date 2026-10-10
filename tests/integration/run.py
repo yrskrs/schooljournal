@@ -97,6 +97,46 @@ def ready():
     return len(rows[0])==2 and rows[0]==rows[1]==rows[2]
 
 
+def simple_connections():
+    # Replace only synthetic preconfigured connections with the real teacher flow.
+    code('journal', 'from apps.journals.models import GradeAPIConnection;GradeAPIConnection.objects.all().delete()')
+    for service in ('test', 'work'):
+        path = '/teacher/integrations' if service == 'test' else '/teacher/settings/?tab=api'
+        page = get(service, path)
+        assert page.status_code == 200
+        if service == 'test':
+            soup = BeautifulSoup(page.text, 'html.parser')
+            response = post(service, path, {'action': 'simple_key', 'csrf': soup.select_one('input[name=csrf]')['value']})
+        else:
+            response = post(service, path, {'action': 'create_simple_journal_api_key'})
+        assert response.status_code == 200
+        field = BeautifulSoup(response.text, 'html.parser').select_one('#journal-connection-code')
+        assert field, 'Source did not provide copyable connection code'
+        connection_code = field.get_text()
+        journal_path = '/journal/1/connect/'
+        response = post('journal', journal_path, {'action': 'connect', 'connection_code': connection_code})
+        assert response.status_code == 200, response.text[:200]
+        soup = BeautifulSoup(response.text, 'html.parser')
+        form = next(form for form in soup.select('form') if form.select_one('button[value=context]'))
+        data = {field['name']: field.get('value', '') for field in form.select('input[name]')}
+        for name, label in [('source_class_id', '7-А'), ('source_subject_id', 'Вигаданий предмет')]:
+            choice = next(option for option in form.select('select[name=' + name + '] option') if option.get_text() == label)
+            data[name] = choice['value']
+        data['action'] = 'context'
+        response = post('journal', journal_path, data)
+        assert response.status_code == 200
+        form = next(form for form in BeautifulSoup(response.text, 'html.parser').select('form') if form.select_one('button[value=students]'))
+        data = {field['name']: field.get('value', '') for field in form.select('input[name]') if field.get('type') != 'checkbox'}
+        for field in form.select('select[name^=pupil_]'):
+            choice = next(option for option in field.select('option') if option.get_text() == 'Вигаданий Учень')
+            data[field['name']] = choice['value']
+        data.update(action='students', confirm='on')
+        assert post('journal', journal_path, data).status_code == 200
+        assert not grade_state()['grades'], 'Setup unexpectedly imported grades'
+        log(service + ' API created in its UI; journal copies code, chooses class/subject names and confirms pupils without numeric input')
+    assert int(code('journal', "from apps.journals.models import GradeAPIConnection;print(GradeAPIConnection.objects.filter(enabled=True).exclude(roster_cache={}).count())")) == 2
+
+
 def manual(value,date='2026-09-05',student=1):
     lesson=int(code('journal',f"from apps.journals.models import Lesson;print(Lesson.objects.get(journal_id=1,date='{date}').pk)"))
     response=post('journal','/journal/1/grade/update/',{'lesson_id':lesson,'student_id':student,'value':value})
@@ -109,6 +149,7 @@ def main():
         code(service,(ROOT/('seed_'+service+'.py')).read_text())
     for service in BASE:login(service)
     map_rows('work');map_rows('journal');until(ready,'three native rosters converge without name matching')
+    simple_connections()
     assert not grade_state()['grades'];time.sleep(3);assert not grade_state()['grades'];log('background roster exchange never imports marks')
     for service in BASE:
         assert requests.get(BASE[service]+'/api/v2/roster-sync/',timeout=10).status_code==401
@@ -137,6 +178,8 @@ def main():
     dc('stop','test')
     assert get('work','/api/students-autocomplete/?class_group_id=1').status_code==200
     assert get('journal','/journal/1/').status_code==200
+    connection = code('journal', "from apps.journals.models import GradeAPIConnection;print(GradeAPIConnection.objects.get(source='schooltest').pk)")
+    assert 'Клас на сайті джерела' in get('journal','/journal/1/connect/?connection=' + connection).text
     sync('schooltest');assert mark('2026-09-05')=='7'
     code('work',"from feed.models import Submission,Student;from django.utils import timezone;s=Submission.objects.get(pk=1);s.grade='10';s.graded_at=timezone.now();s.save();Student.objects.create(class_group_id=1,first_name='Новий',last_name='Вигаданий')")
     sync('schoolwork');assert mark('2026-10-09')=='10';log('tests offline: work and journal stay usable; work button still imports')
