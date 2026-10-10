@@ -243,6 +243,16 @@ def main():
     assert second['next_cursor'] is None and len(second['grades'])==2
     page=sync('schoolwork');assert grade_state()['imports']==503
     log('501 accumulated assignments are fetched over two actual HTTP pages; occupied cells stay conflicts')
+    code('test', "from app.database import SessionLocal;from app.models import Test,TestSession\nwith SessionLocal() as db:\n t=Test(teacher_id=1,title='Вигаданий старий тест',class_name='9-L',subject='Вигаданий предмет');db.add(t);db.flush();db.add(TestSession(test_id=t.id,access_code='LEGACY1'));db.commit()")
+    page = get('test', '/teacher/integrations')
+    token = BeautifulSoup(page.text, 'html.parser').select_one('input[name=csrf]')['value']
+    response = post('test', '/teacher/integrations', {'action': 'simple_key', 'csrf': token})
+    assert response.status_code == 200
+    assert not get('test', '/api/session-roster?code=LEGACY1').json()['required']
+    response = post('test', '/student/login', {'student_name': 'Вигаданий Новий', 'access_code': 'LEGACY1'})
+    assert response.status_code == 200 and '/student/instruction/' in response.url
+    assert code('test', "from app.database import SessionLocal;from app.models import StudentAttempt,TestSession\nwith SessionLocal() as db:\n s=db.query(TestSession).filter_by(access_code='LEGACY1').one();a=db.query(StudentAttempt).filter_by(session_id=s.id).one();print(s.roster_class_id is None and a.roster_student_id is None)") == 'True'
+    log('API creation preserves legacy pupil login with an empty roster; no pupil is merged by name')
     log('all isolated Docker integration scenarios completed')
 
 if __name__=='__main__':main()

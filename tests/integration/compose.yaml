@@ -30,7 +30,7 @@ services:
   workdb: *db
   journaldb: *db
   test:
-    image: schooltest5-app:1.4.0
+    image: schooltest5-app:1.4.1
     environment:
       SECRET_KEY: synthetic-test-integration-secret
       DATABASE_URL: postgresql://checks:synthetic-checks-only@testdb:5432/checks
