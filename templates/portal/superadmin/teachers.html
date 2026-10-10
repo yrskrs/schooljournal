@@ -1,0 +1,201 @@
+{% extends 'base.html' %}
+
+{% block title %}Керування вчителями | Шкільний журнал{% endblock %}
+
+{% block content %}
+<div class="card-header" style="border: none; padding: 0; margin-bottom: 1.5rem;">
+  <div>
+    <h1 style="font-size: 1.6rem; font-weight: 700; color: var(--primary-dark);">Вчителі та педагогічний склад</h1>
+    <p style="color: var(--text-muted); font-size: 0.9rem;">
+      Створення облікових записів вчителів, прив'язка до школи, скидання паролів та блокування.
+    </p>
+  </div>
+  <div>
+    <button class="btn btn-primary" onclick="openModal('createTeacherModal')">
+      + Зареєструвати вчителя
+    </button>
+  </div>
+</div>
+
+<div class="card" style="padding: 0; overflow: hidden;">
+  <table style="width: 100%; border-collapse: collapse; font-size: 0.9rem;">
+    <thead>
+      <tr style="background-color: var(--bg-alt); border-bottom: 2px solid var(--border); text-align: left;">
+        <th style="padding: 0.75rem 1rem;">ПІБ вчителя</th>
+        <th style="padding: 0.75rem 1rem;">Логін</th>
+        <th style="padding: 0.75rem 1rem;">Школа</th>
+        <th style="padding: 0.75rem 1rem;">Кваліфікація / Звання</th>
+        <th style="padding: 0.75rem 1rem;">Телефон</th>
+        <th style="padding: 0.75rem 1rem; text-align: center;">Статус</th>
+        <th style="padding: 0.75rem 1rem; text-align: right;">Дії</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for teacher in teachers %}
+        <tr style="border-bottom: 1px solid var(--border);">
+          <td style="padding: 0.75rem 1rem; font-weight: 600; color: var(--primary-dark);">
+            {{ teacher.get_full_name_ukr }}
+          </td>
+          <td style="padding: 0.75rem 1rem; font-family: monospace; color: var(--text-muted);">
+            {{ teacher.username }}
+          </td>
+          <td style="padding: 0.75rem 1rem;">
+            {{ teacher.school.short_name|default:teacher.school.name|default:"—" }}
+          </td>
+          <td style="padding: 0.75rem 1rem; font-size: 0.85rem; color: var(--text-muted);">
+            {{ teacher.teacher_profile.qualification|default:"—" }}
+            {% if teacher.teacher_profile.pedagogical_title %}
+              <div style="color: var(--primary); font-size: 0.8rem;">
+                {{ teacher.teacher_profile.pedagogical_title }}
+              </div>
+            {% endif %}
+          </td>
+          <td style="padding: 0.75rem 1rem;">{{ teacher.phone|default:"—" }}</td>
+          <td style="padding: 0.75rem 1rem; text-align: center;">
+            {% if teacher.is_active %}
+              <span class="user-role-pill" style="background-color: var(--success-bg); color: var(--success);">Активний</span>
+            {% else %}
+              <span class="user-role-pill" style="background-color: var(--danger-bg); color: var(--danger);">Заблоковано</span>
+            {% endif %}
+          </td>
+          <td style="padding: 0.75rem 1rem; text-align: right;">
+            <div style="display: inline-flex; gap: 0.4rem;">
+              <button class="btn btn-secondary btn-sm" onclick="openResetPasswordModal('{{ teacher.id }}', '{{ teacher.get_full_name_ukr|escapejs }}')">
+                Скинути пароль
+              </button>
+              <form method="post" style="display: inline;">
+                {% csrf_token %}
+                <input type="hidden" name="action" value="toggle_active">
+                <input type="hidden" name="teacher_id" value="{{ teacher.id }}">
+                <button type="submit" class="btn btn-secondary btn-sm">
+                  {% if teacher.is_active %}Блокувати{% else %}Розблокувати{% endif %}
+                </button>
+              </form>
+            </div>
+          </td>
+        </tr>
+      {% empty %}
+        <tr>
+          <td colspan="7" style="padding: 2rem; text-align: center; color: var(--text-muted);">
+            Вчителів ще не зареєстровано.
+          </td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<!-- Модальне вікно створення вчителя -->
+<div id="createTeacherModal" class="modal-overlay">
+  <div class="modal-card">
+    <div class="modal-header">
+      <h3 class="modal-title">Реєстрація нового вчителя</h3>
+      <button class="modal-close" onclick="closeModal('createTeacherModal')">&times;</button>
+    </div>
+    <form method="post">
+      {% csrf_token %}
+      <input type="hidden" name="action" value="create">
+
+      <div class="form-group">
+        <label class="form-label">Заклад освіти (Школа) *</label>
+        <select name="school_id" class="form-select" required>
+          <option value="">Оберіть школу...</option>
+          {% for s in schools %}
+            <option value="{{ s.id }}">{{ s.name }}</option>
+          {% endfor %}
+        </select>
+      </div>
+
+      <div class="form-row">
+        <div class="form-col form-group">
+          <label class="form-label">Прізвище *</label>
+          <input type="text" name="last_name" class="form-control" required placeholder="Шевченко">
+        </div>
+        <div class="form-col form-group">
+          <label class="form-label">Ім'я *</label>
+          <input type="text" name="first_name" class="form-control" required placeholder="Оксана">
+        </div>
+        <div class="form-col form-group">
+          <label class="form-label">По батькові</label>
+          <input type="text" name="patronymic" class="form-control" placeholder="Іванівна">
+        </div>
+      </div>
+
+      <div class="form-row">
+        <div class="form-col form-group">
+          <label class="form-label">Логін (username) *</label>
+          <input type="text" name="username" class="form-control" required placeholder="shevchenko.o">
+        </div>
+        <div class="form-col form-group">
+          <label class="form-label">Пароль *</label>
+          <input type="password" name="password" class="form-control" required placeholder="Мінімум 8 символів">
+        </div>
+      </div>
+
+      <div class="form-row">
+        <div class="form-col form-group">
+          <label class="form-label">Кваліфікаційна категорія</label>
+          <input type="text" name="qualification" class="form-control" placeholder="Вища категорія">
+        </div>
+        <div class="form-col form-group">
+          <label class="form-label">Педагогічне звання</label>
+          <input type="text" name="pedagogical_title" class="form-control" placeholder="Старший вчитель">
+        </div>
+      </div>
+
+      <div class="form-row">
+        <div class="form-col form-group">
+          <label class="form-label">Телефон</label>
+          <input type="text" name="phone" class="form-control" placeholder="+380...">
+        </div>
+        <div class="form-col form-group">
+          <label class="form-label">Email</label>
+          <input type="email" name="email" class="form-control" placeholder="teacher@school.local">
+        </div>
+      </div>
+
+      <div style="display: flex; justify-content: flex-end; gap: 0.75rem; margin-top: 1.5rem;">
+        <button type="button" class="btn btn-secondary" onclick="closeModal('createTeacherModal')">Скасувати</button>
+        <button type="submit" class="btn btn-primary">Створити вчителя</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- Модальне вікно скидання пароля -->
+<div id="resetPasswordModal" class="modal-overlay">
+  <div class="modal-card" style="max-width: 420px;">
+    <div class="modal-header">
+      <h3 class="modal-title">Скидання пароля</h3>
+      <button class="modal-close" onclick="closeModal('resetPasswordModal')">&times;</button>
+    </div>
+    <form method="post">
+      {% csrf_token %}
+      <input type="hidden" name="action" value="reset_password">
+      <input type="hidden" name="teacher_id" id="reset_teacher_id">
+
+      <p style="margin-bottom: 1rem; font-size: 0.9rem; color: var(--text-muted);">
+        Встановлення нового пароля для: <strong id="reset_teacher_name" style="color: var(--text-main);"></strong>
+      </p>
+
+      <div class="form-group">
+        <label class="form-label">Новий пароль *</label>
+        <input type="password" name="new_password" class="form-control" required placeholder="Введіть новий пароль">
+      </div>
+
+      <div style="display: flex; justify-content: flex-end; gap: 0.75rem; margin-top: 1.5rem;">
+        <button type="button" class="btn btn-secondary" onclick="closeModal('resetPasswordModal')">Скасувати</button>
+        <button type="submit" class="btn btn-primary">Зберегти пароль</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<script>
+function openResetPasswordModal(id, name) {
+  document.getElementById('reset_teacher_id').value = id;
+  document.getElementById('reset_teacher_name').textContent = name;
+  openModal('resetPasswordModal');
+}
+</script>
+{% endblock %}

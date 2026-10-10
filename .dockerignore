@@ -1,0 +1,37 @@
+# Keep local confidential data and credentials out of the build context and image.
+.env
+.env.*
+!.env.example
+*.sqlite
+*.sqlite3
+*.sqlite3-*
+*.db
+*.db-*
+*.dump
+*.sql
+backups/
+media/
+uploads/
+data/
+logs/
+*.log
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.git/
+.agents/
+.codex/
+.aws/
+.pytest_cache/
+node_modules/
+staticfiles/
+
+# Locally saved NZ pages contain confidential journal data.
+/nz.uz/
+/samples/
+/release/
+/.github/
+.ssh/
+.maintenance.lock
+.release-image.yaml

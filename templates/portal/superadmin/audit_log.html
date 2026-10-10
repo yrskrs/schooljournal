@@ -1,0 +1,125 @@
+{% extends 'base.html' %}
+
+{% block title %}Журнал аудиту та безпеки | Шкільний журнал{% endblock %}
+
+{% block content %}
+<div class="card-header" style="border: none; padding: 0; margin-bottom: 1.5rem;">
+  <div>
+    <h1 style="font-size: 1.6rem; font-weight: 700; color: var(--primary-dark);">Журнал аудиту та змін (Audit Log)</h1>
+    <p style="color: var(--text-muted); font-size: 0.9rem;">
+      Повна історія змін оцінок, відвідуваності, навчальних тем, учнів та безпекових подій.
+    </p>
+  </div>
+</div>
+
+<!-- Фільтри -->
+<div class="card" style="padding: 1rem; margin-bottom: 1.25rem;">
+  <form method="get" style="display: flex; gap: 1rem; align-items: center; flex-wrap: wrap;">
+    <div style="display: flex; align-items: center; gap: 0.5rem;">
+      <label class="form-label" style="margin: 0;">Школа:</label>
+      <select name="school_id" class="form-select" onchange="this.form.submit()" style="min-width: 200px;">
+        <option value="">Всі школи</option>
+        {% for s in schools %}
+          <option value="{{ s.id }}" {% if selected_school_id|stringformat:"s" == s.id|stringformat:"s" %}selected{% endif %}>
+            {{ s.name }}
+          </option>
+        {% endfor %}
+      </select>
+    </div>
+
+    <div style="display: flex; align-items: center; gap: 0.5rem;">
+      <label class="form-label" style="margin: 0;">Дія:</label>
+      <select name="action" class="form-select" onchange="this.form.submit()">
+        <option value="">Всі дії</option>
+        {% for act_key, act_label in actions %}
+          <option value="{{ act_key }}" {% if action_filter == act_key %}selected{% endif %}>
+            {{ act_label }}
+          </option>
+        {% endfor %}
+      </select>
+    </div>
+
+    <div style="flex: 1; min-width: 200px;">
+      <input type="text" name="q" class="form-control" placeholder="Пошук за описом чи об'єктом..." value="{{ search_query }}">
+    </div>
+
+    <button type="submit" class="btn btn-secondary btn-sm">Застосувати</button>
+  </form>
+</div>
+
+<!-- Таблиця аудиту -->
+<div class="card" style="padding: 0; overflow: hidden;">
+  <table style="width: 100%; border-collapse: collapse; font-size: 0.875rem;">
+    <thead>
+      <tr style="background-color: var(--bg-alt); border-bottom: 2px solid var(--border); text-align: left;">
+        <th style="padding: 0.6rem 0.8rem;">Дата і час</th>
+        <th style="padding: 0.6rem 0.8rem;">Автор (користувач)</th>
+        <th style="padding: 0.6rem 0.8rem;">Школа</th>
+        <th style="padding: 0.6rem 0.8rem; text-align: center;">Дія</th>
+        <th style="padding: 0.6rem 0.8rem;">Об'єкт</th>
+        <th style="padding: 0.6rem 0.8rem;">Опис операції</th>
+        <th style="padding: 0.6rem 0.8rem;">Деталі змін (old &rarr; new)</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for log in page_obj %}
+        <tr style="border-bottom: 1px solid var(--border);">
+          <td style="padding: 0.6rem 0.8rem; white-space: nowrap; color: var(--text-muted); font-size: 0.8rem;">
+            {{ log.timestamp|date:"d.m.Y H:i:s" }}
+          </td>
+          <td style="padding: 0.6rem 0.8rem; font-weight: 600;">
+            {{ log.user.get_full_name_ukr|default:"Система" }}
+            {% if log.user %}
+              <div style="font-size: 0.75rem; color: var(--text-muted); font-weight: normal;">
+                {{ log.user.username }}
+              </div>
+            {% endif %}
+          </td>
+          <td style="padding: 0.6rem 0.8rem; font-size: 0.85rem; color: var(--text-muted);">
+            {{ log.school.short_name|default:log.school.name|default:"—" }}
+          </td>
+          <td style="padding: 0.6rem 0.8rem; text-align: center;">
+            <span class="user-role-pill" style="font-size: 0.7rem;">
+              {{ log.get_action_display }}
+            </span>
+          </td>
+          <td style="padding: 0.6rem 0.8rem; font-weight: 500;">
+            {{ log.target_model }}
+          </td>
+          <td style="padding: 0.6rem 0.8rem;">
+            {{ log.description }}
+          </td>
+          <td style="padding: 0.6rem 0.8rem; font-family: monospace; font-size: 0.8rem; max-width: 300px; word-break: break-all;">
+            {% if log.changes %}
+              {{ log.changes }}
+            {% else %}
+              —
+            {% endif %}
+          </td>
+        </tr>
+      {% empty %}
+        <tr>
+          <td colspan="7" style="padding: 2rem; text-align: center; color: var(--text-muted);">
+            Записів в аудиті не знайдено.
+          </td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+
+  <!-- Пагінація -->
+  {% if page_obj.has_other_pages %}
+    <div style="display: flex; justify-content: center; gap: 0.5rem; padding: 1rem; background-color: var(--bg-alt);">
+      {% if page_obj.has_previous %}
+        <a href="?page={{ page_obj.previous_page_number }}&school_id={{ selected_school_id }}&action={{ action_filter }}&q={{ search_query }}" class="btn btn-secondary btn-sm">&larr; Попередня</a>
+      {% endif %}
+      <span style="padding: 0.4rem 0.8rem; font-size: 0.85rem; color: var(--text-muted);">
+        Сторінка {{ page_obj.number }} з {{ page_obj.paginator.num_pages }}
+      </span>
+      {% if page_obj.has_next %}
+        <a href="?page={{ page_obj.next_page_number }}&school_id={{ selected_school_id }}&action={{ action_filter }}&q={{ search_query }}" class="btn btn-secondary btn-sm">Наступна &rarr;</a>
+      {% endif %}
+    </div>
+  {% endif %}
+</div>
+{% endblock %}

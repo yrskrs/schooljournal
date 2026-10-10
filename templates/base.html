@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{% block title %}Електронний шкільний журнал{% endblock %}</title>
+
+  <!-- Локальні стилі та іконки -->
+  <link rel="stylesheet" href="/static/css/styles.css?v={{ site_version }}">
+
+  <!-- Локальний HTMX для інтерактивності без зовнішніх залежностей -->
+  <script src="/static/js/htmx.min.js"></script>
+  {% block extra_head %}{% endblock %}
+</head>
+<body>
+
+  <!-- Навігаційна панель -->
+  <header class="navbar">
+    <div class="navbar-container">
+      <a href="{% url 'portal:dashboard' %}" class="brand">
+        <div class="brand-icon">Ж</div>
+        <div>
+          <span>Шкільний Журнал</span>
+          {% if user.is_authenticated and user.school %}
+            <div style="font-size: 0.75rem; color: var(--text-muted); font-weight: normal;">
+              {{ user.school.short_name|default:user.school.name }}
+            </div>
+          {% endif %}
+        </div>
+      </a>
+
+      {% if user.is_authenticated %}
+        <nav>
+          <ul class="nav-links">
+            {% if user.is_school_admin_user %}
+              <li><a href="{% url 'portal:superadmin_dashboard' %}" class="nav-link">Головна</a></li>
+              <li><a href="{% url 'portal:superadmin_schools' %}" class="nav-link">Школи</a></li>
+              <li><a href="{% url 'portal:superadmin_teachers' %}" class="nav-link">Вчителі</a></li>
+              <li><a href="{% url 'portal:superadmin_curriculum' %}" class="nav-link">Навчальна структура</a></li>
+              <li><a href="{% url 'portal:superadmin_assignments' %}" class="nav-link">Призначення</a></li>
+              <li><a href="{% url 'portal:superadmin_students' %}" class="nav-link">Учні</a></li>
+              <li><a href="{% url 'portal:superadmin_audit' %}" class="nav-link">Аудит</a></li>
+              {% if user.is_superadmin_user %}<li><a href="/admin/" class="nav-link" target="_blank" title="Технічна адмінка">Django Admin</a></li>{% endif %}
+            {% else %}
+              <li><a href="{% url 'portal:teacher_dashboard' %}" class="nav-link">Мої журнали</a></li>
+              <li><a href="{% url 'portal:nz_journals_list' %}" class="nav-link" style="display: inline-flex; align-items: center; gap: 0.35rem;"><span style="color: #2563eb; font-weight: bold;">&#8644;</span> nz.ua</a></li>
+              <li><a href="{% url 'portal:create_journal' %}" class="nav-link">+ Новий журнал</a></li>
+            {% endif %}
+            <li><a href="{% url 'portal:weekly_schedule' %}" class="nav-link">Розклад на тиждень</a></li>
+            <li><a href="{% url 'portal:lesson_times' %}" class="nav-link">Час уроків</a></li>
+          </ul>
+        </nav>
+
+        <div class="user-badge">
+          <span class="user-role-pill {% if user.is_school_admin_user %}admin{% endif %}">
+            {{ user.get_role_display }}
+          </span>
+          <span style="font-weight: 500; font-size: 0.9rem;">
+            {{ user.get_full_name_ukr }}
+          </span>
+          <a href="{% url 'logout' %}" class="btn btn-secondary btn-sm" title="Вийти з облікового запису">
+            Вийти
+          </a>
+        </div>
+      {% else %}
+        <div class="public-actions">
+          {% if school_registration_enabled %}<a href="{% url 'register_school' %}" class="btn btn-secondary btn-sm">Зареєструвати школу</a>{% endif %}
+          <a href="{% url 'login' %}" class="btn btn-primary btn-sm">Увійти</a>
+        </div>
+      {% endif %}
+    </div>
+  </header>
+
+  <!-- Головний блок контенту -->
+  <main class="main-content">
+    {% if messages %}
+      <div id="messages-container">
+        {% for message in messages %}
+          <div class="alert alert-{{ message.tags }}">
+            <span>{{ message }}</span>
+          </div>
+        {% endfor %}
+      </div>
+    {% endif %}
+
+    {% block content %}{% endblock %}
+  </main>
+
+  <footer class="site-footer">
+    <a href="{% url 'portal:guide' %}">Інструкція користувача</a>
+    <a href="{% url 'portal:versions' %}">Версія {{ site_version }} · Опис змін</a>
+  </footer>
+  <!-- Скрипт застосунку -->
+  <script src="/static/js/journal.js?v={{ site_version }}"></script>
+  {% block extra_js %}{% endblock %}
+</body>
+</html>

@@ -1,0 +1,741 @@
+{% extends 'base.html' %}
+{% load journal_tags %}
+
+{% block title %}{{ journal.student_class.name }} — {{ journal.subject.name }} | Журнал{% endblock %}
+
+{% block content %}
+<!-- Шапка журналу з метаданими та кнопками дій -->
+<div style="background: white; border: 1px solid var(--border); border-radius: var(--radius-md); padding: 1.25rem 1.5rem; margin-bottom: 1.25rem; box-shadow: var(--shadow-sm);">
+  <div style="display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 1rem;">
+    <div>
+      <div style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.25rem;">
+        <span class="user-role-pill" style="font-size: 0.95rem; font-weight: 700; background: var(--primary-light); color: var(--primary-dark);">
+          {{ journal.student_class.name }} клас
+        </span>
+        <h1 style="font-size: 1.5rem; font-weight: 700; color: var(--primary-dark); margin: 0;">
+          {{ journal.subject.name }}
+        </h1>
+        {% if journal.is_archived %}
+          <span class="user-role-pill" style="background-color: var(--danger-bg); color: var(--danger);">Архівний журнал</span>
+        {% endif %}
+      </div>
+      <div style="color: var(--text-muted); font-size: 0.875rem;">
+        Вчитель: <strong>{{ journal.teacher.get_full_name_ukr }}</strong> &bull;
+        Навчальний рік: <strong>{{ journal.academic_year.name }}</strong> &bull;
+        Заклад: <strong>{{ journal.school.short_name|default:journal.school.name }}</strong>
+      </div>
+    </div>
+
+    <!-- Кнопки дій -->
+    <div style="display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: center;">
+      {% if can_edit %}
+        <a class="btn btn-outline-primary btn-sm" href="{% url 'portal:journal_integrations' journal.id %}">Профілі та API</a>
+        <a class="btn btn-outline-primary btn-sm" href="{% url 'portal:external_grade_review' journal.id %}">Оцінки з робіт{% if external_review_count %} ({{ external_review_count }}){% endif %}</a>
+        <!-- Синхронізація з nz.ua (Нові знання) -->
+        <div style="display: inline-flex; gap: 0.35rem; align-items: center; background: #f8fafc; padding: 0.2rem; border-radius: var(--radius-sm); border: 1px solid #cbd5e1;">
+          {% if journal.nz_journal_id %}
+            <!-- Кнопка 1: Завантажити / Оновити оцінки з nz.ua -->
+            <button type="button"
+                    id="btnNzPull"
+                    class="btn btn-sm"
+                    onclick="pullNzJournal({{ journal.id }})"
+                    style="display: inline-flex; align-items: center; gap: 0.35rem; font-weight: 600; border: 1px solid #0284c7; color: #0369a1; background: #f0f9ff;"
+                    title="Завантажити та оновити оцінки, уроки і учнів з сайту nz.ua (Журнал {{ journal.nz_journal_id }})">
+              <span style="font-size: 1.05rem; line-height: 1;">⤓</span>
+              <span>Завантажити з nz.ua</span>
+            </button>
+
+            <!-- Кнопка 2: Вивантажити зміни в nz.ua -->
+            <button type="button"
+                    id="btnNzPush"
+                    class="btn btn-sm"
+                    onclick="openNzSyncModal({{ journal.id }})"
+                    style="display: inline-flex; align-items: center; gap: 0.35rem; font-weight: 600; border: 1px solid #2563eb; color: #ffffff; background: #2563eb;"
+                    title="Переглянути незбережені зміни та вивантажити їх на сайт nz.ua">
+              <span style="font-size: 1.05rem; line-height: 1;">⇄</span>
+              <span>Вивантажити в nz.ua</span>
+              {% if unsynced_total > 0 %}
+                <span class="badge" style="background: #f59e0b; color: white; font-size: 0.75rem; padding: 0.15rem 0.45rem; border-radius: 999px;" title="{{ unsynced_total }} незбережених змін для nz.ua">
+                  {{ unsynced_total }}
+                </span>
+              {% else %}
+                <span class="badge" style="background: rgba(255, 255, 255, 0.3); color: white; font-size: 0.72rem; padding: 0.15rem 0.4rem; border-radius: 999px;" title="Усі оцінки синхронізовано з nz.ua">
+                  &#10003;
+                </span>
+              {% endif %}
+            </button>
+          {% else %}
+            <!-- Якщо журнал ще не прив'язано до nz.ua -->
+            <a href="{% url 'portal:nz_journals_list' %}" class="btn btn-outline-primary btn-sm" style="display: inline-flex; align-items: center; gap: 0.35rem; font-weight: 600;">
+              <span>⇄ Зв'язати з nz.ua</span>
+            </a>
+          {% endif %}
+        </div>
+
+        <button class="btn btn-primary btn-sm" onclick="openModal('createLessonModal')">
+          + Додати урок
+        </button>
+        <a href="{% url 'portal:import_topics' journal_id=journal.id %}" class="btn btn-secondary btn-sm" title="Імпорт календарного плану">
+          Імпорт тем
+        </a>
+        <a href="{% url 'portal:import_students' journal_id=journal.id %}" class="btn btn-secondary btn-sm" title="Імпорт списку учнів класу">
+          Імпорт учнів
+        </a>
+      {% endif %}
+
+      <details class="journal-actions" id="journalActions">
+        <summary class="btn btn-secondary btn-sm">Дії журналу <span aria-hidden="true">▾</span></summary>
+        <div class="journal-actions-menu" aria-label="Дії журналу {{ journal.student_class.name }}">
+          {% if can_edit %}<a href="#calendarSection" onclick="this.closest('details').open = false">Редагувати журнал</a>{% endif %}
+          <a href="{% url 'portal:export_journal_xlsx' journal_id=journal.id %}{% if selected_semester %}?semester_id={{ selected_semester.id }}{% endif %}">Експорт в Excel</a>
+          <a href="{% url 'portal:export_journal_pdf' journal_id=journal.id %}{% if selected_semester %}?semester_id={{ selected_semester.id }}{% endif %}">Версія журналу для друку</a>
+          {% if can_edit %}
+          <a href="{% url 'portal:assessment_calculate' journal_id=journal.id %}?grade_type=THEMATIC&semester_id={{ selected_semester_param }}" data-assessment-link>Розрахувати тематичну</a>
+          <a href="{% url 'portal:assessment_calculate' journal_id=journal.id %}?grade_type=MODULAR&semester_id={{ selected_semester_param }}" data-assessment-link>Розрахувати модульну</a>
+          <a href="{% url 'portal:assessment_calculate' journal_id=journal.id %}?grade_type={{ assessment_semester_type }}&semester_id={{ selected_semester_param }}" data-assessment-link>Розрахувати семестрову</a>
+          <a href="{% url 'portal:assessment_calculate' journal_id=journal.id %}?grade_type=ANNUAL" data-assessment-link>Розрахувати річну</a>
+          <a href="{% url 'portal:assessment_calculate' journal_id=journal.id %}?grade_type=THEMATIC_NUSH&semester_id={{ selected_semester_param }}" data-assessment-link>Розрахувати тематичну НУШ</a>
+          <a href="{% url 'portal:assessment_calculate' journal_id=journal.id %}?grade_type={{ assessment_semester_type }}_NUSH&semester_id={{ selected_semester_param }}" data-assessment-link>Розрахувати семестрову НУШ</a>
+          {% endif %}
+          <a href="?semester_id={{ selected_semester_param }}&month={{ selected_month|default:'all' }}&withdrawn={% if show_withdrawn %}0{% else %}1{% endif %}">{% if show_withdrawn %}Журнал без тих, хто вибув{% else %}Журнал з тими хто вибув{% endif %}</a>
+        </div>
+      </details>
+
+      <div style="display: inline-flex; border: 1px solid var(--border); border-radius: var(--radius-sm); overflow: hidden;">
+        <a href="{% url 'portal:export_topics' journal_id=journal.id %}?format=xlsx" class="btn btn-secondary btn-sm" style="border: none; border-radius: 0;" title="Експорт тем">
+          Теми (XLSX)
+        </a>
+        <a href="{% url 'portal:export_students' journal_id=journal.id %}?format=xlsx" class="btn btn-secondary btn-sm" style="border: none; border-radius: 0; border-left: 1px solid var(--border);" title="Експорт списку учнів">
+          Учні (XLSX)
+        </a>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Панель фільтрів та інструментів сітки журналу -->
+{% if external_review_count %}<p class="alert alert-info">Оцінки з робіт потребують рішення: {{ external_review_count }}. <a href="{% url 'portal:external_grade_review' journal.id %}">Переглянути й схвалити</a>. Позначка «ШІ · ?» означає попередню оцінку: вона не входить до підсумків і не вивантажується до nz.ua.</p>{% endif %}
+<div class="journal-container">
+  <div class="journal-toolbar">
+    <!-- Пошук учня -->
+    <div class="search-input-box">
+      <span class="search-icon">&#128269;</span>
+      <input type="text" id="studentSearchInput" class="form-control form-control-sm" placeholder="Пошук учня за ПІБ...">
+    </div>
+
+    <!-- Перемикач семестрів -->
+    <div style="display: flex; align-items: center; gap: 0.5rem;">
+      <span style="font-size: 0.8rem; font-weight: 600; color: var(--text-muted);">Семестр:</span>
+      <div class="tabs-nav">
+        <a href="?semester_id=all{% if show_withdrawn %}&withdrawn=1{% endif %}" class="tab-btn {% if not selected_semester %}active{% endif %}">Весь рік</a>
+        {% for sem in semesters %}
+          <a href="?semester_id={{ sem.id }}{% if show_withdrawn %}&withdrawn=1{% endif %}" class="tab-btn {% if selected_semester.id == sem.id %}active{% endif %}">
+            {{ sem.name }}
+          </a>
+        {% endfor %}
+      </div>
+    </div>
+
+    <!-- Вкладки місяців -->
+    {% if month_tabs %}
+      <div style="display: flex; align-items: center; gap: 0.5rem;">
+        <span style="font-size: 0.8rem; font-weight: 600; color: var(--text-muted);">Місяць:</span>
+        <div class="tabs-nav">
+          <a href="?semester_id={{ selected_semester_param }}&month=all{% if show_withdrawn %}&withdrawn=1{% endif %}" class="tab-btn {% if not selected_month or selected_month == 'all' %}active{% endif %}">
+            Всі
+          </a>
+          {% for m in month_tabs %}
+            <a href="?semester_id={{ selected_semester_param }}&month={{ m.number }}{% if show_withdrawn %}&withdrawn=1{% endif %}" class="tab-btn {% if selected_month == m.number|stringformat:'s' %}active{% endif %}">
+              {{ m.name }}
+            </a>
+          {% endfor %}
+        </div>
+      </div>
+    {% endif %}
+  </div>
+
+  <div class="sync-legend" aria-label="Позначення синхронізації">
+    <span class="legend-online">✓ Підтверджено в nz.ua</span>
+    <span class="legend-local">● Локально, ще не вивантажено</span>
+    {% if show_withdrawn %}<span>Показано також учнів, які вибули / переведені</span>{% endif %}
+  </div>
+  <!-- Сітка таблиці журналу (Sticky scroll wrapper) -->
+  <div class="journal-scroll-wrapper">
+    <table class="journal-table">
+      <thead>
+        <!-- Верхній рядок: інформація про уроки -->
+        <tr>
+          <th class="sticky-col-num" rowspan="2">№</th>
+          <th class="sticky-col-name" rowspan="2">Прізвище, ім'я учня</th>
+          {% for group in month_groups %}
+          <th class="month-group-th" colspan="{{ group.count }}">{{ group.name }}</th>
+          {% empty %}<th class="month-group-th">Уроки</th>{% endfor %}
+          {% for key, label in legacy_summary_columns %}<th rowspan="2" title="Раніше збережена підсумкова оцінка">{{ label }}</th>{% endfor %}
+          <th rowspan="2" title="Довідковий середній бал за показаними уроками">Сер. бал</th>
+        </tr>
+        <tr class="lesson-header-row">
+          {% for l in lessons %}
+            <th class="lesson-th {% if l.starts_month %}month-start{% endif %}"
+                data-lesson-id="{{ l.id }}"
+                title="Урок {{ l.lesson_number }} на {{ l.date|date:'d.m.Y' }}: {{ l.topic }}. {% if can_edit %}Клацніть для редагування відомостей.{% endif %}"
+                {% if can_edit %}
+                onclick="openEditLessonModalById({{ l.id }})"
+                {% endif %}>
+              <div class="lesson-date">{{ l.date|date:"d.m" }}</div>
+              <div class="lesson-num-badge">№{{ l.lesson_number }}{% if l.lesson_time %} · {{ l.lesson_time|time:"H:i" }}{% endif %}</div>
+              {% if l.lesson_type == 'QUIZ' %}
+                <span class="lesson-type-badge badge-quiz">СР</span>
+              {% elif l.lesson_type == 'TEST' %}
+                <span class="lesson-type-badge badge-test">КР</span>
+              {% elif l.lesson_type == 'THEMATIC' %}
+                <span class="lesson-type-badge badge-thematic">ТЕМ</span>
+              {% elif l.lesson_type == 'MODULAR' %}<span class="lesson-type-badge badge-thematic">МОД</span>
+              {% elif l.lesson_type == 'THEMATIC_NUSH' %}<span class="lesson-type-badge badge-thematic">ТЕМ НУШ</span>
+              {% elif l.lesson_type == 'SEMESTER_1' %}<span class="lesson-type-badge badge-thematic">I сем</span>
+              {% elif l.lesson_type == 'SEMESTER_2' %}<span class="lesson-type-badge badge-thematic">II сем</span>
+              {% elif l.lesson_type == 'SEMESTER_1_NUSH' %}<span class="lesson-type-badge badge-thematic">I сем НУШ</span>
+              {% elif l.lesson_type == 'SEMESTER_2_NUSH' %}<span class="lesson-type-badge badge-thematic">II сем НУШ</span>
+              {% elif l.lesson_type == 'ANNUAL' %}<span class="lesson-type-badge badge-thematic">Річна</span>
+              {% elif l.lesson_type == 'PRACTICAL' %}
+                <span class="lesson-type-badge badge-practical">ПР</span>
+              {% endif %}
+            </th>
+          {% empty %}
+            <th style="padding: 1.5rem; color: var(--text-muted); font-weight: normal;">
+              Уроків за вибраний період ще немає. Додайте перший урок!
+            </th>
+          {% endfor %}
+
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in student_rows %}
+          <tr class="student-row" data-student-name="{{ row.student.get_full_name_ukr }}"{% if not row.is_active and not show_withdrawn %} hidden{% endif %}>
+            <!-- Фіксований номер -->
+            <td class="sticky-col-num" style="color: var(--text-muted); font-size: 0.8rem;">
+              {{ row.display_number }}
+            </td>
+            <!-- Фіксований ПІБ -->
+            <td class="sticky-col-name" title="{{ row.student.get_full_name_ukr }}">
+              <span>{{ row.student.get_full_name_ukr }}</span>
+              {% if row.status_note %}
+                <span style="font-size: 0.75rem; color: var(--danger); font-style: italic;">
+                  {{ row.status_note }}
+                </span>
+              {% endif %}
+            </td>
+
+            <!-- Клітинки уроків (єдина інтерактивна комірка) -->
+            {% for l in lessons %}
+              {% get_grade grades l.id row.student.id as student_grade %}
+              {% get_attendance attendances l.id row.student.id as student_attendance %}
+              <td class="journal-cell-td {% if l.starts_month %}month-start{% endif %}" data-lesson-id="{{ l.id }}" data-student-id="{{ row.student.id }}">
+                {% include 'portal/journal/partials/grade_cell.html' with grade=student_grade attendance=student_attendance lesson=l student=row.student can_edit=can_edit %}
+              </td>
+            {% empty %}
+              <td style="color: var(--text-light);">—</td>
+            {% endfor %}
+
+            {% for key, label in legacy_summary_columns %}
+              {% get_summary_grade summary_grades row.student.id key as saved_summary %}
+              <td>
+                {% if saved_summary %}<div class="journal-single-cell-wrap sync-local" title="Локальна підсумкова оцінка — не синхронізована з nz.ua"><span class="cell-sync-marker" aria-label="Локальна підсумкова оцінка">●</span>{% endif %}
+                {% if can_edit and saved_summary %}
+                <input type="text" name="value" class="grade-input" value="{{ saved_summary.value|default:'' }}" maxlength="5"
+                  aria-label="{{ label }}: {{ row.student.get_full_name_ukr }}"
+                  hx-post="{% url 'portal:update_summary_grade' journal_id=journal.id %}"
+                  hx-vals='{"student_id":"{{ row.student.id }}","grade_type":"{{ saved_summary.grade_type|default:key }}","summary_id":"{{ saved_summary.id|default:'' }}"}' hx-trigger="change" hx-swap="none">
+                {% else %}{{ saved_summary.value|default:'' }}{% endif %}
+                {% if saved_summary %}</div>{% endif %}
+              </td>
+            {% endfor %}
+            <!-- Довідковий середній бал -->
+            <td>
+              <span class="avg-pill">
+                {{ student_averages|get_dict_item:row.student.id }}
+              </span>
+            </td>
+
+          </tr>
+        {% empty %}
+          <tr>
+            <td colspan="{{ journal_column_count }}" style="padding: 2.5rem; text-align: center; color: var(--text-muted);">
+              У цьому класі ще немає учнів.
+              {% if can_edit %}
+                <a href="{% url 'portal:import_students' journal_id=journal.id %}" style="color: var(--primary); font-weight: 600;">
+                  Імпортуйте список учнів
+                </a>.
+              {% endif %}
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<!-- ======================================================== -->
+<!-- Календарно-тематичний облік уроків (Нижня частина)        -->
+<!-- ======================================================== -->
+<div class="calendar-topics-section" id="calendarSection" style="margin-top: 1.5rem; margin-bottom: 2rem;">
+  <div class="calendar-card" style="background: white; border: 1px solid var(--border); border-radius: var(--radius-md); box-shadow: var(--shadow-sm); overflow: hidden;">
+    <!-- Шапка розділу -->
+    <div style="padding: 1.1rem 1.5rem; background: #f8fafc; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 1rem;">
+      <div>
+        <div style="display: flex; align-items: center; gap: 0.6rem;">
+          <span style="font-size: 1.25rem;">📖</span>
+          <h2 style="font-size: 1.2rem; font-weight: 700; color: var(--primary-dark); margin: 0;">
+            Календарний план та теми уроків
+          </h2>
+          <span class="user-role-pill" style="background: var(--primary-light); color: var(--primary-dark); font-weight: 700; font-size: 0.8rem;">
+            Уроків: {{ lessons|length }}
+          </span>
+        </div>
+        <p style="color: var(--text-muted); font-size: 0.825rem; margin: 0.25rem 0 0 0;">
+          Повний облік проведених навчальних занять, домашніх завдань та тематичних робіт за обраний період
+        </p>
+      </div>
+
+      <div style="display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap;">
+        {% if can_edit %}
+          <button type="button" class="btn btn-primary btn-sm" onclick="openModal('createLessonModal')">
+            + Додати урок
+          </button>
+          <a href="{% url 'portal:import_topics' journal_id=journal.id %}" class="btn btn-secondary btn-sm" title="Імпортувати календарно-тематичний план">
+            Імпорт плану
+          </a>
+          <a href="{% url 'portal:topics_copy' journal_id=journal.id %}" class="btn btn-secondary btn-sm">
+            Копіювати теми з іншого класу
+          </a>
+        {% endif %}
+        <a href="{% url 'portal:export_topics' journal_id=journal.id %}?format=xlsx" class="btn btn-secondary btn-sm" title="Завантажити теми в Excel">
+          Експорт тем (XLSX)
+        </a>
+      </div>
+    </div>
+
+    <!-- Таблиця проведених уроків -->
+    <div class="table-responsive" style="overflow-x: auto;">
+      <table class="calendar-table" style="width: 100%; border-collapse: collapse; font-size: 0.875rem;">
+        <thead>
+          <tr style="background: #f1f5f9; color: var(--text-main); border-bottom: 2px solid #cbd5e1;">
+            <th style="padding: 0.65rem 0.75rem; text-align: center; width: 50px;" title="Порядковий номер за весь журнал; підсумкові колонки не нумеруються">№</th>
+            <th style="padding: 0.65rem 0.75rem; text-align: center; width: 110px;">Дата</th>
+            <th style="padding: 0.65rem 0.75rem; text-align: center; width: 110px;">Тип уроку</th>
+            <th style="padding: 0.65rem 0.75rem; text-align: left;">Тема уроку</th>
+            <th style="padding: 0.65rem 0.75rem; text-align: left; width: 280px;">Домашнє завдання</th>
+            <th style="padding: 0.65rem 0.75rem; text-align: left; width: 150px;">Примітки</th>
+            {% if can_edit %}
+              <th style="padding: 0.65rem 0.75rem; text-align: center; width: 110px;">Дії</th>
+            {% endif %}
+          </tr>
+        </thead>
+        <tbody>
+          {% for l in lessons %}
+            {% if l.starts_month %}<tr class="calendar-month-row"><th colspan="{% if can_edit %}7{% else %}6{% endif %}">{{ l.month_label }}</th></tr>{% endif %}
+            <tr id="lesson-row-{{ l.id }}" class="calendar-lesson-row" style="border-bottom: 1px solid var(--border); transition: background-color 0.15s ease;">
+              <td style="padding: 0.65rem 0.75rem; text-align: center; font-weight: 700; color: var(--text-muted);">
+                {{ l.sequence_number|default:'—' }}
+              </td>
+              <td style="padding: 0.65rem 0.75rem; text-align: center; white-space: nowrap;">
+                <span style="font-weight: 700; color: var(--primary-dark);">{{ l.date|date:"d.m.Y" }}</span>
+                {% if l.lesson_number > 1 %}
+                  <span style="font-size: 0.75rem; color: var(--text-muted); display: block;">(№{{ l.lesson_number }} за день)</span>
+                {% endif %}
+              </td>
+              <td style="padding: 0.65rem 0.75rem; text-align: center;">
+                {% if l.lesson_type == 'QUIZ' %}
+                  <span class="lesson-type-badge badge-quiz" style="display: inline-block;">Самостійна</span>
+                {% elif l.lesson_type == 'TEST' %}
+                  <span class="lesson-type-badge badge-test" style="display: inline-block;">Контрольна</span>
+                {% elif l.lesson_type == 'THEMATIC' %}
+                  <span class="lesson-type-badge badge-thematic" style="display: inline-block;">Тематична</span>
+                {% elif l.lesson_type == 'PRACTICAL' %}
+                  <span class="lesson-type-badge badge-practical" style="display: inline-block;">Практична</span>
+                {% elif l.lesson_type == 'LAB' %}
+                  <span class="lesson-type-badge badge-practical" style="display: inline-block;">Лабораторна</span>
+                {% elif l.lesson_type == 'SEMESTER_1' or l.lesson_type == 'SEMESTER_2' or l.lesson_type == 'ANNUAL' or l.lesson_type == 'MODULAR' or l.lesson_type == 'THEMATIC_NUSH' or l.lesson_type == 'SEMESTER_1_NUSH' or l.lesson_type == 'SEMESTER_2_NUSH' %}
+                  <span class="lesson-type-badge badge-thematic">{{ l.get_lesson_type_display }}</span>
+                {% elif l.lesson_type == 'EXAM' %}
+                  <span class="lesson-type-badge badge-test" style="display: inline-block;">Залік</span>
+                {% else %}
+                  <span style="font-size: 0.75rem; color: var(--text-muted); background: #f1f5f9; padding: 0.15rem 0.4rem; border-radius: 4px;">Урок</span>
+                {% endif %}
+              </td>
+              <td style="padding: 0.65rem 0.75rem; text-align: left;">
+                <div style="font-weight: 600; color: #0f172a;">{{ l.topic }}</div>
+                {% if l.linked_plan_topic %}
+                  <div style="font-size: 0.75rem; color: var(--text-muted); margin-top: 2px;">
+                    📌 З плану: №{{ l.linked_plan_topic.topic_number }}
+                  </div>
+                {% endif %}
+              </td>
+              <td style="padding: 0.65rem 0.75rem; text-align: left; color: #334155;">
+                {{ l.homework|default:"—" }}
+                {% if l.homework %}<small class="homework-target-label">{{ l.get_homework_target_label }}</small>{% endif %}
+              </td>
+              <td style="padding: 0.65rem 0.75rem; text-align: left; color: var(--text-muted); font-size: 0.8rem;">
+                {{ l.notes|default:"" }}
+              </td>
+              {% if can_edit %}
+                <td style="padding: 0.65rem 0.75rem; text-align: center; white-space: nowrap;">
+                  <button type="button" class="btn btn-secondary btn-sm" style="padding: 0.2rem 0.45rem; font-size: 0.8rem;"
+                          onclick="openEditLessonModalById({{ l.id }})"
+                          title="Редагувати тему та ДЗ">
+                    ✏️
+                  </button>
+                  <button type="button" class="btn btn-secondary btn-sm" onclick="openSwapTopics({{ l.id }})" title="Перенести тему на іншу дату, обмінявши теми">⇄</button>
+                  <button type="button" class="btn btn-secondary btn-sm" onclick="insertBeforeLesson({{ l.id }})" title="Вставити урок перед цим уроком">+↥</button>
+                  <form method="post" action="{% url 'portal:lesson_delete' journal_id=journal.id lesson_id=l.id %}" style="display: inline;" onsubmit="return confirm('Ви впевнені, що бажаєте видалити урок від {{ l.date|date:'d.m.Y' }} («{{ l.topic|escapejs }}»)? Виставлені оцінки до цього уроку також будуть видалені!');">
+                    {% csrf_token %}
+                    <button type="submit" class="btn btn-danger btn-sm" style="padding: 0.2rem 0.45rem; font-size: 0.8rem;" title="Видалити урок">
+                      🗑️
+                    </button>
+                  </form>
+                </td>
+              {% endif %}
+            </tr>
+          {% empty %}
+            <tr>
+              <td colspan="7" style="padding: 2.5rem; text-align: center; color: var(--text-muted);">
+                Уроків за вибраний період ще немає.
+                {% if can_edit %}
+                  <button type="button" class="btn btn-primary btn-sm" style="margin-left: 0.5rem;" onclick="openModal('createLessonModal')">
+                    + Додати перший урок
+                  </button>
+                {% endif %}
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    <!-- Заплановані теми з календарного плану (ще не проведені) -->
+    {% if plan_topics %}
+      <div style="padding: 1rem 1.5rem; background: #f8fafc; border-top: 1px solid var(--border);">
+        <details>
+          <summary style="font-weight: 600; color: var(--primary); cursor: pointer; font-size: 0.875rem;">
+            📋 Майбутні заплановані теми з календарного плану (ще не проведені: {{ plan_topics|length }}) — натисніть для перегляду
+          </summary>
+          <div style="margin-top: 0.75rem; max-height: 250px; overflow-y: auto;">
+            <table style="width: 100%; border-collapse: collapse; font-size: 0.8rem;">
+              <thead>
+                <tr style="color: var(--text-muted); border-bottom: 1px solid var(--border);">
+                  <th style="padding: 0.35rem; width: 45px; text-align: center;">№</th>
+                  <th style="padding: 0.35rem; text-align: left;">Тема</th>
+                  <th style="padding: 0.35rem; text-align: left;">Домашнє завдання</th>
+                  <th>Запланована дата</th>
+                  {% if can_edit %}
+                    <th style="padding: 0.35rem; width: 120px; text-align: center;">Дія</th>
+                  {% endif %}
+                </tr>
+              </thead>
+              <tbody>
+                {% for pt in plan_topics %}
+                  <tr style="border-bottom: 1px solid #f1f5f9;">
+                    <td style="padding: 0.35rem; text-align: center; font-weight: 600;">№{{ pt.topic_number }}</td>
+                    <td style="padding: 0.35rem; text-align: left; font-weight: 500;">{{ pt.title }}</td>
+                    <td style="padding: 0.35rem; text-align: left; color: var(--text-muted);">{{ pt.homework|default:"—" }}</td>
+                    <td>{% if can_edit %}<form method="post" action="{% url 'portal:plan_topic_move' journal_id=journal.id topic_id=pt.id %}" class="plan-date-form">{% csrf_token %}<input type="date" name="planned_date" value="{{ pt.planned_date|date:'Y-m-d' }}" aria-label="Запланована дата теми №{{ pt.topic_number }}"><button class="btn btn-secondary btn-sm">Зберегти</button></form>{% else %}{{ pt.planned_date|date:'d.m.Y'|default:'—' }}{% endif %}</td>
+                    {% if can_edit %}
+                      <td style="padding: 0.35rem; text-align: center;">
+                        <button type="button" class="btn btn-secondary btn-sm" style="padding: 0.15rem 0.45rem; font-size: 0.75rem;"
+                                onclick="createFromPlan({{ pt.id }})">
+                          + Провести
+                        </button>
+                        <form method="post" action="{% url 'portal:plan_topic_move' journal_id=journal.id topic_id=pt.id %}" class="plan-move-form">{% csrf_token %}<button name="direction" value="up" class="btn btn-secondary btn-sm" title="Тему вище">↑</button><button name="direction" value="down" class="btn btn-secondary btn-sm" title="Тему нижче">↓</button></form>
+                      </td>
+                    {% endif %}
+                  </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        </details>
+      </div>
+    {% endif %}
+  </div>
+</div>
+
+<!-- Модальне вікно: Створення уроку -->
+{% if can_edit %}
+<div id="assessmentModal" class="modal-overlay assessment-overlay" role="dialog" aria-modal="true" aria-labelledby="assessmentModalTitle" tabindex="-1">
+  <div class="modal-card assessment-modal-card">
+    <button type="button" class="modal-close assessment-close" aria-label="Закрити розрахунок" onclick="closeAssessmentModal()">&times;</button>
+    <div id="assessmentModalContent" aria-live="polite"></div>
+  </div>
+</div>
+<div id="createLessonModal" class="modal-overlay">
+  <div class="modal-card">
+    <div class="modal-header">
+      <h3 class="modal-title" id="createLessonModalTitle">Додати проведений урок</h3>
+      <button class="modal-close" onclick="closeModal('createLessonModal')">&times;</button>
+    </div>
+    <form id="createLessonForm" method="post" action="{% url 'portal:lesson_create' journal_id=journal.id %}" data-assessment-url="{% url 'portal:assessment_calculate' journal_id=journal.id %}" data-year-start="{{ journal.academic_year.start_date|date:'Y-m-d' }}" data-year-end="{{ journal.academic_year.end_date|date:'Y-m-d' }}" data-scheduled-date="{{ create_lesson_defaults.date }}" data-scheduled-time="{{ create_lesson_defaults.time }}">
+      <input type="hidden" name="school_time_list" value="1">
+      <input type="hidden" name="insert_before_id" id="insert_before_id">
+      <input type="hidden" name="plan_topic_id" id="plan_topic_id_input">
+      <p id="insert_before_hint" class="text-muted"></p>
+      {% csrf_token %}
+
+      <div class="form-row">
+        <div class="form-col form-group">
+          <label class="form-label" id="create_lesson_date_label" for="create_lesson_date">Дата уроку *</label>
+          <input type="date" name="date" id="create_lesson_date" class="form-control" required value="{% now 'Y-m-d' %}">
+        </div>
+        <div id="createLessonNumberField" class="form-col form-group">
+          <label class="form-label">Номер уроку на цю дату *</label>
+          <input type="number" name="lesson_number" id="create_lesson_number" class="form-control" min="1" max="32767" value="1" required title="Дозволяє кілька уроків на одну дату (1, 2 тощо)">
+        </div>
+        <div class="form-col form-group">
+          <label class="form-label">Тип уроку</label>
+          <select name="lesson_type" id="create_lesson_type" class="form-select">
+            {% for lt_val, lt_name in lesson_types %}
+              <option value="{{ lt_val }}">{{ lt_name }}</option>
+            {% endfor %}
+          </select>
+        </div>
+      </div>
+
+      <div class="form-group"><label class="form-label" for="create_lesson_time">Час уроку</label>
+        <select name="lesson_time" id="create_lesson_time" class="form-control"><option value="">Без часу</option>
+          {% for slot in lesson_time_slots %}<option value="{{ slot.start_time|time:'H:i' }}">{{ slot }}</option>{% endfor %}
+        </select>
+        <small><a href="{% url 'portal:lesson_times' %}?school_id={{ journal.school_id }}">Налаштувати час уроків школи</a></small>
+      </div>
+      <fieldset id="createLessonOrdinaryFields" class="lesson-kind-fields">
+      <div class="form-group">
+        <label class="form-label" for="lesson_repeat_frequency">Повторення уроку</label>
+        <select name="repeat_frequency" id="lesson_repeat_frequency" class="form-select">
+          <option value="none">Не повторювати</option>
+          <option value="weekly">Щотижня</option>
+          <option value="biweekly">Кожні 2 тижні</option>
+          <option value="custom">Кожні N тижнів</option>
+        </select>
+      </div>
+      <div id="lessonRepeatOptions" class="lesson-repeat-panel" hidden>
+        <div class="form-row">
+          <div id="lessonRepeatIntervalField" class="form-col form-group lesson-repeat-field" hidden>
+            <label class="form-label" for="lesson_repeat_interval">Кожні скільки тижнів</label>
+            <input type="number" name="repeat_interval_weeks" id="lesson_repeat_interval" class="form-control" min="1" max="52" value="3" disabled>
+          </div>
+          <div class="form-col form-group">
+            <label class="form-label" for="lesson_repeat_end">Завершення повторень</label>
+            <select name="repeat_end" id="lesson_repeat_end" class="form-select" disabled>
+              <option value="count">За кількістю уроків</option>
+              <option value="date">До дати включно</option>
+            </select>
+          </div>
+          <div id="lessonRepeatCountField" class="form-col form-group lesson-repeat-field">
+            <label class="form-label" for="lesson_repeat_count">Кількість уроків, разом із першим</label>
+            <input type="number" name="repeat_count" id="lesson_repeat_count" class="form-control" min="2" max="100" value="4" disabled>
+          </div>
+          <div id="lessonRepeatUntilField" class="form-col form-group lesson-repeat-field" hidden>
+            <label class="form-label" for="lesson_repeat_until">Остання можлива дата</label>
+            <input type="date" name="repeat_until" id="lesson_repeat_until" class="form-control" max="{{ journal.academic_year.end_date|date:'Y-m-d' }}" value="{{ journal.academic_year.end_date|date:'Y-m-d' }}" disabled>
+          </div>
+        </div>
+        <small>Тема, тип, час, текст ДЗ і примітки повторюються. Кожен урок можна редагувати окремо. Дата ДЗ зсувається разом з уроком; «Наступний урок» визначається окремо для кожного.</small>
+        <p id="lessonRepeatPreview" aria-live="polite" class="lesson-repeat-preview"></p>
+      </div>
+      {% if plan_topics %}
+        <div class="form-group">
+          <label class="form-label">Взяти тему з календарного плану (опціонально):</label>
+          <select id="plan_topic_select" class="form-select" onchange="selectPlanTopic(this)">
+            <option value="">-- Оберіть тему з плану або введіть вручну нижче --</option>
+            {% for pt in plan_topics %}
+              <option value="{{ pt.id }}" data-title="{{ pt.title }}" data-hw="{{ pt.homework }}" data-date="{{ pt.planned_date|date:'Y-m-d' }}" data-type="{{ pt.lesson_type }}">
+                №{{ pt.topic_number }}. {{ pt.title }}
+              </option>
+            {% endfor %}
+          </select>
+        </div>
+      {% endif %}
+
+      <div class="form-group">
+        <label class="form-label">Тема уроку *</label>
+        <input type="text" name="topic" id="lesson_topic_input" class="form-control" required placeholder="напр. Розв'язування лінійних рівнянь">
+      </div>
+
+      <div class="form-group"><label class="form-label" for="create_homework_target">Домашнє завдання на дату</label><select name="homework_target" id="create_homework_target" class="form-select"><option value="next">Наступний урок (автоматично)</option></select><small>Дні уроків цього журналу, починаючи з вибраної дати.</small></div>
+      <div class="form-group">
+        <label class="form-label">Домашнє завдання</label>
+        <textarea name="homework" id="lesson_hw_input" class="form-control" rows="2" placeholder="напр. § 4, вправи 120-125"></textarea>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">Примітка до уроку</label>
+        <input type="text" name="notes" class="form-control" placeholder="Додаткові відомості">
+      </div>
+      </fieldset>
+      <fieldset id="createLessonSummaryFields" class="lesson-kind-fields" hidden disabled>
+        <div class="form-group">
+          <label class="form-label" for="create_summary_title">Назва колонки (необов'язково)</label>
+          <input type="text" name="title" id="create_summary_title" class="form-control" maxlength="255" placeholder="За замовчуванням — назва вибраного типу оцінювання">
+        </div>
+        <p class="text-muted">Створіть підсумкову колонку для ручного виставлення оцінок або оберіть автоматичний розрахунок за датами, темами та типами уроків.</p>
+        <a id="create_summary_calculate" href="{% url 'portal:assessment_calculate' journal_id=journal.id %}" class="btn btn-secondary" onclick="return validateSummaryCalculation()">Автоматично розрахувати</a>
+      </fieldset>
+
+      <div style="display: flex; justify-content: flex-end; gap: 0.75rem; margin-top: 1.5rem;">
+        <button type="button" class="btn btn-secondary" onclick="closeModal('createLessonModal')">Скасувати</button>
+        <button type="submit" id="lessonCreateSubmit" class="btn btn-primary">Зберегти урок</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- Модальне вікно: Редагування уроку -->
+<div id="editLessonModal" class="modal-overlay">
+  <div class="modal-card">
+    <div class="modal-header">
+      <h3 class="modal-title">
+        Урок <span id="edit_lesson_date"></span> (№<span id="edit_lesson_number"></span>)
+      </h3>
+      <button class="modal-close" onclick="closeModal('editLessonModal')">&times;</button>
+    </div>
+    <form id="editLessonForm" method="post" data-action-template="{% url 'portal:lesson_edit' journal_id=journal.id lesson_id=0 %}">
+      <input type="hidden" name="school_time_list" value="1">
+      {% csrf_token %}
+      <input type="hidden" id="edit_lesson_id">
+      <div class="form-row">
+        <div class="form-col form-group"><label class="form-label" for="edit_date_input">Дата уроку</label><input type="date" name="date" id="edit_date_input" class="form-control" required><small id="edit_date_hint"></small></div>
+        <div class="form-col form-group"><label class="form-label" for="edit_number_input">Номер на дату</label><input type="number" name="lesson_number" id="edit_number_input" class="form-control" min="1" max="32767" required></div>
+        <div class="form-col form-group"><label class="form-label" for="edit_time_input">Час уроку</label>
+          <select name="lesson_time" id="edit_time_input" class="form-control"><option value="">Без часу</option>
+            {% for slot in lesson_time_slots %}<option value="{{ slot.start_time|time:'H:i' }}">{{ slot }}</option>{% endfor %}
+          </select>
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">Тип уроку</label>
+        <select name="lesson_type" id="edit_lesson_type" class="form-select">
+          {% for lt_val, lt_name in lesson_types %}
+            <option value="{{ lt_val }}">{{ lt_name }}</option>
+          {% endfor %}
+        </select>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">Тема уроку *</label>
+        <input type="text" name="topic" id="edit_lesson_topic" class="form-control" required>
+      </div>
+
+      <div class="form-group"><label class="form-label" for="edit_homework_target">Домашнє завдання на дату</label><select name="homework_target" id="edit_homework_target" class="form-select"></select><small>Дні уроків цього журналу, починаючи з вибраної дати.</small></div>
+      <div class="form-group">
+        <label class="form-label">Домашнє завдання</label>
+        <textarea name="homework" id="edit_lesson_hw" class="form-control" rows="2"></textarea>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">Примітка</label>
+        <input type="text" name="notes" id="edit_lesson_notes" class="form-control">
+      </div>
+
+      <div class="alert alert-info" style="font-size: 0.8rem; margin-top: 1rem;">
+        Зміна теми чи типу уроку не видаляє та не змінює виставлені оцінки учнів!
+      </div>
+
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 1.5rem;">
+        <button type="button" class="btn btn-secondary" onclick="closeModal('editLessonModal')">Закрити</button>
+        <button type="submit" class="btn btn-primary">Зберегти зміни</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div id="swapTopicsModal" class="modal-overlay"><div class="modal-card">
+  <div class="modal-header"><h3 class="modal-title">Обміняти теми уроків</h3><button type="button" class="modal-close" onclick="closeModal('swapTopicsModal')">&times;</button></div>
+  <p>Оцінки, відвідування, дати та онлайн-прив'язки залишаться у своїх колонках. Теми, домашні завдання й примітки поміняються місцями.</p>
+  <form method="post" action="{% url 'portal:lesson_swap' journal_id=journal.id %}">{% csrf_token %}
+    <input type="hidden" name="first_id" id="swap_first_id"><p id="swap_first_label"></p>
+    <label class="form-label" for="swap_second_id">Обміняти з уроком</label><select name="second_id" id="swap_second_id" class="form-select" required></select>
+    <button type="submit" class="btn btn-primary" style="margin-top:1rem">Обміняти теми</button>
+  </form>
+</div></div>
+<!-- Швидкий багаторівневий селектор оцінок та відвідування (Quick Picker Popup) -->
+<div id="journalQuickPicker" class="journal-quick-picker" style="display: none;">
+  <!-- Шапка пікера: статус активного учня та закриття -->
+  <div class="quick-picker-header">
+    <div class="quick-picker-info">
+      <span class="quick-picker-student-name" id="qpStudentName">Учень</span>
+      <span class="quick-picker-lesson-info" id="qpLessonInfo">Урок</span>
+    </div>
+    <button type="button" class="quick-picker-close-btn" onclick="closeQuickPicker()">&times;</button>
+  </div>
+
+  <!-- Рівень 1: Відвідуваність та очищення -->
+  <div class="quick-picker-level-label">Відвідуваність:</div>
+  <div class="quick-picker-att-row">
+    <button type="button" class="qp-btn qp-att-absent" data-value="Н" title="Н — Неповажна причина відсутності">
+      <span class="qp-badge">Н</span>
+      <span class="qp-text">Неповажна</span>
+    </button>
+    <button type="button" class="qp-btn qp-att-excused" data-value="ХВ" title="ХВ — Хвороба / Поважна причина">
+      <span class="qp-badge">ХВ</span>
+      <span class="qp-text">Хвороба</span>
+    </button>
+    <button type="button" class="qp-btn qp-att-late" data-value="ЗП" title="ЗП — Запізнився на урок">
+      <span class="qp-badge">ЗП</span>
+      <span class="qp-text">Запізнення</span>
+    </button>
+    <button type="button" class="qp-btn qp-clear" data-value="" title="Очистити відмітку (Присутній)">
+      <span class="qp-badge">✕</span>
+      <span class="qp-text">Очистити</span>
+    </button>
+  </div>
+
+  <!-- Рівень 2: Оцінки 1-12 за рівнями МОН -->
+  <div class="quick-picker-level-label">Оцінки (за рівнями):</div>
+  <div class="quick-picker-grades-grid">
+    <!-- Високий рівень (10, 11, 12) -->
+    <div class="qp-tier-row qp-tier-high" title="Високий рівень (10-12)">
+      <span class="qp-tier-name">Високий:</span>
+      <div class="qp-tier-buttons">
+        <button type="button" class="qp-btn qp-grade qp-grade-high" data-value="10">10</button>
+        <button type="button" class="qp-btn qp-grade qp-grade-high" data-value="11">11</button>
+        <button type="button" class="qp-btn qp-grade qp-grade-high" data-value="12">12</button>
+      </div>
+    </div>
+    <!-- Достатній рівень (7, 8, 9) -->
+    <div class="qp-tier-row qp-tier-sufficient" title="Достатній рівень (7-9)">
+      <span class="qp-tier-name">Достатній:</span>
+      <div class="qp-tier-buttons">
+        <button type="button" class="qp-btn qp-grade qp-grade-sufficient" data-value="7">7</button>
+        <button type="button" class="qp-btn qp-grade qp-grade-sufficient" data-value="8">8</button>
+        <button type="button" class="qp-btn qp-grade qp-grade-sufficient" data-value="9">9</button>
+      </div>
+    </div>
+    <!-- Середній рівень (4, 5, 6) -->
+    <div class="qp-tier-row qp-tier-medium" title="Середній рівень (4-6)">
+      <span class="qp-tier-name">Середній:</span>
+      <div class="qp-tier-buttons">
+        <button type="button" class="qp-btn qp-grade qp-grade-medium" data-value="4">4</button>
+        <button type="button" class="qp-btn qp-grade qp-grade-medium" data-value="5">5</button>
+        <button type="button" class="qp-btn qp-grade qp-grade-medium" data-value="6">6</button>
+      </div>
+    </div>
+    <!-- Початковий рівень (1, 2, 3) -->
+    <div class="qp-tier-row qp-tier-low" title="Початковий рівень (1-3)">
+      <span class="qp-tier-name">Початковий:</span>
+      <div class="qp-tier-buttons">
+        <button type="button" class="qp-btn qp-grade qp-grade-low" data-value="1">1</button>
+        <button type="button" class="qp-btn qp-grade qp-grade-low" data-value="2">2</button>
+        <button type="button" class="qp-btn qp-grade qp-grade-low" data-value="3">3</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Рівень 3: Спеціальні позначки -->
+  <div class="quick-picker-special-row">
+    <button type="button" class="qp-btn qp-special" data-value="ЗАР" title="Зараховано">ЗАР</button>
+    <button type="button" class="qp-btn qp-special" data-value="НЕЗАР" title="Не зараховано">НЕЗАР</button>
+    <button type="button" class="qp-btn qp-special" data-value="ЗВ" title="Звільнено">ЗВ</button>
+    <button type="button" class="qp-btn qp-special" data-value="Н/А" title="Не атестовано">Н/А</button>
+  </div>
+</div>
+{% endif %}
+{{ lesson_choices|json_script:"journal-lesson-data" }}
+{% endblock %}

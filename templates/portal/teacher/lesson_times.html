@@ -1,0 +1,47 @@
+{% extends 'base.html' %}
+{% block title %}Час уроків | Журнал{% endblock %}
+{% block content %}
+<div class="schedule-page">
+  <div class="schedule-page-header">
+    <div><h1>Час уроків</h1><p class="text-muted">{{ school.name }} · Спільний список для всіх учителів школи</p></div>
+    <a href="{{ schedule_url }}" class="btn btn-secondary">Розклад на тиждень</a>
+  </div>
+  {% if user.is_superadmin_user %}
+  <form method="get" class="schedule-filters"><label for="timeSchool">Школа</label>
+    <select id="timeSchool" name="school_id" class="form-control" onchange="this.form.submit()">
+      {% for item in schools %}<option value="{{ item.pk }}"{% if item.pk == school.pk %} selected{% endif %}>{{ item.name }}</option>{% endfor %}
+    </select>
+  </form>
+  {% endif %}
+  <div class="schedule-card">
+    <h2>{% if editing_slot %}Змінити час уроку{% else %}Додати час уроку{% endif %}</h2>
+    <form method="post" action="{{ times_url }}" id="lessonTimeForm">
+      {% csrf_token %}<input type="hidden" name="school_id" value="{{ school.pk }}">
+      {% if editing_slot %}<input type="hidden" name="slot_id" value="{{ editing_slot.pk }}">{% endif %}
+      {{ form.non_field_errors }}
+      <div class="schedule-form-fields">
+        {% for field in form %}<div class="form-group"><label class="form-label" for="{{ field.id_for_label }}">{{ field.label }}</label>{{ field }}{{ field.errors }}</div>{% endfor %}
+      </div>
+      <p class="text-muted">Зміна часу застосовується до тижневого розкладу. Час уже створених уроків у журналах зберігається.</p>
+      <button type="submit" name="action" value="save" class="btn btn-primary">{% if editing_slot %}Зберегти зміни{% else %}Додати час{% endif %}</button>
+      {% if editing_slot %}<a href="{{ times_url }}" class="btn btn-secondary">Скасувати</a>{% endif %}
+    </form>
+  </div>
+  <div class="schedule-card">
+    <h2>Розклад дзвінків</h2>
+    <div class="schedule-table-scroll"><table class="schedule-settings-table">
+      <thead><tr><th>Урок</th><th>Початок</th><th>Завершення</th><th>Доступність</th><th>Дії</th></tr></thead>
+      <tbody>{% for slot in slots %}<tr>
+        <td>{{ slot.number }} урок</td><td>{{ slot.start_time|time:'H:i' }}</td><td>{{ slot.end_time|time:'H:i' }}</td>
+        <td>{% if slot.is_active %}Доступний{% else %}Лише в наявному розкладі{% endif %}</td>
+        <td class="schedule-row-actions"><a class="btn btn-secondary btn-sm" href="{{ times_url }}&edit={{ slot.pk }}">Змінити</a>
+          <form method="post" action="{{ times_url }}">{% csrf_token %}
+            <input type="hidden" name="school_id" value="{{ school.pk }}"><input type="hidden" name="slot_id" value="{{ slot.pk }}">
+            <button class="btn btn-secondary btn-sm" name="action" value="delete">Видалити</button>
+          </form>
+        </td>
+      </tr>{% empty %}<tr><td colspan="5" class="schedule-empty">Додайте початок і завершення уроків. Після цього час можна буде обирати зі списку в журналах та розкладі.</td></tr>{% endfor %}</tbody>
+    </table></div>
+  </div>
+</div>
+{% endblock %}

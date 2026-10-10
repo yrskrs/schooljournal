@@ -1,0 +1,91 @@
+import importlib.util
+import io
+import json
+import tarfile
+import tempfile
+import unittest
+from pathlib import Path
+
+spec = importlib.util.spec_from_file_location('snapshot_archives', Path(__file__).resolve().parents[1] / 'scripts/archive.py')
+snapshot = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(snapshot)
+
+
+class SnapshotSafetyTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory(prefix='synthetic-snapshot-test-')
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name) / 'source'
+        self.work = Path(self.tmp.name) / 'work'
+        self.root.mkdir()
+        self.work.mkdir()
+        (self.root / 'VERSION').write_text('1.0.0\n')
+        (self.root / 'manage.py').write_text('# Synthetic source only\n')
+        for name in ('.env', 'db.sqlite3'):
+            (self.root / name).write_text('synthetic-private-content')
+        for directory in ('backups', 'media', 'nz.uz', 'samples'):
+            (self.root / directory).mkdir()
+            (self.root / directory / 'private.txt').write_text('synthetic-private-content')
+        (self.work / 'database.dump').write_bytes(b'synthetic-dump')
+        (self.work / 'web-image.tar.gz').write_bytes(b'synthetic-image')
+        with tarfile.open(self.work / 'media.tar.gz', 'w:gz') as archive:
+            item = tarfile.TarInfo('synthetic.txt')
+            item.size = 5
+            archive.addfile(item, io.BytesIO(b'media'))
+        snapshot.create(self.work, self.root, 'sha256:' + 'a' * 64)
+
+    def pack(self):
+        target = Path(self.tmp.name) / 'backup.tar.gz'
+        with tarfile.open(target, 'w:gz') as archive:
+            for name in snapshot.MEMBERS:
+                archive.add(self.work / name, arcname=name)
+        return target
+
+    def test_source_excludes_credentials_databases_and_private_folders(self):
+        with tarfile.open(self.work / 'source.tar.gz') as archive:
+            self.assertEqual(set(archive.getnames()), {'VERSION', 'manage.py'})
+        destination = Path(self.tmp.name) / 'verified'
+        destination.mkdir()
+        snapshot.extract(self.pack(), destination)
+
+    def test_corruption_is_rejected(self):
+        (self.work / 'database.dump').write_bytes(b'corrupted')
+        destination = Path(self.tmp.name) / 'rejected'
+        destination.mkdir()
+        with self.assertRaisesRegex(ValueError, 'Checksum mismatch'):
+            snapshot.extract(self.pack(), destination)
+
+    def test_traversal_and_symlinks_are_rejected(self):
+        for name, link in (('../escape', False), ('link', True)):
+            archive_path = Path(self.tmp.name) / 'unsafe.tar.gz'
+            with tarfile.open(archive_path, 'w:gz') as archive:
+                item = tarfile.TarInfo(name)
+                if link:
+                    item.type = tarfile.SYMTYPE
+                    item.linkname = '/etc/passwd'
+                archive.addfile(item)
+            destination = Path(self.tmp.name) / ('rejected-' + str(link))
+            destination.mkdir()
+            with self.assertRaises(ValueError):
+                snapshot.extract(archive_path, destination)
+        self.assertFalse((Path(self.tmp.name) / 'escape').exists())
+
+    def test_missing_payload_is_rejected(self):
+        archive_path = Path(self.tmp.name) / 'incomplete.tar.gz'
+        with tarfile.open(archive_path, 'w:gz') as archive:
+            archive.add(self.work / 'manifest.json', arcname='manifest.json')
+        destination = Path(self.tmp.name) / 'incomplete'
+        destination.mkdir()
+        with self.assertRaisesRegex(ValueError, 'Incomplete'):
+            snapshot.extract(archive_path, destination)
+
+    def test_source_restore_preserves_env_and_removes_obsolete_source(self):
+        destination = Path(self.tmp.name) / 'installed'
+        destination.mkdir()
+        (destination / '.env').write_text('synthetic-retained-secret')
+        (destination / 'apps').mkdir()
+        (destination / 'apps' / 'obsolete.py').write_text('# obsolete')
+        snapshot.install_source(self.work / 'source.tar.gz', destination)
+        self.assertEqual((destination / '.env').read_text(), 'synthetic-retained-secret')
+        self.assertEqual((destination / 'VERSION').read_text(), '1.0.0\n')
+        self.assertFalse((destination / 'apps' / 'obsolete.py').exists())

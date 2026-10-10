@@ -1,0 +1,51 @@
+{% extends 'base.html' %}
+
+{% block title %}Створення журналу | Електронний шкільний журнал{% endblock %}
+
+{% block content %}
+<div style="max-width: 600px; margin: 2rem auto;">
+  <div class="card" style="padding: 2rem;">
+    <div class="card-header" style="border: none; padding: 0; margin-bottom: 1.5rem;">
+      <div>
+        <h1 style="font-size: 1.5rem; font-weight: 700; color: var(--primary-dark);">Створення журналу</h1>
+        <p style="color: var(--text-muted); font-size: 0.9rem;">
+          Оберіть навчальний рік, клас та предмет із призначених вам варіантів.
+        </p>
+      </div>
+    </div>
+
+    {% if assignments %}
+      <form method="post">
+        {% csrf_token %}
+
+        <div class="form-group">
+          <label class="form-label">Призначення (Клас &bull; Предмет &bull; Рік) *</label>
+          <select name="assignment_id" class="form-select" required size="5" style="height: auto;">
+            {% for a in assignments %}
+              <option value="{{ a.id }}" {% if forloop.first %}selected{% endif %} style="padding: 0.5rem;">
+                {{ a.student_class.name }} клас — {{ a.subject.name }} ({{ a.academic_year.name }})
+              </option>
+            {% endfor %}
+          </select>
+        </div>
+
+        <div class="alert alert-info" style="font-size: 0.85rem; margin-top: 1rem;">
+          Список учнів класу спільний для всіх предметів цього класу. Усі внесені раніше учні автоматично з'являться у новоствореному журналі.
+        </div>
+
+        <div style="display: flex; justify-content: flex-end; gap: 0.75rem; margin-top: 1.5rem;">
+          <a href="{% url 'portal:teacher_dashboard' %}" class="btn btn-secondary">Скасувати</a>
+          <button type="submit" class="btn btn-primary">Створити та відкрити журнал</button>
+        </div>
+      </form>
+    {% else %}
+      <div class="alert alert-warning">
+        У вас наразі немає активних призначень на предмети та класи. Зверніться до адміністратора закладу для призначення навантаження.
+      </div>
+      <div style="margin-top: 1rem;">
+        <a href="{% url 'portal:teacher_dashboard' %}" class="btn btn-secondary">&larr; Повернутися назад</a>
+      </div>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

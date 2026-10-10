@@ -1,0 +1,146 @@
+{% extends 'base.html' %}
+
+{% block title %}Керування закладами освіти | Шкільний журнал{% endblock %}
+
+{% block content %}
+<div class="card-header" style="border: none; padding: 0; margin-bottom: 1.5rem;">
+  <div>
+    <h1 style="font-size: 1.6rem; font-weight: 700; color: var(--primary-dark);">Заклади освіти (Школи)</h1>
+    <p style="color: var(--text-muted); font-size: 0.9rem;">
+      Створення, редагування та архівація шкіл. Дані кожної школи суворо ізольовані.
+    </p>
+  </div>
+  <div>
+    {% if user.is_superadmin_user %}<button class="btn btn-primary" onclick="openModal('createSchoolModal')">
+      + Додати заклад освіти
+    </button>{% endif %}
+  </div>
+</div>
+
+<div class="card" style="padding: 0; overflow: hidden;">
+  <table style="width: 100%; border-collapse: collapse; font-size: 0.9rem;">
+    <thead>
+      <tr style="background-color: var(--bg-alt); border-bottom: 2px solid var(--border); text-align: left;">
+        <th style="padding: 0.75rem 1rem;">Повна назва</th>
+        <th style="padding: 0.75rem 1rem;">Код ЄДРПОУ</th>
+        <th style="padding: 0.75rem 1rem;">Телефон</th>
+        <th style="padding: 0.75rem 1rem;">Email</th>
+        <th style="padding: 0.75rem 1rem; text-align: center;">Статус</th>
+        <th style="padding: 0.75rem 1rem; text-align: right;">Дії</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for school in schools %}
+        <tr style="border-bottom: 1px solid var(--border);">
+          <td style="padding: 0.75rem 1rem; font-weight: 600; color: var(--primary-dark);">
+            {{ school.name }}
+            {% if school.short_name %}
+              <div style="font-size: 0.8rem; color: var(--text-muted); font-weight: normal;">
+                {{ school.short_name }}
+              </div>
+            {% endif %}
+          </td>
+          <td style="padding: 0.75rem 1rem; color: var(--text-muted);">
+            {{ school.edrpou_code|default:"—" }}
+          </td>
+          <td style="padding: 0.75rem 1rem;">{{ school.phone|default:"—" }}</td>
+          <td style="padding: 0.75rem 1rem;">{{ school.email|default:"—" }}</td>
+          <td style="padding: 0.75rem 1rem; text-align: center;">
+            {% if school.is_active %}
+              <span class="user-role-pill" style="background-color: var(--success-bg); color: var(--success);">Активна</span>
+            {% else %}
+              <span class="user-role-pill" style="background-color: var(--danger-bg); color: var(--danger);">Архів</span>
+            {% endif %}
+          </td>
+          <td style="padding: 0.75rem 1rem; text-align: right;">
+            <div style="display: inline-flex; gap: 0.5rem;">
+              <button type="button" class="btn btn-secondary btn-sm" onclick="openModal('editSchool{{ school.pk }}')">Редагувати</button>
+              {% if user.is_superadmin_user %}<form method="post" style="display: inline;">
+                {% csrf_token %}
+                <input type="hidden" name="action" value="toggle_active">
+                <input type="hidden" name="school_id" value="{{ school.id }}">
+                <button type="submit" class="btn btn-secondary btn-sm" title="Змінити статус">
+                  {% if school.is_active %}Архівувати{% else %}Відновити{% endif %}
+                </button>
+              </form>{% endif %}
+            </div>
+          </td>
+        </tr>
+      {% empty %}
+        <tr>
+          <td colspan="6" style="padding: 2rem; text-align: center; color: var(--text-muted);">
+            У системі ще немає зареєстрованих шкіл. Створіть першу школу!
+          </td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+{% for school in schools %}
+<div id="editSchool{{ school.pk }}" class="modal-overlay">
+  <div class="modal-card">
+    <div class="modal-header"><h3 class="modal-title">Дані школи</h3><button type="button" class="modal-close" onclick="closeModal('editSchool{{ school.pk }}')">&times;</button></div>
+    <form method="post">
+      {% csrf_token %}
+      <input type="hidden" name="action" value="edit">
+      <input type="hidden" name="school_id" value="{{ school.pk }}">
+      {{ school.edit_form.as_p }}
+      <button class="btn btn-primary" type="submit">Зберегти</button>
+    </form>
+  </div>
+</div>
+{% endfor %}
+{% if user.is_superadmin_user %}
+<!-- Модальне вікно створення школи -->
+<div id="createSchoolModal" class="modal-overlay">
+  <div class="modal-card">
+    <div class="modal-header">
+      <h3 class="modal-title">Створення нового закладу освіти</h3>
+      <button class="modal-close" onclick="closeModal('createSchoolModal')">&times;</button>
+    </div>
+    <form method="post">
+      {% csrf_token %}
+      <input type="hidden" name="action" value="create">
+
+      <div class="form-group">
+        <label class="form-label">Повна назва закладу *</label>
+        <input type="text" name="name" class="form-control" placeholder="напр. Ліцей №1 ім. Івана Франка" required>
+      </div>
+
+      <div class="form-row">
+        <div class="form-col form-group">
+          <label class="form-label">Коротка назва</label>
+          <input type="text" name="short_name" class="form-control" placeholder="Ліцей №1">
+        </div>
+        <div class="form-col form-group">
+          <label class="form-label">Код ЄДРПОУ</label>
+          <input type="text" name="edrpou_code" class="form-control" placeholder="12345678">
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">Адреса</label>
+        <input type="text" name="address" class="form-control" placeholder="м. Київ, вул. Шевченка, 10">
+      </div>
+
+      <div class="form-row">
+        <div class="form-col form-group">
+          <label class="form-label">Контактний телефон</label>
+          <input type="text" name="phone" class="form-control" placeholder="+380...">
+        </div>
+        <div class="form-col form-group">
+          <label class="form-label">Email</label>
+          <input type="email" name="email" class="form-control" placeholder="school@example.com">
+        </div>
+      </div>
+
+      <div style="display: flex; justify-content: flex-end; gap: 0.75rem; margin-top: 1.5rem;">
+        <button type="button" class="btn btn-secondary" onclick="closeModal('createSchoolModal')">Скасувати</button>
+        <button type="submit" class="btn btn-primary">Зберегти заклад</button>
+      </div>
+    </form>
+  </div>
+</div>
+{% endif %}
+{% endblock %}

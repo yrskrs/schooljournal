@@ -1,0 +1,116 @@
+{% extends 'base.html' %}
+
+{% block title %}Історія синхронізацій з nz.ua | {{ journal.student_class.name }} — {{ journal.subject.name }}{% endblock %}
+
+{% block content %}
+<div class="card-header" style="border: none; padding: 0; margin-bottom: 1.5rem; display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 1rem;">
+  <div>
+    <div style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.25rem;">
+      <a href="{% url 'portal:journal_detail' journal_id=journal.id %}" class="btn btn-sm btn-secondary" style="padding: 0.2rem 0.5rem;">
+        &larr; До журналу
+      </a>
+      <h1 style="font-size: 1.6rem; font-weight: 700; color: var(--primary-dark); margin: 0;">
+        Звіти синхронізації з nz.ua
+      </h1>
+    </div>
+    <p style="color: var(--text-muted); font-size: 0.95rem; margin: 0;">
+      Журнал: <strong>{{ journal.student_class.name }} &mdash; {{ journal.subject.name }}</strong> &bull; nz.ua ID: <code>{{ journal.nz_journal_id|default:"не прив'язано" }}</code>
+    </p>
+  </div>
+</div>
+
+<div class="card" style="padding: 1.5rem;">
+  {% if logs %}
+    <div class="table-responsive">
+      <table class="table" style="width: 100%; border-collapse: collapse; font-size: 0.9rem;">
+        <thead>
+          <tr style="background: #f8fafc; border-bottom: 2px solid #e2e8f0; text-align: left; color: #475569;">
+            <th style="padding: 0.75rem 1rem;">Дата та час</th>
+            <th style="padding: 0.75rem 1rem;">Користувач</th>
+            <th style="padding: 0.75rem 1rem;">Статус</th>
+            <th style="padding: 0.75rem 1rem;">Записів</th>
+            <th style="padding: 0.75rem 1rem;">Успішно</th>
+            <th style="padding: 0.75rem 1rem;">Помилок</th>
+            <th style="padding: 0.75rem 1rem;">Деталі</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for log in logs %}
+            <tr style="border-bottom: 1px solid #f1f5f9; vertical-align: top;">
+              <td style="padding: 0.75rem 1rem; font-weight: 600; color: #0f172a;">
+                {{ log.created_at|date:"d.m.Y H:i:s" }}
+              </td>
+              <td style="padding: 0.75rem 1rem; color: #475569;">
+                {{ log.user.get_short_name_ukr|default:log.user.username }}
+              </td>
+              <td style="padding: 0.75rem 1rem;">
+                {% if log.status == 'SUCCESS' %}
+                  <span class="badge" style="background: #16a34a; color: white; padding: 0.35rem 0.65rem; border-radius: 6px;">
+                    Успішно
+                  </span>
+                {% elif log.status == 'PARTIAL' %}
+                  <span class="badge" style="background: #f59e0b; color: white; padding: 0.35rem 0.65rem; border-radius: 6px;">
+                    Частково
+                  </span>
+                {% else %}
+                  <span class="badge" style="background: #dc2626; color: white; padding: 0.35rem 0.65rem; border-radius: 6px;">
+                    Помилка
+                  </span>
+                {% endif %}
+                {% if log.details.dry_run %}
+                  <span class="badge" style="background: #64748b; color: white; font-size: 0.75rem; margin-left: 0.25rem;">Dry-Run</span>
+                {% endif %}
+              </td>
+              <td style="padding: 0.75rem 1rem; font-weight: 600;">
+                {{ log.items_count }}
+              </td>
+              <td style="padding: 0.75rem 1rem; color: #16a34a; font-weight: 600;">
+                {{ log.success_count }}
+              </td>
+              <td style="padding: 0.75rem 1rem; color: {% if log.error_count > 0 %}#dc2626{% else %}#64748b{% endif %}; font-weight: 600;">
+                {{ log.error_count }}
+              </td>
+              <td style="padding: 0.75rem 1rem; font-size: 0.82rem;">
+                {% if log.details.items %}
+                  <details>
+                    <summary style="cursor: pointer; color: var(--primary); font-weight: 500;">
+                      Переглянути {{ log.details.items|length }} записів
+                    </summary>
+                    <ul style="margin: 0.5rem 0 0 1rem; padding: 0; color: #334155;">
+                      {% for itm in log.details.items %}
+                        <li style="margin-bottom: 0.25rem;">
+                          {% if itm.status == 'success' or itm.status == 'dry_run_success' %}
+                            <span style="color: #16a34a;">&#10003;</span>
+                          {% else %}
+                            <span style="color: #dc2626;">&#10007;</span>
+                          {% endif %}
+                          {{ itm.item }}
+                          {% if itm.error %}
+                            <span style="color: #dc2626; font-style: italic;">({{ itm.error }})</span>
+                          {% endif %}
+                        </li>
+                      {% endfor %}
+                    </ul>
+                  </details>
+                {% else %}
+                  <span style="color: #94a3b8;">Немає деталей</span>
+                {% endif %}
+                {% if log.error_message %}
+                  <div style="color: #dc2626; margin-top: 0.25rem;">
+                    {{ log.error_message }}
+                  </div>
+                {% endif %}
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% else %}
+    <div style="padding: 2.5rem; text-align: center; color: var(--text-muted);">
+      <p style="font-size: 1.1rem; margin-bottom: 0.5rem;">Історія синхронізацій порожня.</p>
+      <p style="font-size: 0.85rem;">Тут будуть відображатись звіти кожного вивантаження оцінок та тем у цей журнал на nz.ua.</p>
+    </div>
+  {% endif %}
+</div>
+{% endblock %}

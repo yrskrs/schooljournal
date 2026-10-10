@@ -1,0 +1,145 @@
+{% extends 'base.html' %}
+
+{% block title %}Призначення вчителів | Шкільний журнал{% endblock %}
+
+{% block content %}
+<div class="card-header" style="border: none; padding: 0; margin-bottom: 1.5rem;">
+  <div>
+    <h1 style="font-size: 1.6rem; font-weight: 700; color: var(--primary-dark);">Призначення вчителів</h1>
+    <p style="color: var(--text-muted); font-size: 0.9rem;">
+      Призначення вчителів до навчальних предметів та класів (формує право створення відповідних журналів).
+    </p>
+  </div>
+
+  <div style="display: flex; gap: 0.75rem; align-items: center;">
+    <form method="get" style="display: flex; align-items: center; gap: 0.5rem;">
+      <select name="school_id" class="form-select" onchange="this.form.submit()">
+        {% for s in schools %}
+          <option value="{{ s.id }}" {% if s.id == selected_school.id %}selected{% endif %}>
+            {{ s.name }}
+          </option>
+        {% endfor %}
+      </select>
+    </form>
+    <button class="btn btn-primary" onclick="openModal('createAssignmentModal')">
+      + Нове призначення
+    </button>
+  </div>
+</div>
+
+<div class="card" style="padding: 0; overflow: hidden;">
+  <table style="width: 100%; border-collapse: collapse; font-size: 0.9rem;">
+    <thead>
+      <tr style="background-color: var(--bg-alt); border-bottom: 2px solid var(--border); text-align: left;">
+        <th style="padding: 0.75rem 1rem;">Вчитель</th>
+        <th style="padding: 0.75rem 1rem;">Предмет</th>
+        <th style="padding: 0.75rem 1rem;">Клас</th>
+        <th style="padding: 0.75rem 1rem;">Навчальний рік</th>
+        <th style="padding: 0.75rem 1rem; text-align: center;">Статус</th>
+        <th style="padding: 0.75rem 1rem; text-align: right;">Дії</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for a in assignments %}
+        <tr style="border-bottom: 1px solid var(--border);">
+          <td style="padding: 0.75rem 1rem; font-weight: 600; color: var(--primary-dark);">
+            {{ a.teacher.get_full_name_ukr }}
+          </td>
+          <td style="padding: 0.75rem 1rem; font-weight: 500;">
+            {{ a.subject.name }}
+          </td>
+          <td style="padding: 0.75rem 1rem;">
+            <span class="user-role-pill" style="background: white; border: 1px solid var(--border);">
+              {{ a.student_class.name }}
+            </span>
+          </td>
+          <td style="padding: 0.75rem 1rem; color: var(--text-muted);">
+            {{ a.academic_year.name }}
+          </td>
+          <td style="padding: 0.75rem 1rem; text-align: center;">
+            <span class="user-role-pill" style="background-color: var(--success-bg); color: var(--success);">
+              Активне
+            </span>
+          </td>
+          <td style="padding: 0.75rem 1rem; text-align: right;">
+            <form method="post" style="display: inline;" onsubmit="return confirm('Видалити це призначення?');">
+              {% csrf_token %}
+              <input type="hidden" name="action" value="delete">
+              <input type="hidden" name="assignment_id" value="{{ a.id }}">
+              <button type="submit" class="btn btn-secondary btn-sm" style="color: var(--danger);">
+                Видалити
+              </button>
+            </form>
+          </td>
+        </tr>
+      {% empty %}
+        <tr>
+          <td colspan="6" style="padding: 2rem; text-align: center; color: var(--text-muted);">
+            Призначень ще немає. Додайте призначення для вчителів школи.
+          </td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<!-- Модальне вікно призначення -->
+<div id="createAssignmentModal" class="modal-overlay">
+  <div class="modal-card">
+    <div class="modal-header">
+      <h3 class="modal-title">Нове призначення вчителя</h3>
+      <button class="modal-close" onclick="closeModal('createAssignmentModal')">&times;</button>
+    </div>
+    <form method="post">
+      {% csrf_token %}
+      <input type="hidden" name="action" value="create">
+      <input type="hidden" name="school_id" value="{{ selected_school.id }}">
+
+      <div class="form-group">
+        <label class="form-label">Вчитель *</label>
+        <select name="teacher_id" class="form-select" required>
+          <option value="">Оберіть вчителя...</option>
+          {% for t in teachers %}
+            <option value="{{ t.id }}">{{ t.get_full_name_ukr }} ({{ t.username }})</option>
+          {% endfor %}
+        </select>
+      </div>
+
+      <div class="form-row">
+        <div class="form-col form-group">
+          <label class="form-label">Предмет *</label>
+          <select name="subject_id" class="form-select" required>
+            <option value="">Оберіть предмет...</option>
+            {% for s in subjects %}
+              <option value="{{ s.id }}">{{ s.name }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="form-col form-group">
+          <label class="form-label">Клас *</label>
+          <select name="class_id" class="form-select" required>
+            <option value="">Оберіть клас...</option>
+            {% for c in classes %}
+              <option value="{{ c.id }}">{{ c.name }} ({{ c.academic_year.name }})</option>
+            {% endfor %}
+          </select>
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">Навчальний рік *</label>
+        <select name="year_id" class="form-select" required>
+          {% for y in years %}
+            <option value="{{ y.id }}" {% if y.is_current %}selected{% endif %}>{{ y.name }}</option>
+          {% endfor %}
+        </select>
+      </div>
+
+      <div style="display: flex; justify-content: flex-end; gap: 0.75rem; margin-top: 1.5rem;">
+        <button type="button" class="btn btn-secondary" onclick="closeModal('createAssignmentModal')">Скасувати</button>
+        <button type="submit" class="btn btn-primary">Зберегти призначення</button>
+      </div>
+    </form>
+  </div>
+</div>
+{% endblock %}

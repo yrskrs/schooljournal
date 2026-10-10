@@ -1,0 +1,15 @@
+{% extends 'base.html' %}
+
+{% block title %}Не призначено до школи | Шкільний журнал{% endblock %}
+
+{% block content %}
+<div style="max-width: 500px; margin: 3rem auto; text-align: center;">
+  <div class="card" style="padding: 2.5rem;">
+    <h2 style="color: var(--warning); margin-bottom: 0.75rem;">Заклад освіти не призначено</h2>
+    <p style="color: var(--text-muted); font-size: 0.95rem; margin-bottom: 1.5rem;">
+      Ваш обліковий запис вчителя ще не закріплено за жодною школою. Будь ласка, зверніться до суперадміністратора системи.
+    </p>
+    <a href="{% url 'logout' %}" class="btn btn-secondary">Вийти</a>
+  </div>
+</div>
+{% endblock %}

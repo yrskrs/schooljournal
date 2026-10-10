@@ -1,0 +1,16 @@
+{% extends 'base.html' %}
+
+{% block title %}Сторінку не знайдено (404) | Шкільний журнал{% endblock %}
+
+{% block content %}
+<div style="max-width: 500px; margin: 4rem auto; text-align: center;">
+  <div class="card" style="padding: 2.5rem;">
+    <h1 style="font-size: 3rem; font-weight: 700; color: var(--primary); margin-bottom: 0.5rem;">404</h1>
+    <h2 style="font-size: 1.3rem; margin-bottom: 0.75rem;">Сторінку не знайдено</h2>
+    <p style="color: var(--text-muted); font-size: 0.95rem; margin-bottom: 1.5rem;">
+      Запитуваний запис або сторінка не існує або була переміщена.
+    </p>
+    <a href="{% url 'portal:dashboard' %}" class="btn btn-primary">Повернутися на головну</a>
+  </div>
+</div>
+{% endblock %}

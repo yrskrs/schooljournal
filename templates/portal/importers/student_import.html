@@ -1,0 +1,175 @@
+{% extends 'base.html' %}
+
+{% block title %}Імпорт учнів | Електронний шкільний журнал{% endblock %}
+
+{% block content %}
+<div style="max-width: 900px; margin: 1.5rem auto;">
+  <div class="card" style="padding: 2rem;">
+    <div class="card-header" style="border: none; padding: 0; margin-bottom: 1.5rem;">
+      <div>
+        <h1 style="font-size: 1.5rem; font-weight: 700; color: var(--primary-dark);">Імпорт учнів</h1>
+        <p style="color: var(--text-muted); font-size: 0.9rem;">
+          {% if target_class %}
+            Імпорт списку учнів для класу <strong>{{ target_class.name }}</strong> ({{ school.name }})
+          {% else %}
+            Імпорт учнів закладу: <strong>{{ school.name }}</strong>
+          {% endif %}
+        </p>
+      </div>
+      <div>
+        <div style="display: inline-flex; gap: 0.5rem;">
+          <a href="{% url 'portal:download_template' template_type='students' fmt='xlsx' %}" class="btn btn-secondary btn-sm">
+            Шаблон XLSX
+          </a>
+          <a href="{% url 'portal:download_template' template_type='students' fmt='csv' %}" class="btn btn-secondary btn-sm">
+            Шаблон CSV
+          </a>
+        </div>
+      </div>
+    </div>
+
+    {% if step == 'upload' %}
+      <!-- Крок 1: Завантаження файлу -->
+      <form method="post" enctype="multipart/form-data">
+        {% csrf_token %}
+        <input type="hidden" name="action" value="upload_file">
+
+        <div class="form-group" style="padding: 2.5rem; border: 2px dashed var(--border); border-radius: var(--radius-md); text-align: center; background: var(--bg-alt);">
+          <div style="font-size: 2.5rem; margin-bottom: 0.5rem; color: var(--primary);">&#128196;</div>
+          <div style="font-weight: 600; font-size: 1.1rem; color: var(--primary-dark); margin-bottom: 0.25rem;">
+            Оберіть файл для імпорту (XLSX або CSV)
+          </div>
+          <div style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 1.25rem;">
+            Підтримуються файли Excel (.xlsx) та таблиці CSV у кодуванні UTF-8.
+          </div>
+          <input type="file" name="file" accept=".xlsx,.csv" required style="display: inline-block;">
+        </div>
+
+        <div class="alert alert-info" style="font-size: 0.85rem; margin-top: 1.25rem;">
+          <strong>Зверніть увагу:</strong> Імпорт не видаляє автоматично учнів, яких немає у файлі, та не змінює їхні попередні оцінки. Оновлення списку класу відобразиться у всіх журналах цього класу.
+        </div>
+
+        <div style="display: flex; justify-content: flex-end; gap: 0.75rem; margin-top: 1.5rem;">
+          {% if journal %}
+            <a href="{% url 'portal:journal_detail' journal_id=journal.id %}" class="btn btn-secondary">Скасувати</a>
+          {% else %}
+            <a href="{% url 'portal:superadmin_students' %}" class="btn btn-secondary">Скасувати</a>
+          {% endif %}
+          <button type="submit" class="btn btn-primary">Продовжити до попереднього перегляду &rarr;</button>
+        </div>
+      </form>
+
+    {% elif step == 'preview' %}
+      <!-- Крок 2: Попередній перегляд та підтвердження -->
+      <div style="margin-bottom: 1.5rem;">
+        <div style="display: flex; gap: 1rem; margin-bottom: 1.25rem;">
+          <div class="user-role-pill" style="background-color: var(--primary-light); color: var(--primary);">
+            Всього рядків: <strong>{{ preview_result.total_rows }}</strong>
+          </div>
+          <div class="user-role-pill" style="background-color: var(--success-bg); color: var(--success);">
+            Коректних: <strong>{{ preview_result.valid_rows }}</strong>
+          </div>
+          {% if preview_result.error_rows > 0 %}
+            <div class="user-role-pill" style="background-color: var(--danger-bg); color: var(--danger);">
+              З помилками: <strong>{{ preview_result.error_rows }}</strong>
+            </div>
+          {% endif %}
+        </div>
+
+        {% if preview_result.errors %}
+          <div class="alert alert-danger" style="font-size: 0.85rem;">
+            <strong>Виявлені помилки:</strong>
+            <ul style="margin-left: 1.25rem; margin-top: 0.25rem;">
+              {% for err in preview_result.errors %}
+                <li>{{ err }}</li>
+              {% endfor %}
+            </ul>
+          </div>
+        {% endif %}
+
+        {% if preview_result.warnings %}
+          <div class="alert alert-warning" style="font-size: 0.85rem;">
+            <strong>Зауваження та дублікати:</strong>
+            <ul style="margin-left: 1.25rem; margin-top: 0.25rem;">
+              {% for w in preview_result.warnings %}
+                <li>{{ w }}</li>
+              {% endfor %}
+            </ul>
+          </div>
+        {% endif %}
+
+        <!-- Таблиця перегляду даних -->
+        <div style="max-height: 380px; overflow-y: auto; border: 1px solid var(--border); border-radius: var(--radius-sm); margin-bottom: 1.5rem;">
+          <table style="width: 100%; border-collapse: collapse; font-size: 0.85rem;">
+            <thead style="background: var(--bg-alt); position: sticky; top: 0;">
+              <tr style="border-bottom: 1px solid var(--border); text-align: left;">
+                <th style="padding: 0.5rem;">Рядок</th>
+                <th style="padding: 0.5rem;">ID</th>
+                <th style="padding: 0.5rem;">Прізвище</th>
+                <th style="padding: 0.5rem;">Ім'я</th>
+                <th style="padding: 0.5rem;">По батькові</th>
+                <th style="padding: 0.5rem;">Клас</th>
+                <th style="padding: 0.5rem;">Стан</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for row in preview_result.preview_data %}
+                <tr style="border-bottom: 1px solid var(--border); {% if not row.is_valid %}background: var(--danger-bg);{% elif row.is_duplicate %}background: var(--warning-bg);{% endif %}">
+                  <td style="padding: 0.5rem;">{{ row.row_num }}</td>
+                  <td style="padding: 0.5rem; font-family: monospace;">{{ row.internal_id|default:"—" }}</td>
+                  <td style="padding: 0.5rem; font-weight: 600;">{{ row.last_name }}</td>
+                  <td style="padding: 0.5rem;">{{ row.first_name }}</td>
+                  <td style="padding: 0.5rem;">{{ row.middle_name|default:"—" }}</td>
+                  <td style="padding: 0.5rem;">{{ row.class_name|default:"—" }}</td>
+                  <td style="padding: 0.5rem;">
+                    {% if not row.is_valid %}
+                      <span style="color: var(--danger); font-weight: 700;">Помилка</span>
+                    {% elif row.is_duplicate %}
+                      <span style="color: #b45309; font-weight: 600;">Збіг</span>
+                    {% else %}
+                      <span style="color: var(--success); font-weight: 600;">Новий</span>
+                    {% endif %}
+                  </td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+
+        <form method="post">
+          {% csrf_token %}
+          <input type="hidden" name="action" value="confirm_import">
+
+          <div class="form-group">
+            <label class="form-label">Режим обробки дублікатів та наявних записів:</label>
+            <div style="display: flex; gap: 1.5rem; font-size: 0.9rem;">
+              <label style="display: flex; align-items: center; gap: 0.4rem; cursor: pointer;">
+                <input type="radio" name="import_mode" value="add_and_update" checked>
+                Додати нових та оновити наявних
+              </label>
+              <label style="display: flex; align-items: center; gap: 0.4rem; cursor: pointer;">
+                <input type="radio" name="import_mode" value="add_only">
+                Лише додати нових (пропустити збіги)
+              </label>
+              <label style="display: flex; align-items: center; gap: 0.4rem; cursor: pointer;">
+                <input type="radio" name="import_mode" value="update_only">
+                Лише оновити наявних
+              </label>
+            </div>
+          </div>
+
+          <div class="alert alert-warning" style="font-size: 0.85rem;">
+            <strong>Підтвердження:</strong> Будь ласка, перевірте дані. Зміни будуть застосовані в єдиній безпечній транзакції.
+          </div>
+
+          <div style="display: flex; justify-content: flex-end; gap: 0.75rem; margin-top: 1.5rem;">
+            <a href="{{ request.path }}" class="btn btn-secondary">Завантажити інший файл</a>
+            <button type="submit" class="btn btn-primary">Підтвердити та застосувати імпорт</button>
+          </div>
+        </form>
+      </div>
+    {% endif %}
+
+  </div>
+</div>
+{% endblock %}

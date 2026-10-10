@@ -1,0 +1,1242 @@
+import datetime
+import logging
+import re
+import json
+import time
+import hashlib
+from datetime import datetime, date
+from bs4 import BeautifulSoup
+import requests
+from django.utils import timezone
+from django.db import transaction
+from django.db.models import Max
+
+from apps.curriculum.models import AcademicYear, Semester, Student, StudentClass, Subject, ClassEnrollment
+from apps.journals.models import Journal, Lesson, Grade, Attendance, NZAccount, NZSyncLog, LessonType
+
+logger = logging.getLogger(__name__)
+
+
+class NZServiceError(Exception):
+    """Базовий клас для помилок взаємодії з nz.ua."""
+    pass
+
+
+class NZAuthError(NZServiceError):
+    """Помилка автентифікації або прострочена сесія на nz.ua."""
+    pass
+
+
+class NZService:
+    """
+    Сервіс для безпечної інтеграції з порталом nz.ua:
+    - Автентифікація через логін/пароль або через сесійну куку PHPSESSID.
+    - Отримання списку журналів вчителя з nz.ua.
+    - Імпорт/синхронізація класів, учнів, уроків та оцінок із nz.ua.
+    - Відстеження локальних змін (дельта).
+    - Безпечне вивантаження лише змінених записів (grades/attendances/topics) з rate-limiting.
+    - Формування детального звіту синхронізації.
+    """
+
+    BASE_URL = "https://nz.ua"
+    REQUEST_DELAY_SECONDS = 0.4  # Затримка між запитами для запобігання перевантаженню nz.ua
+
+    # Мапінг локальних оцінок/відвідувань у mark_id на nz.ua
+    # За даними аналізу JS window.journal.markValues на nz.ua:
+    # 1..12 -> 6..17 (значення + 5)
+    # Н (неповажна відсутність) -> 1
+    # ХВ (хвороба / поважна) -> 23
+    # ЗАР (зараховано) -> 3
+    # Н/А (не атестовано) -> 2; Н/З (не зараховано) -> 33
+    # ЗВ (звільнений) -> 4
+    # ID 30 is «п/п», not lateness. Local ЗП has no confirmed NZ equivalent.
+    # 0 -> очищення оцінки / присутній
+    MARK_MAP_TO_NZ = {
+        '1': 6, '2': 7, '3': 8, '4': 9, '5': 10,
+        '6': 11, '7': 12, '8': 13, '9': 14, '10': 15,
+        '11': 16, '12': 17,
+        'Н': 1,
+        'ХВ': 23,
+        'ЗАР': 3,
+        'НЕЗАР': 33, 'Н/З': 33, 'Н/А': 2,
+        'ЗВ': 4,
+        'ВИВЧ': 5, 'П': 24, 'С': 25, 'Д': 26, 'В': 27,
+        'Н/О': 28, 'ЗАУВ': 29, 'П/П': 30, 'К': 32,
+        '': 0,
+    }
+
+    # Зворотний мапінг із nz.ua у локальні оцінки / відвідування
+    MARK_MAP_FROM_NZ = {
+        1: ('attendance', Attendance.Status.ABSENT_UNEXCUSED, 'Н'),
+        23: ('attendance', Attendance.Status.ABSENT_EXCUSED, 'ХВ'),
+        2: ('grade', 'Н/А'),
+        33: ('grade', 'НЕЗАР'),
+        3: ('grade', 'ЗАР'),
+        4: ('grade', 'ЗВ'),
+        5: ('grade', 'ВИВЧ'),
+        24: ('grade', 'П'), 25: ('grade', 'С'), 26: ('grade', 'Д'),
+        27: ('grade', 'В'), 28: ('grade', 'Н/О'), 29: ('grade', 'ЗАУВ'),
+        30: ('grade', 'П/П'), 32: ('grade', 'К'),
+        6: ('grade', '1'),
+        7: ('grade', '2'),
+        8: ('grade', '3'),
+        9: ('grade', '4'),
+        10: ('grade', '5'),
+        11: ('grade', '6'),
+        12: ('grade', '7'),
+        13: ('grade', '8'),
+        14: ('grade', '9'),
+        15: ('grade', '10'),
+        16: ('grade', '11'),
+        17: ('grade', '12'),
+    }
+
+    DEFAULT_HEADERS = {
+        'User-Agent': (
+            'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 '
+            '(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36'
+        ),
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+        'Accept-Language': 'uk-UA,uk;q=0.9,en-US;q=0.8,en;q=0.7',
+    }
+
+    def __init__(self, phpsessid=None, cookies_dict=None):
+        self.session = requests.Session()
+        self.session.headers.update(self.DEFAULT_HEADERS)
+        self.csrf_token = None
+
+        if phpsessid:
+            self.session.cookies.set('PHPSESSID', phpsessid, domain='nz.ua')
+        if cookies_dict and isinstance(cookies_dict, dict):
+            for k, v in cookies_dict.items():
+                self.session.cookies.set(k, v, domain='nz.ua')
+
+    @classmethod
+    def from_account(cls, account: NZAccount):
+        """Створити екземпляр сервісу з облікового запису користувача."""
+        cookies = account.cookies or {}
+        sessid = account.phpsessid or cookies.get('PHPSESSID')
+        return cls(phpsessid=sessid, cookies_dict=cookies)
+
+    def extract_csrf(self, html_text: str) -> str:
+        """Витягти CSRF токен з мета-тегу або прихованого поля сторінки."""
+        soup = BeautifulSoup(html_text, 'html.parser')
+        meta = soup.find('meta', attrs={'name': 'csrf-token'})
+        if meta and meta.get('content'):
+            self.csrf_token = meta['content']
+            return self.csrf_token
+
+        inp = soup.find('input', attrs={'name': '_csrf'})
+        if inp and inp.get('value'):
+            self.csrf_token = inp['value']
+            return self.csrf_token
+
+        return self.csrf_token or ""
+
+    def verify_session(self) -> tuple[bool, str]:
+        """
+        Перевірити чи дійсна сесія на nz.ua завантаживши /journal/list.
+        Повертає (is_valid, message_or_username).
+        """
+        try:
+            resp = self.session.get(f"{self.BASE_URL}/journal/list", timeout=12)
+            if resp.status_code == 200:
+                if "/login" in resp.url or "LoginForm" in resp.text:
+                    return False, "Сесія недійсна або вичерпана (перенаправлено на вхід)."
+
+                # Оновлюємо CSRF
+                self.extract_csrf(resp.text)
+
+                # Шукаємо ім'я користувача на сторінці
+                soup = BeautifulSoup(resp.text, 'html.parser')
+                if not soup.find('a', href=re.compile(r'^(?:https://nz\.ua)?/logout(?:\?|$)')):
+                    return False, 'Не вдалося підтвердити авторизовану сторінку nz.ua.'
+                user_elem = soup.select_one('.user-menu-box, .profile-name, .username, .user-name, header .dropdown-toggle')
+                user_info = user_elem.get_text(strip=True) if user_elem else "Авторизовано"
+                return True, user_info
+            return False, f"Сервер nz.ua повернув код {resp.status_code}"
+        except requests.RequestException as e:
+            return False, f"Помилка з'єднання з nz.ua: {str(e)}"
+
+    def login(self, login_str: str, password_str: str) -> tuple[bool, str]:
+        """
+        Вхід на nz.ua через форму /login.
+        """
+        try:
+            get_resp = self.session.get(f"{self.BASE_URL}/login", timeout=12)
+            csrf = self.extract_csrf(get_resp.text)
+            if not csrf:
+                return False, "Не вдалося отримати CSRF-токен зі сторінки входу nz.ua."
+
+            payload = {
+                '_csrf': csrf,
+                'LoginForm[login]': login_str,
+                'LoginForm[password]': password_str,
+                'LoginForm[rememberMe]': '1',
+            }
+
+            post_resp = self.session.post(
+                f"{self.BASE_URL}/login",
+                data=payload,
+                allow_redirects=True,
+                timeout=15
+            )
+
+            if post_resp.status_code in [200, 302]:
+                if "/login" in post_resp.url and "LoginForm" in post_resp.text:
+                    soup = BeautifulSoup(post_resp.text, 'html.parser')
+                    err = soup.select_one('.help-block-error, .alert-danger')
+                    err_msg = err.get_text(strip=True) if err else "Невірний логін або пароль."
+                    return False, err_msg
+
+                self.extract_csrf(post_resp.text)
+                return True, "Успішний вхід на nz.ua"
+            return False, f"Помилка відповіді nz.ua: код {post_resp.status_code}"
+        except requests.RequestException as e:
+            return False, f"Помилка з'єднання: {str(e)}"
+
+    def get_cookies_dict(self) -> dict:
+        """Повернути збережені кукі сесії у вигляді словника."""
+        return self.session.cookies.get_dict()
+
+    def fetch_journal_list(self) -> list[dict]:
+        """
+        Отримати перелік журналів вчителя з https://nz.ua/journal/list.
+        Повертає список словників:
+        [
+            {
+                'nz_journal_id': '12345',
+                'nz_subgroup_id': '0',
+                'class_name': '5-А',
+                'subject_name': 'Математика',
+                'full_title': '5-А - Математика',
+                'url': 'https://nz.ua/journal/index?journal=12345'
+            },
+            ...
+        ]
+        """
+        resp = self.session.get(f"{self.BASE_URL}/journal/list", timeout=15)
+        if resp.status_code != 200 or "/login" in resp.url or 'LoginForm' in resp.text:
+            raise NZAuthError("Необхідно авторизуватись на nz.ua.")
+
+        self.extract_csrf(resp.text)
+        soup = BeautifulSoup(resp.text, 'html.parser')
+
+        journals = []
+        links = soup.find_all('a', href=re.compile(r'/journal/index\?journal=\d+'))
+
+        seen_keys = set()
+        for a in links:
+            href = a.get('href', '')
+            match_j = re.search(r'journal=(\d+)', href)
+            if not match_j:
+                continue
+
+            j_id = match_j.group(1)
+            match_sg = re.search(r'subgroup=(\d+)', href)
+            sg_id = match_sg.group(1) if match_sg else ""
+
+            key = (j_id, sg_id)
+            if key in seen_keys:
+                continue
+            seen_keys.add(key)
+
+            text = a.get_text(separator=' ', strip=True)
+            # Часто посилання містить "5-А Клас Математика" або схожий текст
+            # Спробуємо розпарсити клас та предмет
+            class_match = re.search(r'(\d+[\s\-]?[А-Яа-яA-Za-z]?)\s*(?:клас)?', text, re.IGNORECASE)
+            class_name = class_match.group(1).replace(' ', '') if class_match else ""
+
+            # Шукаємо предмет поруч у рядку таблиці, якщо є
+            parent_tr = a.find_parent('tr')
+            subject_name = ""
+            if parent_tr:
+                tds = parent_tr.find_all('td')
+                for td in tds:
+                    td_txt = td.get_text(strip=True)
+                    if td_txt and td_txt != text and not re.search(r'^\d+$', td_txt):
+                        subject_name = td_txt
+                        break
+
+            if not subject_name:
+                # Вилучаємо клас із тексту для визначення предмета
+                sub_txt = text
+                if class_name:
+                    sub_txt = re.sub(re.escape(class_name), '', sub_txt, flags=re.IGNORECASE)
+                sub_txt = re.sub(r'клас', '', sub_txt, flags=re.IGNORECASE).strip(' -—:,')
+                subject_name = sub_txt or "Предмет"
+
+            journals.append({
+                'nz_journal_id': j_id,
+                'nz_subgroup_id': sg_id,
+                'class_name': class_name or "Клас",
+                'subject_name': subject_name,
+                'full_title': text or f"{class_name} — {subject_name}",
+                'url': f"{self.BASE_URL}{href}" if href.startswith('/') else href,
+            })
+
+        return journals
+
+    def fetch_journal_data(self, nz_journal_id: str, nz_subgroup_id: str = "") -> dict:
+        """
+        Завантажити та розпарсити повний вміст журналу з nz.ua:
+        - Список учнів (nz_student_id, ПІБ)
+        - Список проведених уроків/колонок (nz_schedule_id, date, lesson_number, topic, homework)
+        - Оцінки та відвідування (schedule_id, student_id -> mark_value / symbol)
+        """
+        url = f"{self.BASE_URL}/journal/index?journal={nz_journal_id}"
+        if nz_subgroup_id:
+            url += f"&subgroup={nz_subgroup_id}"
+
+        resp = self.session.get(url, timeout=20)
+        if resp.status_code != 200 or "/login" in resp.url or 'LoginForm' in resp.text:
+            raise NZAuthError("Сесія nz.ua недійсна.")
+
+        self.extract_csrf(resp.text)
+        soup = BeautifulSoup(resp.text, 'html.parser')
+
+        table = soup.select_one('table.point-table')
+        if not table:
+            raise NZServiceError('Структуру журналу nz.ua не розпізнано. Локальні дані не змінено.')
+
+        # 0. Визначаємо базовий навчальний рік із селектора семестрів або поточної дати
+        base_year = timezone.now().year
+        sem_opt = soup.select_one('select[id*="semester"] option[selected]') or soup.select_one('select[id*="semester"] option')
+        if sem_opt:
+            m_year = re.search(r'(\d{4})[-–/](\d{4})', sem_opt.get_text())
+            if m_year:
+                base_year = int(m_year.group(1))
+
+        ukr_months = {
+            'січ': 1, 'лют': 2, 'бер': 3, 'квіт': 4, 'трав': 5, 'черв': 6,
+            'лип': 7, 'серп': 8, 'вер': 9, 'жовт': 10, 'лист': 11, 'груд': 12
+        }
+
+        # 1. Парсимо блок календарного плану та домашніх завдань (.homework-row)
+        hw_by_sch = {}
+        for r in soup.select('.homework-row'):
+            link = r.find('a', href=re.compile(r'schedule=(\d+)'))
+            if not link:
+                continue
+            sm = re.search(r'schedule=(\d+)', link['href'])
+            if not sm:
+                continue
+            sch_id = sm.group(1)
+            items = [it.get_text(' ', strip=True) for it in r.select('.homework__item')]
+
+            # items[1] = дата (наприклад "7 вересня")
+            d_obj = None
+            date_text = items[1] if len(items) > 1 else ''
+            dm_match = re.search(r'(\d{1,2})\s+([а-яА-Яіїєґ]+)', date_text.lower())
+            if dm_match:
+                d_day = int(dm_match.group(1))
+                m_word = dm_match.group(2)
+                for pfx, mo in ukr_months.items():
+                    if m_word.startswith(pfx):
+                        y = base_year if mo >= 8 else base_year + 1
+                        try:
+                            d_obj = datetime(y, mo, d_day).date()
+                        except ValueError:
+                            pass
+                        break
+
+            # items[2] = номер уроку
+            lesson_num = 1
+            if len(items) > 2 and items[2].isdigit():
+                lesson_num = int(items[2])
+
+            topic_txt = items[4] if len(items) > 4 else ''
+            hw_txt = items[5] if len(items) > 5 else ''
+            # NZ renders the due date as a prefix inside the homework cell.
+            # It is metadata, not part of the text to send back to the editor.
+            due_date = None
+            due_match = re.match(r'^на\s+(\d{1,2})\s+([а-яіїєґ]+)(?:\s+(\d{4}))?(?:\s*[:—-])?\s*', hw_txt, re.I)
+            if due_match:
+                due_date = self._parse_lesson_date(due_match.group(0), base_year)
+                if due_date:
+                    hw_txt = hw_txt[due_match.end():]
+
+            hw_by_sch[sch_id] = {
+                'date': d_obj,
+                'lesson_number': lesson_num,
+                'topic': topic_txt,
+                'homework': hw_txt,
+                'homework_due_date': due_date,
+            }
+
+        # 2. Заголовки колонок уроків (thead tr td.pt-point)
+        header_pt_cells = table.select('thead tr td.pt-point')
+        if not header_pt_cells:
+            header_pt_cells = [
+                c for c in table.select('thead tr td, thead tr th')
+                if 'pt-point' in c.get('class', []) or (c.get('id') and c['id'].startswith('cell-0-'))
+            ]
+
+        lessons_data = []
+        current_month = None
+        last_parsed_date = None
+
+        for idx, cell in enumerate(header_pt_cells):
+            col_idx = idx + 1
+
+            # Місяць у span.pt-month (наприклад "Вер.", "Жовт.")
+            m_elem = cell.find('span', class_='pt-month')
+            if m_elem:
+                m_txt = m_elem.get_text(strip=True).lower()
+                for pfx, mo in ukr_months.items():
+                    if m_txt.startswith(pfx):
+                        current_month = mo
+                        break
+
+            link = cell.find('a', href=re.compile(r'schedule=(\d+)'))
+            sch_id = ""
+            day_num = None
+            if link:
+                sm = re.search(r'schedule=(\d+)', link['href'])
+                if sm:
+                    sch_id = sm.group(1)
+                ltxt = link.get_text(strip=True)
+                if ltxt.isdigit():
+                    day_num = int(ltxt)
+            else:
+                dm = re.search(r'\b(\d{1,2})\b', cell.get_text(separator=' ', strip=True))
+                if dm:
+                    day_num = int(dm.group(1))
+
+            hw_info = hw_by_sch.get(sch_id, {})
+            parsed_date = hw_info.get('date')
+
+            if not parsed_date and day_num and current_month:
+                y = base_year if current_month >= 8 else base_year + 1
+                try:
+                    parsed_date = datetime(y, current_month, day_num).date()
+                except ValueError:
+                    pass
+
+            if not parsed_date:
+                # Перевіряємо data-date або DD.MM
+                date_attr = cell.get('data-date') or ""
+                if date_attr:
+                    try:
+                        parsed_date = datetime.strptime(date_attr, '%Y-%m-%d').date()
+                    except ValueError:
+                        pass
+                if not parsed_date:
+                    dm_match = re.search(r'(\d{1,2})\.(\d{1,2})(?:\.(\d{2,4}))?', cell.get_text(separator=' ', strip=True))
+                    if dm_match:
+                        d, m = int(dm_match.group(1)), int(dm_match.group(2))
+                        y = int(dm_match.group(3)) if dm_match.group(3) else (base_year if m >= 8 else base_year + 1)
+                        if y < 100:
+                            y += 2000
+                        try:
+                            parsed_date = datetime(y, m, d).date()
+                        except ValueError:
+                            pass
+
+            column_type = self._column_type(cell, parsed_date or last_parsed_date)
+            if not parsed_date and column_type != LessonType.ORDINARY:
+                parsed_date = last_parsed_date
+            if parsed_date:
+                last_parsed_date = parsed_date
+            lesson_obj = {
+                'col_index': col_idx,
+                'nz_schedule_id': sch_id,
+                'date': parsed_date,
+                'lesson_number': hw_info.get('lesson_number', 1),
+                'topic': hw_info.get('topic', ''),
+                'homework': hw_info.get('homework', ''),
+                'homework_due_date': hw_info.get('homework_due_date'),
+                'lesson_type': column_type,
+            }
+            lessons_data.append(lesson_obj)
+
+        # 3. Список учнів та оцінки
+        students_data = []
+        marks_data = []
+
+        tbody = table.select_one('tbody') or table
+        rows = tbody.find_all('tr')
+
+        for tr in rows:
+            student_cell = tr.select_one('td.pt-theme, td[data-student-id]')
+            if not student_cell:
+                continue
+
+            st_id = student_cell.get('data-student-id') or ""
+            st_name = student_cell.get_text(strip=True)
+            st_name_clean = re.sub(r'^\d+[\.\)]\s*', '', st_name).strip()
+
+            if not st_id and not st_name_clean:
+                continue
+
+            students_data.append({
+                'nz_student_id': st_id,
+                'name': st_name_clean,
+            })
+
+            # Читаємо оцінки у стовпцях учня (td.pt-point відповідають колонкам уроків)
+            row_pt_cells = tr.select('td.pt-point')
+            for c_idx, cell in enumerate(row_pt_cells):
+                if c_idx >= len(lessons_data):
+                    break
+
+                les_info = lessons_data[c_idx]
+
+                inp = cell.find('input')
+                val = ""
+                mark_id = None
+                if inp:
+                    val = inp.get('value', '').strip()
+                    m_id_attr = inp.get('data-mark-id')
+                    if m_id_attr and m_id_attr.isdigit():
+                        mark_id = int(m_id_attr)
+                else:
+                    val = cell.get_text(strip=True)
+
+                if val or mark_id is not None or les_info['nz_schedule_id']:
+                    marks_data.append({
+                        'nz_student_id': st_id,
+                        'student_name': st_name_clean,
+                        'nz_schedule_id': les_info['nz_schedule_id'],
+                        'date': les_info['date'],
+                        'lesson_number': les_info['lesson_number'],
+                        'value': val,
+                        'mark_id': mark_id,
+                    })
+
+        return {
+            'nz_journal_id': nz_journal_id,
+            'students': students_data,
+            'lessons': lessons_data,
+            'marks': marks_data,
+            'base_year': base_year,
+        }
+
+    @staticmethod
+    def _column_type(cell, lesson_date=None):
+        text = cell.get_text(' ', strip=True).lower().replace('і', 'i')
+        if 'рiчн' in text:
+            return LessonType.ANNUAL
+        if re.search(r'сем(?:естр|[.\s]|$)', text):
+            second = bool(re.search(r'\b(ii|2)\b', text)) or (not re.search(r'\b(i|1)\b', text) and lesson_date and lesson_date.month < 8)
+            if 'нуш' in text:
+                return LessonType.SEMESTER_2_NUSH if second else LessonType.SEMESTER_1_NUSH
+            return LessonType.SEMESTER_2 if second else LessonType.SEMESTER_1
+        if 'модул' in text:
+            return LessonType.MODULAR
+        if 'темат' in text:
+            if 'нуш' in text:
+                return LessonType.THEMATIC_NUSH
+            return LessonType.THEMATIC
+        return LessonType.ORDINARY
+
+    @transaction.atomic
+    def import_journal_to_local(
+        self,
+        nz_journal_id: str,
+        local_journal: Journal,
+        nz_subgroup_id: str = "",
+        user=None
+    ) -> dict:
+        """
+        Імпортувати дані з журналу nz.ua у локальний Journal:
+        - Прив'язує nz_journal_id до локального журналу.
+        - Синхронізує навчальний рік та семестр.
+        - Синхронізує учнів (зв'язує за ПІБ або створює).
+        - Синхронізує проведені уроки (nz_schedule_id, дата, тема, ДЗ).
+        - Завантажує оцінки та відвідування і позначає їх `is_synced_to_nz = True`.
+        """
+        data = self.fetch_journal_data(nz_journal_id, nz_subgroup_id)
+        Journal.objects.select_for_update().get(pk=local_journal.pk)
+
+        local_journal.nz_journal_id = nz_journal_id
+        if nz_subgroup_id:
+            local_journal.nz_subgroup_id = nz_subgroup_id
+        local_journal.nz_last_sync_at = timezone.now()
+        local_journal.save(update_fields=['nz_journal_id', 'nz_subgroup_id', 'nz_last_sync_at'])
+
+        stats = {
+            'students_matched': 0,
+            'students_created': 0,
+            'lessons_synced': 0,
+            'grades_synced': 0,
+            'attendances_synced': 0,
+            'local_changes_preserved': 0,
+        }
+
+        # 0. Перевірка та оновлення навчального року і семестрів локального журналу
+        lesson_dates = [l['date'] for l in data['lessons'] if l.get('date')]
+        if lesson_dates:
+            min_d = min(lesson_dates)
+            max_d = max(lesson_dates)
+            start_y = min_d.year if min_d.month >= 8 else min_d.year - 1
+            ay_name = f"{start_y}/{start_y + 1}"
+
+            current_ay = local_journal.academic_year
+            if not current_ay or not (current_ay.start_date <= min_d and current_ay.end_date >= max_d):
+                school = local_journal.school
+                target_ay = AcademicYear.objects.filter(school=school, name=ay_name).first()
+                if not target_ay:
+                    target_ay = AcademicYear.objects.create(
+                        school=school,
+                        name=ay_name,
+                        start_date=date(start_y, 8, 20),
+                        end_date=date(start_y + 1, 6, 30),
+                        is_current=True,
+                    )
+                # Переконуємось, що семестри існують
+                s1 = target_ay.semesters.filter(number=1).first()
+                if not s1:
+                    Semester.objects.create(
+                        academic_year=target_ay,
+                        number=1,
+                        name="I семестр",
+                        start_date=date(start_y, 8, 20),
+                        end_date=date(start_y, 12, 31)
+                    )
+                s2 = target_ay.semesters.filter(number=2).first()
+                if not s2:
+                    Semester.objects.create(
+                        academic_year=target_ay,
+                        number=2,
+                        name="II семестр",
+                        start_date=date(start_y + 1, 1, 1),
+                        end_date=date(start_y + 1, 6, 30)
+                    )
+
+                local_journal.academic_year = target_ay
+                local_journal.save(update_fields=['academic_year'])
+                if local_journal.student_class:
+                    local_journal.student_class.academic_year = target_ay
+                    local_journal.student_class.save(update_fields=['academic_year'])
+
+        # 1. Студенти
+        student_id_map = {}  # nz_student_id / full_name -> Student instance
+        for st_info in data['students']:
+            nz_s_id = st_info['nz_student_id']
+            full_name = st_info['name']
+            parts = full_name.split()
+            last_name = parts[0] if len(parts) > 0 else "Учень"
+            first_name = parts[1] if len(parts) > 1 else ""
+            middle_name = parts[2] if len(parts) > 2 else ""
+
+            # Шукаємо існуючого учня в школі
+            student = None
+            if nz_s_id:
+                student = Student.objects.filter(school=local_journal.school, nz_student_id=nz_s_id).first()
+
+            if not student and first_name:
+                student = Student.objects.filter(
+                    school=local_journal.school,
+                    last_name__iexact=last_name,
+                    first_name__iexact=first_name
+                ).first()
+
+            if student:
+                if nz_s_id and not student.nz_student_id:
+                    student.nz_student_id = nz_s_id
+                    student.save(update_fields=['nz_student_id'])
+                stats['students_matched'] += 1
+            else:
+                student = Student.objects.create(
+                    school=local_journal.school,
+                    last_name=last_name,
+                    first_name=first_name or "Ім'я",
+                    middle_name=middle_name,
+                    nz_student_id=nz_s_id or ""
+                )
+                stats['students_created'] += 1
+
+            # Додаємо зарахування до класу журналу, якщо відсутнє
+            ClassEnrollment.objects.get_or_create(
+                student=student,
+                student_class=local_journal.student_class,
+                defaults={'is_active': True}
+            )
+
+            if nz_s_id:
+                student_id_map[nz_s_id] = student
+            student_id_map[full_name] = student
+            student_id_map[f"{last_name} {first_name}"] = student
+
+        # 2. Уроки
+        lesson_map = {}  # schedule_id / (date, number) / date -> Lesson instance
+        for l_idx, l_info in enumerate(data['lessons'], start=1):
+            l_date = l_info.get('date')
+            if not l_date:
+                continue
+
+            sch_id = l_info.get('nz_schedule_id', '')
+            l_num = l_info.get('lesson_number', 1)
+            lesson_type = l_info.get('lesson_type', LessonType.ORDINARY)
+            topic = l_info.get('topic') or (dict(LessonType.choices)[lesson_type] if lesson_type != LessonType.ORDINARY else f"Урок {l_idx}")
+            hw = l_info.get('homework') or ""
+
+            # Визначаємо семестр для уроку
+            sem = None
+            if local_journal.academic_year:
+                sem = local_journal.academic_year.semesters.filter(
+                    start_date__lte=l_date,
+                    end_date__gte=l_date
+                ).first()
+                if not sem:
+                    sem = local_journal.academic_year.semesters.first()
+
+            lesson = None
+            if sch_id:
+                lesson = Lesson.objects.filter(journal=local_journal, nz_schedule_id=sch_id).first()
+
+            if not lesson:
+                # A date can contain several NZ columns. Never collapse different schedule IDs.
+                lesson = Lesson.objects.filter(journal=local_journal, date=l_date, lesson_number=l_num, nz_schedule_id='').first()
+
+            if lesson:
+                lesson.nz_schedule_id = sch_id or lesson.nz_schedule_id
+                if lesson.date != l_date:
+                    lesson.date = l_date
+                    occupied = local_journal.lessons.filter(date=l_date).exclude(pk=lesson.pk)
+                    lesson.lesson_number = l_num if not occupied.filter(lesson_number=l_num).exists() else (occupied.aggregate(last=Max('lesson_number'))['last'] or 0) + 1
+                if lesson.is_synced_to_nz:
+                    lesson.topic = topic
+                    lesson.homework = hw
+                    lesson.homework_due_date = l_info.get('homework_due_date')
+                    lesson.homework_due_lesson = None
+                    lesson.homework_due_plan_topic = None
+                    lesson.homework_for_next_lesson = False
+                    lesson.lesson_type = l_info.get('lesson_type', lesson.lesson_type)
+                else:
+                    stats['local_changes_preserved'] += 1
+                if sem:
+                    lesson.semester = sem
+                lesson.nz_last_synced_topic = topic
+                lesson.nz_last_synced_homework = hw
+                lesson.save()
+            else:
+                if Lesson.objects.filter(journal=local_journal, date=l_date, lesson_number=l_num).exists():
+                    l_num = (local_journal.lessons.filter(date=l_date).aggregate(last=Max('lesson_number'))['last'] or 0) + 1
+                lesson = Lesson.objects.create(
+                    journal=local_journal,
+                    date=l_date,
+                    lesson_number=l_num,
+                    semester=sem,
+                    topic=topic,
+                    homework=hw,
+                    homework_due_date=l_info.get('homework_due_date'),
+                    lesson_type=l_info.get('lesson_type', LessonType.ORDINARY),
+                    nz_schedule_id=sch_id,
+                    is_synced_to_nz=True,
+                    nz_last_synced_topic=topic,
+                    nz_last_synced_homework=hw,
+                    created_by=user
+                )
+
+            stats['lessons_synced'] += 1
+            if sch_id:
+                lesson_map[sch_id] = lesson
+            lesson_map[l_date] = lesson
+            lesson_map[(l_date, l_num)] = lesson
+
+        # 3. Оцінки та відвідування
+        for m in data['marks']:
+            student = student_id_map.get(m['nz_student_id']) or student_id_map.get(m['student_name'])
+            lesson = (
+                lesson_map.get(m['nz_schedule_id']) or
+                lesson_map.get((m['date'], m.get('lesson_number', 1))) or
+                lesson_map.get(m['date'])
+            )
+
+            if not student or not lesson:
+                continue
+
+            raw_val = m.get('value', '').strip().upper()
+            mark_id = m.get('mark_id')
+
+            # Визначаємо чи це відвідування чи оцінка
+            is_att = False
+            att_status = None
+            grade_val = ""
+
+            if mark_id and mark_id in self.MARK_MAP_FROM_NZ:
+                info = self.MARK_MAP_FROM_NZ[mark_id]
+                if info[0] == 'attendance':
+                    is_att = True
+                    att_status = info[1]
+                else:
+                    grade_val = info[1]
+            elif raw_val in ['Н', 'N']:
+                is_att = True
+                att_status = Attendance.Status.ABSENT_UNEXCUSED
+            elif raw_val in ['ХВ', 'HB', 'БОЛ']:
+                is_att = True
+                att_status = Attendance.Status.ABSENT_EXCUSED
+            elif raw_val in ['ЗП', 'ОП']:
+                is_att = True
+                att_status = Attendance.Status.LATE
+            elif raw_val:
+                grade_val = raw_val
+
+            local_grade = Grade.objects.filter(lesson=lesson, student=student).first()
+            local_attendance = Attendance.objects.filter(lesson=lesson, student=student).first()
+            if local_grade and not local_grade.is_approved:
+                stats['local_changes_preserved'] += 1
+                continue
+            if any(record and not record.is_synced_to_nz for record in (local_grade, local_attendance)):
+                local_value = (local_attendance.get_symbol_ukr() if local_attendance else '') or (local_grade.value if local_grade else '')
+                remote_value = {
+                    Attendance.Status.ABSENT_UNEXCUSED: 'Н', Attendance.Status.ABSENT_EXCUSED: 'ХВ', Attendance.Status.LATE: 'ЗП',
+                }.get(att_status, '') if is_att else grade_val
+                if local_value != remote_value:
+                    stats['local_changes_preserved'] += 1
+                    continue
+                # An exact read-back confirms the pending value without uploading it again.
+                if local_grade:
+                    Grade.objects.filter(pk=local_grade.pk).update(is_synced_to_nz=True, nz_last_synced_value=local_grade.value)
+                if local_attendance:
+                    Attendance.objects.filter(pk=local_attendance.pk).update(is_synced_to_nz=True, nz_last_synced_status=local_attendance.status)
+
+            if is_att and att_status:
+                att, _ = Attendance.objects.get_or_create(
+                    lesson=lesson,
+                    student=student,
+                    defaults={
+                        'status': att_status,
+                        'is_synced_to_nz': True,
+                        'nz_last_synced_status': att_status,
+                    }
+                )
+                if not att.is_synced_to_nz or att.status != att_status:
+                    att.status = att_status
+                    att.is_synced_to_nz = True
+                    att.nz_last_synced_status = att_status
+                    att.save()
+                Grade.objects.filter(lesson=lesson, student=student, is_synced_to_nz=True).update(value='', numeric_value=None, nz_last_synced_value='')
+                stats['attendances_synced'] += 1
+
+            elif grade_val:
+                gr, _ = Grade.objects.get_or_create(
+                    lesson=lesson,
+                    student=student,
+                    defaults={
+                        'value': grade_val,
+                        'is_synced_to_nz': True,
+                        'nz_last_synced_value': grade_val,
+                        'created_by': user,
+                    }
+                )
+                if not gr.is_synced_to_nz or gr.value != grade_val:
+                    gr.value = grade_val
+                    gr.is_synced_to_nz = True
+                    gr.nz_last_synced_value = grade_val
+                    gr.save()
+                Attendance.objects.filter(lesson=lesson, student=student, is_synced_to_nz=True).update(status=Attendance.Status.PRESENT, nz_last_synced_status=Attendance.Status.PRESENT)
+                stats['grades_synced'] += 1
+
+            else:
+                Grade.objects.filter(lesson=lesson, student=student, is_synced_to_nz=True).update(
+                    value='', numeric_value=None, nz_last_synced_value='')
+                Attendance.objects.filter(lesson=lesson, student=student, is_synced_to_nz=True).update(
+                    status=Attendance.Status.PRESENT, nz_last_synced_status=Attendance.Status.PRESENT)
+
+        return stats
+
+    def get_unsynced_changes(self, journal: Journal) -> dict:
+        """
+        Отримати перелік усіх несинхронізованих записів ДЛЯ ЦЬОГО ЖУРНАЛУ:
+        - Оцінки (Grade де is_synced_to_nz=False)
+        - Відвідування (Attendance де is_synced_to_nz=False)
+        - Теми уроків (Lesson де is_synced_to_nz=False)
+        """
+        unsynced_lessons = list(
+            Lesson.objects.filter(
+                journal=journal,
+                is_synced_to_nz=False
+            )
+        )
+
+        changes = []
+
+        cells = self._pending_cells(journal)
+        grades_count = 0
+        attendance_count = 0
+        for grade, attendance, active, value in cells:
+            is_attendance = bool(attendance and attendance.get_symbol_ukr()) or grade is None
+            kind = 'attendance' if is_attendance else 'grade'
+            grades_count += not is_attendance
+            attendance_count += is_attendance
+            can_sync = bool(active.student.nz_student_id and active.lesson.nz_schedule_id and value in self.MARK_MAP_TO_NZ)
+            changes.append({
+                'type': kind, 'type_display': 'Відвідування' if is_attendance else 'Оцінка',
+                'object_id': active.pk, 'student_name': active.student.get_short_name_ukr(),
+                'date': active.lesson.date.strftime('%d.%m.%Y'),
+                'old_value': (attendance.nz_last_synced_status if is_attendance and attendance else grade.nz_last_synced_value) or '—',
+                'new_value': value or 'Очищено', 'can_sync': can_sync,
+                'warning': '' if can_sync else ('Позначку не підтверджено в nz.ua; вона залишиться локально.'
+                                              if value not in self.MARK_MAP_TO_NZ else 'Відсутній nz ID учня або уроку'),
+            })
+
+        # 3. Теми уроків
+        for l in unsynced_lessons:
+            has_lesson_id = bool(l.nz_schedule_id)
+            warning = self._homework_sync_warning(l)
+            changes.append({
+                'type': 'lesson_topic',
+                'type_display': 'Тема/ДЗ',
+                'object_id': l.id,
+                'student_name': '—',
+                'date': l.date.strftime('%d.%m.%Y'),
+                'old_value': l.nz_last_synced_topic or '—',
+                'new_value': l.topic,
+                'old_homework': l.nz_last_synced_homework,
+                'new_homework': l.homework,
+                'homework_target': l.get_homework_target_label(),
+                'can_sync': has_lesson_id and not warning,
+                'warning': warning if has_lesson_id else "Урок ще не створений на nz.ua",
+            })
+
+        return {
+            'journal_id': journal.id,
+            'journal_title': str(journal),
+            'nz_journal_id': journal.nz_journal_id,
+            'is_linked_to_nz': bool(journal.nz_journal_id),
+            'total_count': len(changes),
+            'grades_count': grades_count,
+            'attendances_count': attendance_count,
+            'lessons_count': len(unsynced_lessons),
+            'changes': changes,
+            'blocked_grades_count': Grade.objects.filter(lesson__journal=journal, is_approved=False).count(),
+        }
+
+    @staticmethod
+    def _due_lesson(lesson):
+        return lesson._sync_due_lesson if hasattr(lesson, '_sync_due_lesson') else lesson.get_homework_due_lesson()
+
+    @staticmethod
+    def _homework_sync_warning(lesson):
+        if lesson.lesson_time:
+            return 'Синхронізацію часу ще не підтверджено. Встановіть час у nz.ua.'
+        if lesson.homework and (lesson.homework_for_next_lesson or lesson.homework_due_lesson_id or lesson.homework_due_plan_topic_id):
+            due = NZService._due_lesson(lesson)
+            if not due or not due.nz_schedule_id:
+                return 'Урок, на який задано ДЗ, ще не має онлайн-прив’язки.'
+        return ''
+
+    @staticmethod
+    def _parse_lesson_date(text, base_year):
+        """Parse only date-shaped data; never infer a due date from arbitrary text."""
+        iso = re.search(r'\b(\d{4})-(\d{2})-(\d{2})\b', text)
+        numeric = re.search(r'\b(\d{1,2})\.(\d{1,2})\.(\d{4})\b', text)
+        month_names = {'січ': 1, 'лют': 2, 'бер': 3, 'квіт': 4, 'трав': 5, 'черв': 6,
+                       'лип': 7, 'серп': 8, 'вер': 9, 'жовт': 10, 'лист': 11, 'груд': 12}
+        words = re.search(r'\b(\d{1,2})\s+([а-яіїєґ]+)(?:\s+(\d{4}))?', text.lower())
+        try:
+            if iso:
+                return date(*map(int, iso.groups()))
+            if numeric:
+                day, month, year = map(int, numeric.groups())
+                return date(year, month, day)
+            if words:
+                month = next((m for prefix, m in month_names.items() if words[2].startswith(prefix)), None)
+                if month:
+                    year = int(words[3]) if words[3] else base_year + (month < 8)
+                    return date(year, month, int(words[1]))
+        except ValueError:
+            return None
+        return None
+
+    def _homework_target_fields(self, lesson, post_url, soup=None):
+        if not (lesson.homework_for_next_lesson or lesson.homework_due_lesson_id or
+                lesson.homework_due_plan_topic_id or lesson.homework_due_date):
+            return {}
+        due = self._due_lesson(lesson)
+        due_date = due.date if due else lesson.homework_due_date
+        if not due_date:
+            raise NZServiceError('Немає онлайн-уроку для вибраного домашнього завдання.')
+        if soup is None:
+            response = self.session.get(post_url, timeout=15)
+            if response.status_code != 200 or '/login' in str(response.url):
+                raise NZServiceError('Не вдалося перевірити форму домашнього завдання nz.ua.')
+            soup = BeautifulSoup(response.text, 'html.parser')
+        # Dates and schedule IDs are both used by NZ forms. Only submit an option
+        # actually supplied by that journal's form, never an invented parameter.
+        id_matches, date_matches = [], []
+        for select in soup.select('select[name]'):
+            if not any(word in select['name'].lower() for word in ('home', 'task', 'schedule', 'due', 'date')):
+                continue
+            for option in select.select('option[value]:not([disabled])'):
+                value = option['value']
+                if due and due.nz_schedule_id and value == due.nz_schedule_id:
+                    id_matches.append((select['name'], value))
+                    continue
+                parsed = self._parse_lesson_date(value, lesson.journal.academic_year.start_date.year)
+                parsed = parsed or self._parse_lesson_date(option.get_text(' ', strip=True), lesson.journal.academic_year.start_date.year)
+                if parsed == due_date:
+                    date_matches.append((select['name'], value))
+        matches = id_matches or date_matches
+        if len(matches) != 1:
+            raise NZServiceError('Поле «Домашнє завдання на урок» у nz.ua не підтверджено. ДЗ залишено локально.')
+        return dict(matches)
+
+    def _lesson_form_payload(self, lesson, post_url):
+        response = self.session.get(post_url, timeout=15)
+        if response.status_code != 200 or '/login' in str(response.url):
+            raise NZAuthError('Не вдалося відкрити форму теми / ДЗ nz.ua. Оновіть підключення.')
+        soup = BeautifulSoup(response.text, 'html.parser')
+        forms = []
+        for form in soup.select('form'):
+            names = {el.get('name') for el in form.select('input[name], textarea[name]')}
+            if {'OsvitaScheduleReal[lesson_topic]', 'OsvitaScheduleReal[hometask]'} <= names:
+                forms.append(form)
+        if len(forms) != 1:
+            raise NZServiceError('Поля форми теми / ДЗ nz.ua не підтверджено. Зміни залишено локально.')
+        form = forms[0]
+        payload = {}
+        for el in form.select('input[name], textarea[name], select[name]'):
+            if el.has_attr('disabled') or el.get('type', '').lower() in ('file', 'submit', 'button', 'reset', 'password'):
+                continue
+            if el.get('type', '').lower() in ('checkbox', 'radio') and not el.has_attr('checked'):
+                continue
+            if el.name == 'select':
+                option = el.select_one('option[selected]') or el.select_one('option:not([disabled])')
+                payload[el['name']] = option.get('value', option.get_text()) if option else ''
+            else:
+                payload[el['name']] = el.get_text() if el.name == 'textarea' else el.get('value', '')
+        token = self.extract_csrf(response.text)
+        if not token:
+            raise NZServiceError('Не вдалося перевірити CSRF форми nz.ua.')
+        payload['_csrf'] = token
+        payload['OsvitaScheduleReal[lesson_topic]'] = lesson.topic
+        payload['OsvitaScheduleReal[hometask]'] = lesson.homework or ''
+        payload.update(self._homework_target_fields(lesson, post_url, soup=form))
+        return payload
+
+    @staticmethod
+    def _response_saved(response, expected_mark=None, expected_value=None):
+        if response.status_code != 200 or '/login' in str(response.url):
+            return False
+        try:
+            data = json.loads(response.text)
+        except (ValueError, TypeError):
+            return False
+        if data is True:
+            return True
+        if not isinstance(data, dict) or data.get('success') is False or data.get('error') or 'message' in data:
+            return False
+        if expected_mark is not None and ('markValue' in data or 'markId' in data):
+            if 'markValue' not in data or 'markId' not in data:
+                return False
+            # The saved NZ client treats these fields as the confirmed cell.
+            actual = str(data['markValue'] or '').strip().upper()
+            aliases = {'Н/З': 'НЕЗАР'}
+            if aliases.get(actual, actual) != aliases.get(expected_value, expected_value):
+                return False
+            return str(data['markId']) == str(expected_mark) or (expected_mark == 0 and data['markId'] is None)
+        return data.get('success') is True or data.get('status') in (True, 'success', 'ok') or data.get('result') is True
+
+    def pending_changes_fingerprint(self, journal):
+        lessons = list(journal.lessons.filter(is_synced_to_nz=False).order_by('pk').values())
+        targets = []
+        for lesson in journal.lessons.filter(is_synced_to_nz=False).order_by('pk'):
+            due = lesson.get_homework_due_lesson()
+            targets.append((lesson.pk, due.pk if due else None, due.nz_schedule_id if due else '',
+                            str(due.date) if due else '', due.lesson_number if due else None))
+        cells = [(g.pk if g else None, a.pk if a else None, value,
+                  str(g.updated_at) if g else '', str(a.updated_at) if a else '',
+                  active.student.nz_student_id, active.lesson.nz_schedule_id,
+                  str(active.lesson.date), g.comment if g else '')
+                 for g, a, active, value in self._pending_cells(journal)]
+        return hashlib.sha256(json.dumps([lessons, targets, cells], sort_keys=True, default=str).encode()).hexdigest()
+
+    @staticmethod
+    def _pending_cells(journal):
+        keys = set(Grade.objects.filter(lesson__journal=journal, is_synced_to_nz=False).values_list('lesson_id', 'student_id'))
+        keys.update(Attendance.objects.filter(lesson__journal=journal, is_synced_to_nz=False).values_list('lesson_id', 'student_id'))
+        lesson_ids, student_ids = {k[0] for k in keys}, {k[1] for k in keys}
+        grades = {(g.lesson_id, g.student_id): g for g in Grade.objects.filter(
+            lesson_id__in=lesson_ids, student_id__in=student_ids).select_related('lesson', 'student')}
+        attendances = {(a.lesson_id, a.student_id): a for a in Attendance.objects.filter(
+            lesson_id__in=lesson_ids, student_id__in=student_ids).select_related('lesson', 'student')}
+        cells = []
+        for key in sorted(keys):
+            grade, attendance = grades.get(key), attendances.get(key)
+            if grade and not grade.is_approved:
+                continue
+            symbol = attendance.get_symbol_ukr() if attendance else ''
+            active = attendance if symbol else (grade or attendance)
+            value = symbol or (grade.value.strip().upper() if grade else '')
+            cells.append((grade, attendance, active, value))
+        return cells
+
+    def push_journal_changes(self, journal: Journal, user=None, dry_run: bool = False) -> NZSyncLog:
+        """
+        Вивантажити ТІЛЬКИ ЗМІНЕНІ записи конкретного журналу на nz.ua:
+        - Rate limiting: затримка 0.4с між запитами.
+        - Dry Run: режим попереднього тестування без фізичної відправки.
+        - Зберігає детальний NZSyncLog зі звітом.
+        """
+        if not journal.nz_journal_id:
+            raise NZServiceError("Цей журнал не прив'язаний до журналу на nz.ua.")
+
+        unsynced_lessons = list(
+            Lesson.objects.filter(
+                journal=journal,
+                is_synced_to_nz=False
+            )
+        )
+
+        cells = self._pending_cells(journal)
+        for lesson in unsynced_lessons:
+            lesson._sync_due_lesson = lesson.get_homework_due_lesson()
+        total_items = len(cells) + len(unsynced_lessons)
+        if not dry_run and total_items and not self.csrf_token:
+            resp = self.session.get(f"{self.BASE_URL}/journal/index?journal={journal.nz_journal_id}", timeout=15)
+            if resp.status_code != 200 or '/login' in str(resp.url) or 'LoginForm' in resp.text:
+                raise NZAuthError('Сесія nz.ua недійсна. Онлайн-зміни не надсилалися.')
+            if not self.extract_csrf(resp.text):
+                raise NZServiceError('Не отримано CSRF nz.ua. Онлайн-зміни не надсилалися.')
+        report_details = []
+        success_count = 0
+        error_count = 0
+
+        # 1. Синхронізація тем уроків
+        for l in unsynced_lessons:
+            item_desc = f"Тема уроку {l.date.strftime('%d.%m.%Y')}: «{l.topic}»"
+            if not l.nz_schedule_id:
+                error_count += 1
+                report_details.append({
+                    'type': 'lesson',
+                    'item': item_desc,
+                    'status': 'error',
+                    'error': 'Урок не має ID розкладу (nz_schedule_id) на nz.ua'
+                })
+                continue
+
+            warning = self._homework_sync_warning(l)
+            if warning:
+                error_count += 1
+                report_details.append({'type': 'lesson', 'item': item_desc, 'status': 'error', 'error': warning})
+                continue
+
+            if dry_run:
+                success_count += 1
+                report_details.append({
+                    'type': 'lesson',
+                    'item': item_desc,
+                    'status': 'dry_run_success',
+                    'message': f"[Тестовий режим] Буде відправлено тему: {l.topic}"
+                })
+                continue
+
+            # Фізична відправка на nz.ua
+            try:
+                time.sleep(self.REQUEST_DELAY_SECONDS)
+                post_url = f"{self.BASE_URL}/journal/add-edit-home-task?schedule={l.nz_schedule_id}&journal={journal.nz_journal_id}"
+                payload = self._lesson_form_payload(l, post_url)
+                headers = {'X-CSRF-Token': self.csrf_token, 'X-Requested-With': 'XMLHttpRequest'}
+                resp = self.session.post(post_url, data=payload, headers=headers, timeout=15)
+
+                if self._response_saved(resp):
+                    Lesson.objects.filter(pk=l.pk).update(nz_last_synced_topic=l.topic, nz_last_synced_homework=l.homework)
+                    Lesson.objects.filter(pk=l.pk, updated_at=l.updated_at).update(is_synced_to_nz=True)
+                    success_count += 1
+                    report_details.append({
+                        'type': 'lesson',
+                        'item': item_desc,
+                        'status': 'success',
+                        'message': 'Тему успішно збережено в nz.ua'
+                    })
+                else:
+                    error_count += 1
+                    report_details.append({
+                        'type': 'lesson',
+                        'item': item_desc,
+                        'status': 'error',
+                        'error': f'nz.ua не підтвердив збереження (код {resp.status_code}). Запис залишено локально.'
+                    })
+            except Exception as e:
+                error_count += 1
+                report_details.append({
+                    'type': 'lesson',
+                    'item': item_desc,
+                    'status': 'error',
+                    'error': str(e)
+                })
+
+        # NZ has one mark per cell. A grade and attendance clear must never be sent separately.
+        total_items = len(unsynced_lessons) + len(cells)
+        for grade, attendance, active, value in cells:
+            # Recheck approval immediately before any write, including direct service use.
+            if grade and not Grade.objects.filter(pk=grade.pk, is_approved=True, updated_at=grade.updated_at).exists():
+                error_count += 1
+                report_details.append({'type': 'grade', 'item': 'Імпортована оцінка', 'status': 'error',
+                    'error': 'Оцінка не схвалена або змінилася. Онлайн-запис не надіслано.'})
+                continue
+            symbol = attendance.get_symbol_ukr() if attendance else ''
+            active = attendance if symbol else (grade or attendance)
+            value = symbol or (grade.value.strip().upper() if grade else '')
+            kind = 'attendance' if symbol or not grade else 'grade'
+            description = f"Клітинка {active.student.get_short_name_ukr()} на {active.lesson.date:%d.%m.%Y}: «{value or 'Очищено'}»"
+            if not active.student.nz_student_id or not active.lesson.nz_schedule_id:
+                error_count += 1
+                report_details.append({'type': kind, 'item': description, 'status': 'error', 'error': 'Відсутній ID учня або уроку на nz.ua'})
+                continue
+            mark_id = self.MARK_MAP_TO_NZ.get(value)
+            if mark_id is None:
+                error_count += 1
+                report_details.append({'type': kind, 'item': description, 'status': 'error', 'error': 'Непідтримувана позначка; онлайн-оцінку не змінено.'})
+                continue
+            if dry_run:
+                success_count += 1
+                report_details.append({'type': kind, 'item': description, 'status': 'dry_run_success', 'message': '[Тестовий режим] Один запис клітинки.'})
+                continue
+            try:
+                time.sleep(self.REQUEST_DELAY_SECONDS)
+                payload = {
+                    '_csrf': self.csrf_token, 'schedule': active.lesson.nz_schedule_id,
+                    'student': active.student.nz_student_id, 'mark': mark_id,
+                    # Existing NZ schedule IDs identify the column. Its saved
+                    # client posts an empty lessonDate for these columns.
+                    'lessonDate': '', 'comment': grade.comment if grade else '',
+                }
+                resp = self.session.post(f"{self.BASE_URL}/journal/set-mark", data=payload,
+                    headers={'X-CSRF-Token': self.csrf_token, 'X-Requested-With': 'XMLHttpRequest'}, timeout=15)
+                if not self._response_saved(resp, expected_mark=mark_id, expected_value=value):
+                    raise NZServiceError(f'nz.ua не підтвердив збереження (код {resp.status_code}). Запис залишено локально.')
+                with transaction.atomic():
+                    # Only the exact sent snapshot becomes synced. Concurrent local edits survive.
+                    if grade:
+                        Grade.objects.filter(pk=grade.pk).update(nz_last_synced_value='' if symbol else grade.value)
+                        Grade.objects.filter(pk=grade.pk, updated_at=grade.updated_at).update(is_synced_to_nz=True)
+                    if attendance:
+                        status = attendance.status if symbol else Attendance.Status.PRESENT
+                        Attendance.objects.filter(pk=attendance.pk).update(nz_last_synced_status=status)
+                        Attendance.objects.filter(pk=attendance.pk, updated_at=attendance.updated_at).update(is_synced_to_nz=True)
+                success_count += 1
+                report_details.append({'type': kind, 'item': description, 'status': 'success', 'message': 'nz.ua підтвердив збереження клітинки.'})
+            except Exception as exc:
+                error_count += 1
+                report_details.append({'type': kind, 'item': description, 'status': 'error', 'error': str(exc)})
+
+        # Підсумковий статус
+        if error_count == 0:
+            status = NZSyncLog.Status.SUCCESS
+        elif success_count > 0:
+            status = NZSyncLog.Status.PARTIAL
+        else:
+            status = NZSyncLog.Status.FAILED
+
+        if not dry_run:
+            journal.nz_last_sync_at = timezone.now()
+            journal.save(update_fields=['nz_last_sync_at'])
+
+        log = NZSyncLog.objects.create(
+            journal=journal,
+            user=user,
+            status=status,
+            items_count=total_items,
+            success_count=success_count,
+            error_count=error_count,
+            details={'dry_run': dry_run, 'items': report_details},
+            error_message="Є помилки при записі окремих рядків" if error_count > 0 else ""
+        )
+
+        return log

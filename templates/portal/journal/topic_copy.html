@@ -1,0 +1,51 @@
+{% extends 'base.html' %}
+{% block title %}Копіювання тем між класами | Журнал{% endblock %}
+{% block content %}
+<div class="calendar-card assessment-card">
+  <h1>Копіювати теми з іншого класу</h1>
+  <p>У журнал: <strong>{{ journal.student_class.name }} · {{ journal.subject.name }}</strong></p>
+  <p class="text-muted">Виберіть журнал-джерело й номери уроків. Наприклад, теми №1–10 класу А можна перенести на уроки №1–10 класу Б, навіть якщо вони проходять в інші дні.</p>
+  <p class="text-muted">Для уроків використовується порядковий номер за весь журнал; підсумкові колонки пропускаються. Фільтри місяця й семестру на копіювання не впливають. Для плану використовується його номер теми; пропуски номерів зберігаються.</p>
+  <form method="post" id="topicCopyForm">
+    {% csrf_token %}
+    {{ form.non_field_errors }}
+    <div class="assessment-fields">
+      {% for field in form %}
+        <div class="form-group">
+          {% if field.field.widget.input_type == 'checkbox' %}
+            <label for="{{ field.id_for_label }}">{{ field }} {{ field.label }}</label>
+          {% else %}
+            <label class="form-label" for="{{ field.id_for_label }}">{{ field.label }}</label>{{ field }}
+          {% endif %}
+          {{ field.errors }}
+        </div>
+      {% endfor %}
+    </div>
+    <p class="text-muted">Кожен клас зберігає власні дати, типи наявних уроків, оцінки та відвідування. Копія в календарний план додається без дат. Якщо копіюєте ДЗ, переноситься його текст; дата виконання залишається вибором цього класу. Уже проведені теми плану пропускаються.</p>
+    <button type="submit" name="action" value="preview" class="btn btn-primary">Переглянути відповідність</button>
+    <a href="{% url 'portal:journal_detail' journal_id=journal.id %}" class="btn btn-secondary">До журналу</a>
+    {% if rows != None %}
+      <input type="hidden" name="preview_token" value="{{ preview_token }}">
+      <p class="assessment-preview">Додати: {{ counts.create }} · Оновити: {{ counts.update }} · Пропустити: {{ counts.skip }}</p>
+      <div class="table-responsive assessment-preview">
+        <table class="calendar-table">
+          <thead><tr><th>№ джерела</th><th>№ у цьому класі</th><th>Поточна тема</th><th>Тема з джерела</th><th>Дія</th></tr></thead>
+          <tbody>
+          {% for row in rows %}
+            <tr>
+              <td>{{ row.source_number }}</td><td>{{ row.target_number }}</td>
+              <td>{{ row.old_title|default:'—' }}{% if form.include_homework.value %}<small class="homework-target-label">ДЗ: {{ row.old_homework|default:'—' }}</small>{% endif %}</td>
+              <td>{{ row.new_title }}{% if form.include_homework.value %}<small class="homework-target-label">ДЗ: {{ row.new_homework|default:'—' }}</small>{% endif %}</td>
+              <td>{{ row.status_label }}</td>
+            </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% if counts.create or counts.update %}
+        <button type="submit" name="action" value="save" class="btn btn-primary">Зберегти теми локально</button>
+      {% endif %}
+    {% endif %}
+  </form>
+</div>
+{% endblock %}

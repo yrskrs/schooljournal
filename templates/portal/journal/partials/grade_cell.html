@@ -1,0 +1,44 @@
+{% load journal_tags %}
+{% get_cell_display grade attendance as display_val %}
+{% get_cell_class grade attendance as cell_css_class %}
+{% get_cell_sync_state grade attendance lesson as sync_state %}
+{% get_cell_version grade attendance as cell_version %}
+
+{% if can_edit and grade.is_approved != False %}
+  <div class="journal-single-cell-wrap {{ sync_state.css }} {% if just_saved %}grade-saved{% endif %} {% if conflict_error %}grade-conflict{% endif %}"
+       data-lesson-id="{{ lesson.id }}"
+       data-student-id="{{ student.id }}"
+       data-student-name="{{ student.get_full_name_ukr }}"
+       data-lesson-info="{{ lesson.date|date:'d.m' }}{% if lesson.lesson_number > 1 %} (№{{ lesson.lesson_number }}){% endif %}"
+       title="{{ sync_state.label }}">
+    {% if sync_state %}<span class="cell-sync-marker" aria-label="{{ sync_state.label }}">{{ sync_state.symbol }}</span>{% endif %}
+    {% if grade.import_record %}<a class="cell-source-marker" href="{% url 'portal:external_grade_review' lesson.journal.id %}?all=1" title="Отримано з {{ grade.import_record.connection.name }}{% if grade.import_record.is_ai %} · ШІ{% endif %}">API{% if grade.import_record.is_ai %} · ШІ{% endif %}</a>{% endif %}
+    <input
+      type="text"
+      name="value"
+      class="grade-input journal-cell-input {{ cell_css_class }} {% if conflict_error %}grade-conflict{% endif %}"
+      value="{{ display_val }}"
+      maxlength="5"
+      autocomplete="off"
+      spellcheck="false"
+      title="{% if conflict_error %}{{ message }}{% else %}{{ sync_state.label }}. Оцінка (1-12) або відвідуваність (Н, ХВ, ЗП).{% endif %}"
+      hx-post="{% url 'portal:update_grade' journal_id=lesson.journal.id %}"
+      hx-trigger="change"
+      hx-vals='{"lesson_id": "{{ lesson.id }}", "student_id": "{{ student.id }}", "client_version": "{{ cell_version }}"}'
+      hx-target="closest .journal-single-cell-wrap"
+      hx-swap="outerHTML"
+      data-lesson-id="{{ lesson.id }}"
+      data-student-id="{{ student.id }}"
+      data-student-name="{{ student.get_full_name_ukr }}"
+      data-lesson-info="{{ lesson.date|date:'d.m' }}"
+    />
+  </div>
+{% else %}
+  <div class="journal-single-cell-wrap {{ sync_state.css }}" title="{{ sync_state.label }}">
+    {% if sync_state %}<span class="cell-sync-marker" aria-label="{{ sync_state.label }}">{{ sync_state.symbol }}</span>{% endif %}
+    <span class="journal-cell-readonly {{ cell_css_class }}">
+      {{ display_val }}
+    </span>
+    {% if grade.import_record %}<a class="cell-source-marker" href="{% url 'portal:external_grade_review' lesson.journal.id %}{% if grade.is_approved %}?all=1{% endif %}" title="Джерело: {{ grade.import_record.connection.name }}{% if not grade.is_approved %} · ШІ · попередня оцінка{% endif %}">{% if not grade.is_approved %}ШІ · ?{% else %}API{% if grade.import_record.is_ai %} · ШІ{% endif %}{% endif %}</a>{% endif %}
+  </div>
+{% endif %}

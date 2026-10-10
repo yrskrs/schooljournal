@@ -1,0 +1,248 @@
+{% extends 'base.html' %}
+
+{% block title %}Навчальна структура | Шкільний журнал{% endblock %}
+
+{% block content %}
+<div class="card-header" style="border: none; padding: 0; margin-bottom: 1.5rem;">
+  <div>
+    <h1 style="font-size: 1.6rem; font-weight: 700; color: var(--primary-dark);">Навчальна структура</h1>
+    <p style="color: var(--text-muted); font-size: 0.9rem;">
+      Навчальні роки, семестри, перелік предметів та класи школи.
+    </p>
+  </div>
+
+  <!-- Селектор школи -->
+  <div>
+    <form method="get" style="display: flex; align-items: center; gap: 0.5rem;">
+      <label style="font-weight: 600; font-size: 0.9rem;">Школа:</label>
+      <select name="school_id" class="form-select" onchange="this.form.submit()" style="min-width: 260px;">
+        {% for s in schools %}
+          <option value="{{ s.id }}" {% if s.id == selected_school.id %}selected{% endif %}>
+            {{ s.name }}
+          </option>
+        {% endfor %}
+      </select>
+    </form>
+  </div>
+</div>
+
+{% if selected_school %}
+<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem;">
+
+  <!-- 1. Навчальні роки та семестри -->
+  <div class="card">
+    <div class="card-header">
+      <h2 class="card-title">Навчальні роки та семестри</h2>
+      <button class="btn btn-primary btn-sm" onclick="openModal('createYearModal')">+ Додати рік</button>
+    </div>
+    <div style="display: flex; flex-direction: column; gap: 0.75rem;">
+      {% for y in years %}
+        <div style="padding: 0.75rem; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg-alt);">
+          <div style="display: flex; justify-content: space-between; align-items: center; font-weight: 700;">
+            <span>{{ y.name }}</span>
+            {% if y.is_current %}
+              <span class="user-role-pill" style="background-color: var(--success-bg); color: var(--success);">Поточний</span>
+            {% endif %}
+          </div>
+          <div style="font-size: 0.8rem; color: var(--text-muted); margin-top: 0.2rem;">
+            Період: {{ y.start_date|date:"d.m.Y" }} — {{ y.end_date|date:"d.m.Y" }}
+          </div>
+          <div style="margin-top: 0.5rem; font-size: 0.85rem;">
+            <strong>Семестри:</strong>
+            {% for sem in y.semesters.all %}
+              <span style="display: inline-block; background: white; border: 1px solid var(--border); border-radius: 4px; padding: 0.1rem 0.4rem; margin-right: 0.3rem; margin-top: 0.2rem;">
+                {{ sem.name }} ({{ sem.start_date|date:"d.m" }}–{{ sem.end_date|date:"d.m" }})
+              </span>
+            {% empty %}
+              <span style="color: var(--text-light);">не налаштовано</span>
+            {% endfor %}
+          </div>
+        </div>
+      {% empty %}
+        <p style="color: var(--text-muted); font-size: 0.9rem;">Навчальних років ще не створено.</p>
+      {% endfor %}
+    </div>
+  </div>
+
+  <!-- 2. Предмети школи -->
+  <div class="card">
+    <div class="card-header">
+      <h2 class="card-title">Предмети школи</h2>
+      <button class="btn btn-primary btn-sm" onclick="openModal('createSubjectModal')">+ Додати предмет</button>
+    </div>
+    <div style="max-height: 380px; overflow-y: auto;">
+      <table style="width: 100%; border-collapse: collapse; font-size: 0.875rem;">
+        <thead>
+          <tr style="border-bottom: 2px solid var(--border); text-align: left; color: var(--text-muted);">
+            <th style="padding: 0.5rem;">Назва предмета</th>
+            <th style="padding: 0.5rem;">Скорочення</th>
+            <th style="padding: 0.5rem; text-align: center;">Статус</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for subj in subjects %}
+            <tr style="border-bottom: 1px solid var(--border);">
+              <td style="padding: 0.5rem; font-weight: 600;">{{ subj.name }}</td>
+              <td style="padding: 0.5rem; color: var(--text-muted);">{{ subj.code|default:"—" }}</td>
+              <td style="padding: 0.5rem; text-align: center;">
+                <span class="user-role-pill" style="font-size: 0.7rem; background-color: var(--success-bg); color: var(--success);">Активний</span>
+              </td>
+            </tr>
+          {% empty %}
+            <tr><td colspan="3" style="padding: 1rem; text-align: center; color: var(--text-muted);">Предметів ще немає.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- 3. Класи школи -->
+  <div class="card" style="grid-column: span 2;">
+    <div class="card-header">
+      <h2 class="card-title">Класи школи</h2>
+      <button class="btn btn-primary btn-sm" onclick="openModal('createClassModal')">+ Створити клас</button>
+    </div>
+    <div style="overflow-x: auto;">
+      <table style="width: 100%; border-collapse: collapse; font-size: 0.875rem;">
+        <thead>
+          <tr style="background-color: var(--bg-alt); border-bottom: 2px solid var(--border); text-align: left;">
+            <th style="padding: 0.6rem 0.8rem;">Назва класу</th>
+            <th style="padding: 0.6rem 0.8rem;">Паралель</th>
+            <th style="padding: 0.6rem 0.8rem;">Навчальний рік</th>
+            <th style="padding: 0.6rem 0.8rem;">Класний керівник</th>
+            <th style="padding: 0.6rem 0.8rem; text-align: right;">Учнів у класі</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for cl in classes %}
+            <tr style="border-bottom: 1px solid var(--border);">
+              <td style="padding: 0.6rem 0.8rem; font-weight: 700; color: var(--primary-dark);">{{ cl.name }}</td>
+              <td style="padding: 0.6rem 0.8rem;">{{ cl.grade_level }} клас</td>
+              <td style="padding: 0.6rem 0.8rem; color: var(--text-muted);">{{ cl.academic_year.name }}</td>
+              <td style="padding: 0.6rem 0.8rem;">{{ cl.class_teacher.get_full_name_ukr|default:"Не призначено" }}</td>
+              <td style="padding: 0.6rem 0.8rem; text-align: right; font-weight: 600;">
+                {{ cl.enrollments.count }}
+              </td>
+            </tr>
+          {% empty %}
+            <tr><td colspan="5" style="padding: 1.5rem; text-align: center; color: var(--text-muted);">Класи ще не створено.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+</div>
+
+<!-- Модальні вікна -->
+<div id="createYearModal" class="modal-overlay">
+  <div class="modal-card" style="max-width: 480px;">
+    <div class="modal-header">
+      <h3 class="modal-title">Додати навчальний рік</h3>
+      <button class="modal-close" onclick="closeModal('createYearModal')">&times;</button>
+    </div>
+    <form method="post">
+      {% csrf_token %}
+      <input type="hidden" name="action" value="create_year">
+      <input type="hidden" name="school_id" value="{{ selected_school.id }}">
+      <div class="form-group">
+        <label class="form-label">Назва (напр. 2024/2025) *</label>
+        <input type="text" name="year_name" class="form-control" required placeholder="2024/2025">
+      </div>
+      <div class="form-row">
+        <div class="form-col form-group">
+          <label class="form-label">Дата початку *</label>
+          <input type="date" name="start_date" class="form-control" required value="2024-09-01">
+        </div>
+        <div class="form-col form-group">
+          <label class="form-label">Дата завершення *</label>
+          <input type="date" name="end_date" class="form-control" required value="2025-06-30">
+        </div>
+      </div>
+      <div class="form-group">
+        <label style="display: flex; align-items: center; gap: 0.5rem; font-size: 0.9rem; cursor: pointer;">
+          <input type="checkbox" name="is_current" checked>
+          Встановити як поточний навчальний рік
+        </label>
+      </div>
+      <div style="display: flex; justify-content: flex-end; gap: 0.75rem; margin-top: 1.5rem;">
+        <button type="button" class="btn btn-secondary" onclick="closeModal('createYearModal')">Скасувати</button>
+        <button type="submit" class="btn btn-primary">Зберегти рік</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div id="createSubjectModal" class="modal-overlay">
+  <div class="modal-card" style="max-width: 480px;">
+    <div class="modal-header">
+      <h3 class="modal-title">Додати навчальний предмет</h3>
+      <button class="modal-close" onclick="closeModal('createSubjectModal')">&times;</button>
+    </div>
+    <form method="post">
+      {% csrf_token %}
+      <input type="hidden" name="action" value="create_subject">
+      <input type="hidden" name="school_id" value="{{ selected_school.id }}">
+      <div class="form-group">
+        <label class="form-label">Назва предмета *</label>
+        <input type="text" name="subject_name" class="form-control" required placeholder="напр. Математика або Українська література">
+      </div>
+      <div class="form-group">
+        <label class="form-label">Код або скорочення</label>
+        <input type="text" name="subject_code" class="form-control" placeholder="МАТ, УКР-МОВ">
+      </div>
+      <div style="display: flex; justify-content: flex-end; gap: 0.75rem; margin-top: 1.5rem;">
+        <button type="button" class="btn btn-secondary" onclick="closeModal('createSubjectModal')">Скасувати</button>
+        <button type="submit" class="btn btn-primary">Додати предмет</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div id="createClassModal" class="modal-overlay">
+  <div class="modal-card" style="max-width: 480px;">
+    <div class="modal-header">
+      <h3 class="modal-title">Створити клас</h3>
+      <button class="modal-close" onclick="closeModal('createClassModal')">&times;</button>
+    </div>
+    <form method="post">
+      {% csrf_token %}
+      <input type="hidden" name="action" value="create_class">
+      <input type="hidden" name="school_id" value="{{ selected_school.id }}">
+      <div class="form-group">
+        <label class="form-label">Навчальний рік *</label>
+        <select name="academic_year_id" class="form-select" required>
+          {% for y in years %}
+            <option value="{{ y.id }}" {% if y.is_current %}selected{% endif %}>{{ y.name }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="form-row">
+        <div class="form-col form-group">
+          <label class="form-label">Паралель (1-12) *</label>
+          <input type="number" name="grade_level" class="form-control" min="1" max="12" value="5" required>
+        </div>
+        <div class="form-col form-group">
+          <label class="form-label">Назва класу *</label>
+          <input type="text" name="class_name" class="form-control" placeholder="напр. 5-А" required>
+        </div>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Класний керівник</label>
+        <select name="class_teacher_id" class="form-select">
+          <option value="">Без керівника</option>
+          {% for t in teachers %}
+            <option value="{{ t.id }}">{{ t.get_full_name_ukr }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div style="display: flex; justify-content: flex-end; gap: 0.75rem; margin-top: 1.5rem;">
+        <button type="button" class="btn btn-secondary" onclick="closeModal('createClassModal')">Скасувати</button>
+        <button type="submit" class="btn btn-primary">Створити клас</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+{% endif %}
+{% endblock %}

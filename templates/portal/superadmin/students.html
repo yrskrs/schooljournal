@@ -1,0 +1,223 @@
+{% extends 'base.html' %}
+
+{% block title %}Реєстр учнів | Шкільний журнал{% endblock %}
+
+{% block content %}
+<div class="card-header" style="border: none; padding: 0; margin-bottom: 1.5rem;">
+  <div>
+    <h1 style="font-size: 1.6rem; font-weight: 700; color: var(--primary-dark);">Реєстр учнів школи</h1>
+    <p style="color: var(--text-muted); font-size: 0.9rem;">
+      Облік учнів, зарахування та переведення між класами із фіксацією історичного перебування.
+    </p>
+  </div>
+
+  <div style="display: flex; gap: 0.75rem; align-items: center; flex-wrap: wrap;">
+    <button class="btn btn-secondary btn-sm" onclick="openModal('createStudentModal')">
+      + Додати учня
+    </button>
+  </div>
+</div>
+
+<!-- Панель фільтрів -->
+<div class="card" style="padding: 1rem; margin-bottom: 1.25rem;">
+  <form method="get" style="display: flex; gap: 1rem; align-items: center; flex-wrap: wrap;">
+    <div style="display: flex; align-items: center; gap: 0.5rem;">
+      <label class="form-label" style="margin: 0;">Школа:</label>
+      <select name="school_id" class="form-select" onchange="this.form.submit()" style="min-width: 220px;">
+        {% for s in schools %}
+          <option value="{{ s.id }}" {% if s.id == selected_school.id %}selected{% endif %}>
+            {{ s.name }}
+          </option>
+        {% endfor %}
+      </select>
+    </div>
+
+    <div style="display: flex; align-items: center; gap: 0.5rem;">
+      <label class="form-label" style="margin: 0;">Клас:</label>
+      <select name="class_id" class="form-select" onchange="this.form.submit()" style="min-width: 150px;">
+        <option value="">Всі класи</option>
+        {% for c in classes %}
+          <option value="{{ c.id }}" {% if selected_class and c.id == selected_class.id %}selected{% endif %}>
+            {{ c.name }}
+          </option>
+        {% endfor %}
+      </select>
+    </div>
+
+    {% if selected_class %}
+      <div style="margin-left: auto; display: flex; gap: 0.5rem;">
+        <a href="{% url 'portal:export_students' %}?class_id={{ selected_class.id }}&format=xlsx" class="btn btn-secondary btn-sm">
+          Експорт XLSX
+        </a>
+        <a href="{% url 'portal:export_students' %}?class_id={{ selected_class.id }}&format=csv" class="btn btn-secondary btn-sm">
+          Експорт CSV
+        </a>
+      </div>
+    {% endif %}
+  </form>
+</div>
+
+<!-- Таблиця учнів -->
+<div class="card" style="padding: 0; overflow: hidden;">
+  <table style="width: 100%; border-collapse: collapse; font-size: 0.9rem;">
+    <thead>
+      <tr style="background-color: var(--bg-alt); border-bottom: 2px solid var(--border); text-align: left;">
+        <th style="padding: 0.75rem 1rem;">Код / ID</th>
+        <th style="padding: 0.75rem 1rem;">ПІБ учня</th>
+        <th style="padding: 0.75rem 1rem;">Поточний клас</th>
+        <th style="padding: 0.75rem 1rem;">Історія зарахувань</th>
+        <th style="padding: 0.75rem 1rem; text-align: center;">Статус</th>
+        <th style="padding: 0.75rem 1rem; text-align: right;">Дії</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for student in students %}
+        <tr style="border-bottom: 1px solid var(--border);">
+          <td style="padding: 0.75rem 1rem; font-family: monospace; color: var(--text-muted);">
+            {{ student.internal_id|default:"—" }}
+          </td>
+          <td style="padding: 0.75rem 1rem; font-weight: 600; color: var(--primary-dark);">
+            {{ student.get_full_name_ukr }}
+          </td>
+          <td style="padding: 0.75rem 1rem;">
+            {% for enr in student.enrollments.all %}
+              {% if enr.is_active %}
+                <span class="user-role-pill" style="background: white; border: 1px solid var(--border); font-weight: 700;">
+                  {{ enr.student_class.name }}
+                </span>
+              {% endif %}
+            {% empty %}
+              <span style="color: var(--text-light);">без класу</span>
+            {% endfor %}
+          </td>
+          <td style="padding: 0.75rem 1rem; font-size: 0.8rem; color: var(--text-muted);">
+            {% for enr in student.enrollments.all %}
+              <div>
+                {{ enr.student_class.name }} ({{ enr.start_date|date:"d.m.Y" }} — {% if enr.end_date %}{{ enr.end_date|date:"d.m.Y" }}{% else %}зараз{% endif %})
+                {% if enr.transfer_note %}<span style="font-style: italic;">[{{ enr.transfer_note }}]</span>{% endif %}
+              </div>
+            {% endfor %}
+          </td>
+          <td style="padding: 0.75rem 1rem; text-align: center;">
+            <span class="user-role-pill" style="font-size: 0.75rem; background-color: var(--success-bg); color: var(--success);">
+              {{ student.get_status_display }}
+            </span>
+          </td>
+          <td style="padding: 0.75rem 1rem; text-align: right;">
+            <button class="btn btn-secondary btn-sm" onclick="openTransferModal('{{ student.id }}', '{{ student.get_full_name_ukr|escapejs }}')">
+              Перевести до класу
+            </button>
+          </td>
+        </tr>
+      {% empty %}
+        <tr>
+          <td colspan="6" style="padding: 2rem; text-align: center; color: var(--text-muted);">
+            Учнів за вибраними критеріями не знайдено.
+          </td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<!-- Модальне вікно створення учня -->
+<div id="createStudentModal" class="modal-overlay">
+  <div class="modal-card">
+    <div class="modal-header">
+      <h3 class="modal-title">Додати учня</h3>
+      <button class="modal-close" onclick="closeModal('createStudentModal')">&times;</button>
+    </div>
+    <form method="post">
+      {% csrf_token %}
+      <input type="hidden" name="action" value="create">
+
+      <div class="form-row">
+        <div class="form-col form-group">
+          <label class="form-label">Прізвище *</label>
+          <input type="text" name="last_name" class="form-control" required placeholder="Шевченко">
+        </div>
+        <div class="form-col form-group">
+          <label class="form-label">Ім'я *</label>
+          <input type="text" name="first_name" class="form-control" required placeholder="Тарас">
+        </div>
+        <div class="form-col form-group">
+          <label class="form-label">По батькові</label>
+          <input type="text" name="middle_name" class="form-control" placeholder="Григорович">
+        </div>
+      </div>
+
+      <div class="form-row">
+        <div class="form-col form-group">
+          <label class="form-label">Внутрішній код / Особова справа</label>
+          <input type="text" name="internal_id" class="form-control" placeholder="ID-001">
+        </div>
+        <div class="form-col form-group">
+          <label class="form-label">Клас зарахування</label>
+          <select name="class_id" class="form-select">
+            <option value="">Без класу</option>
+            {% for c in classes %}
+              <option value="{{ c.id }}">{{ c.name }}</option>
+            {% endfor %}
+          </select>
+        </div>
+      </div>
+
+      <div style="display: flex; justify-content: flex-end; gap: 0.75rem; margin-top: 1.5rem;">
+        <button type="button" class="btn btn-secondary" onclick="closeModal('createStudentModal')">Скасувати</button>
+        <button type="submit" class="btn btn-primary">Зберегти учня</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- Модальне вікно переведення учня -->
+<div id="transferStudentModal" class="modal-overlay">
+  <div class="modal-card" style="max-width: 480px;">
+    <div class="modal-header">
+      <h3 class="modal-title">Переведення учня до іншого класу</h3>
+      <button class="modal-close" onclick="closeModal('transferStudentModal')">&times;</button>
+    </div>
+    <form method="post">
+      {% csrf_token %}
+      <input type="hidden" name="action" value="transfer">
+      <input type="hidden" name="student_id" id="transfer_student_id">
+
+      <p style="margin-bottom: 1rem; font-size: 0.9rem; color: var(--text-muted);">
+        Учень: <strong id="transfer_student_name" style="color: var(--text-main);"></strong>
+      </p>
+
+      <div class="alert alert-info" style="font-size: 0.85rem; padding: 0.75rem;">
+        Увага: Переведення учня зберігає всю його попередню історію та оцінки в журналах минулого класу!
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">Новий клас *</label>
+        <select name="new_class_id" class="form-select" required>
+          <option value="">Оберіть клас призначення...</option>
+          {% for c in classes %}
+            <option value="{{ c.id }}">{{ c.name }} ({{ c.academic_year.name }})</option>
+          {% endfor %}
+        </select>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">Підстава / Номер наказу</label>
+        <input type="text" name="reason" class="form-control" placeholder="напр. Наказ №45 від 15.11.2024">
+      </div>
+
+      <div style="display: flex; justify-content: flex-end; gap: 0.75rem; margin-top: 1.5rem;">
+        <button type="button" class="btn btn-secondary" onclick="closeModal('transferStudentModal')">Скасувати</button>
+        <button type="submit" class="btn btn-primary">Підтвердити переведення</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<script>
+function openTransferModal(id, name) {
+  document.getElementById('transfer_student_id').value = id;
+  document.getElementById('transfer_student_name').textContent = name;
+  openModal('transferStudentModal');
+}
+</script>
+{% endblock %}

@@ -1,0 +1,16 @@
+{% extends 'base.html' %}
+{% block title %}Версії сайту | Шкільний журнал{% endblock %}
+{% block content %}
+<div class="manual-page">
+  <h1>Версії та зміни</h1>
+  <p>Поточна версія: <strong>{{ site_version }}</strong>. Нижче наведено документовані версії сервісу.</p>
+  {% for release in releases %}
+  <article class="card">
+    <h2>{{ release.version }} — {{ release.title }}</h2>
+    <p class="form-help">{{ release.date }}</p>
+    <ul>{% for change in release.changes %}<li>{{ change }}</li>{% endfor %}</ul>
+  </article>
+  {% endfor %}
+  <a href="{% url 'portal:guide' %}">Відкрити інструкцію користувача</a>
+</div>
+{% endblock %}

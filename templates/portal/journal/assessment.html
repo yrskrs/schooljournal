@@ -1,0 +1,54 @@
+{% extends 'base.html' %}
+{% block title %}Розрахунок оцінок | Журнал{% endblock %}
+{% block content %}
+<div class="calendar-card assessment-card">
+  <h1>Розрахувати підсумкові оцінки</h1>
+  <p>{{ journal.student_class.name }} · {{ journal.subject.name }}</p>
+  <p class="text-muted">Виберіть дати, уроки й тип оцінок. Порожні клітинки, відсутність та нечислові позначки не враховуються. Перед збереженням перевірте результати.</p>
+  <form method="post" id="assessmentForm">
+    {% csrf_token %}
+    <input type="hidden" name="school_time_list" value="1">
+    <input type="hidden" name="source_types_present" value="1">
+    {{ form.non_field_errors }}
+    <div class="assessment-fields">
+      {% for field in form %}
+        {% if field.name != 'lesson_ids' and field.name != 'source_types' %}
+        <div class="form-group"><label class="form-label" for="{{ field.id_for_label }}">{{ field.label }}</label>{{ field }}{{ field.errors }}</div>
+        {% endif %}
+      {% endfor %}
+    </div>
+    <fieldset class="lesson-kind-fields assessment-sources">
+      <legend class="form-label">Типи уроків / оцінок для розрахунку</legend>
+      <p class="text-muted">Позначте потрібні типи. Список тем нижче відповідає цим типам і вибраним датам.</p>
+      {{ form.source_types.errors }}{{ form.source_types }}
+    </fieldset>
+    <details open class="assessment-sources">
+      <summary>Уроки й теми для розрахунку</summary>
+      <div class="assessment-source-buttons">
+        <button type="button" class="btn btn-secondary btn-sm" onclick="selectAssessmentLessons(true)">Обрати всі</button>
+        <button type="button" class="btn btn-secondary btn-sm" onclick="selectAssessmentLessons(false)">Зняти вибір</button>
+      </div>
+      {{ form.lesson_ids.errors }}{{ form.lesson_ids }}
+    </details>
+    <p class="text-muted">Результат — середнє арифметичне вибраних числових оцінок із заданим округленням. За замовчуванням 8 і 9 дають 9, як у підтвердженому прикладі nz.ua.</p>
+    <button type="submit" name="action" value="preview" class="btn btn-primary">Переглянути розрахунок</button>
+    <a href="{% url 'portal:journal_detail' journal_id=journal.id %}" class="btn btn-secondary">До журналу</a>
+    {% if rows != None %}
+      <input type="hidden" name="preview_token" value="{{ preview_token }}">
+      <div class="table-responsive assessment-preview">
+      <table class="calendar-table">
+        <thead><tr><th>Учень</th><th>Кількість оцінок</th><th>Середній бал</th><th>Підсумкова оцінка</th></tr></thead>
+        <tbody>
+        {% for row in rows %}
+          <tr><td>{{ row.student.get_full_name_ukr }}</td><td>{{ row.count }}</td><td>{{ row.average|floatformat:2|default:'—' }}</td>
+          <td><input class="form-control assessment-value" type="text" name="grade_{{ row.student.id }}" value="{{ row.value }}" maxlength="5" aria-label="Підсумкова оцінка: {{ row.student.get_full_name_ukr }}"></td></tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      </div>
+      <button type="submit" name="action" value="save" class="btn btn-primary">Зберегти оцінки локально</button>
+    {% endif %}
+  </form>
+</div>
+{{ assessment_sources|json_script:'assessment-source-data' }}
+{% endblock %}

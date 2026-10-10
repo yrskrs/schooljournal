@@ -1,0 +1,31 @@
+{% extends 'base.html' %}
+{% block title %}Оцінки з робіт | {{ journal.student_class.name }}{% endblock %}
+{% block content %}
+<div class="schedule-page integration-page">
+  <div class="schedule-page-header"><div><h1>Оцінки з робіт</h1><p>{{ journal.student_class.name }} · {{ journal.subject.name }}</p></div>
+    <div class="schedule-row-actions"><a class="btn btn-outline-primary" href="{% url 'portal:journal_detail' journal.id %}">До журналу</a><a class="btn btn-outline-primary" href="{% url 'portal:journal_integrations' journal.id %}">Профілі та API</a></div>
+  </div>
+  <p class="alert alert-info">Позначка «ШІ · попередня» означає, що оцінка не входить до середнього бала й підсумків та не вивантажується до nz.ua. Схвалення вчителем робить її остаточною.</p>
+  <p><a href="{% if for_review %}?all=1{% else %}?{% endif %}">{% if for_review %}Показати всю історію{% else %}Лише ті, що потребують рішення{% endif %}</a></p>
+  {% for record in page %}
+    <article class="schedule-card external-grade-review" data-record-id="{{ record.pk }}">
+      <h2>{{ record.student.get_full_name_ukr }} — <strong>{{ record.value }}</strong> {% if record.is_ai %}<span class="badge">ШІ</span>{% endif %}</h2>
+      <p>{{ record.lesson.date|date:'d.m.Y' }} · урок №{{ record.lesson.lesson_number }} · {{ record.lesson.topic }}</p>
+      <p>Джерело: <strong>{{ record.connection.name }}</strong> · ID роботи: <code>{{ record.external_id }}</code></p>
+      <p>Статус: <strong>{{ record.get_status_display }}</strong>{% if record.reviewed_by %} · {{ record.reviewed_by.get_full_name_ukr }}{% endif %}</p>
+      {% if record.current_grade %}<p>Зараз у клітинці: <strong>{{ record.current_grade.value|default:'порожньо' }}</strong>{% if not record.current_grade.is_approved %} (попередня оцінка){% endif %}.</p>{% endif %}
+      {% if record.current_attendance %}<p>Відвідування: <strong>{{ record.current_attendance.get_status_display }}</strong>.</p>{% endif %}
+      {% if record.reviewable and can_edit %}<form method="post">{% csrf_token %}
+        <input type="hidden" name="record_id" value="{{ record.pk }}"><input type="hidden" name="version" value="{{ record.review_version }}">
+        {% if record.status == 'CONFLICT' %}<p><label><input type="checkbox" name="replace" value="1"> Замінити запис у клітинці</label></p>{% endif %}
+        <div class="schedule-row-actions"><button class="btn btn-primary" name="action" value="approve">Схвалити оцінку</button><button class="btn btn-outline-danger" name="action" value="reject">Відхилити</button></div>
+      </form>{% endif %}
+    </article>
+  {% empty %}<div class="schedule-card"><p>Немає оцінок, що потребують рішення.</p></div>{% endfor %}
+  {% if page.has_other_pages %}<p>{% if page.has_previous %}<a href="?page={{ page.previous_page_number }}{% if not for_review %}&amp;all=1{% endif %}">Попередні</a>{% endif %} · {{ page.number }} / {{ page.paginator.num_pages }} · {% if page.has_next %}<a href="?page={{ page.next_page_number }}{% if not for_review %}&amp;all=1{% endif %}">Наступні</a>{% endif %}</p>{% endif %}
+  {% for log in pull_logs %}<details class="schedule-card"><summary>{{ log.connection.name }} — {{ log.created_at|date:'d.m.Y H:i' }}</summary>
+    <p>Додано: {{ log.counts.applied }} · попередні: {{ log.counts.pending }} · конфлікти: {{ log.counts.conflicts }} · без змін: {{ log.counts.unchanged }} · помилки: {{ log.counts.errors }}</p>
+    {% for error in log.errors %}<p>Запис {{ error.row }}: {{ error.message }}</p>{% endfor %}
+  </details>{% endfor %}
+</div>
+{% endblock %}

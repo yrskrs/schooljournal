@@ -1,0 +1,257 @@
+{% extends 'base.html' %}
+
+{% block title %}Мої журнали | Електронний шкільний журнал{% endblock %}
+
+{% block content %}
+<div class="card-header" style="border: none; padding: 0; margin-bottom: 1.75rem;">
+  <div>
+    <h1 style="font-size: 1.75rem; font-weight: 700; color: var(--primary-dark);">Кабінет вчителя</h1>
+    <p style="color: var(--text-muted); font-size: 0.95rem;">
+      {{ school.name }} &bull; Вітаємо, {{ user.get_full_name_ukr }}!
+    </p>
+  </div>
+  <div>
+    <a href="{% url 'portal:weekly_schedule' %}" class="btn btn-secondary">Розклад на тиждень</a>
+    <a href="{% url 'portal:lesson_times' %}" class="btn btn-secondary">Час уроків</a>
+    {% if uncreated_assignments %}
+      <a href="{% url 'portal:create_journal' %}" class="btn btn-primary">
+        + Створити журнал (доступно: {{ uncreated_assignments|length }})
+      </a>
+    {% endif %}
+  </div>
+</div>
+
+<!-- Панель інтеграції з nz.ua -->
+<div class="card" style="margin-bottom: 2rem; border-left: 4px solid #2563eb; background: linear-gradient(to right, #eff6ff 0%, #ffffff 100%); padding: 1.25rem 1.5rem;">
+  <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 1rem;">
+    <div style="display: flex; align-items: center; gap: 1rem;">
+      <div style="width: 44px; height: 44px; border-radius: 10px; background: #2563eb; color: white; display: flex; align-items: center; justify-content: center; font-size: 1.4rem;">
+        &#128214;
+      </div>
+      <div>
+        <div style="display: flex; align-items: center; gap: 0.5rem;">
+          <h3 style="margin: 0; font-size: 1.15rem; font-weight: 700; color: #1e3a8a;">
+            Інтеграція з nz.ua (Нові знання)
+          </h3>
+          {% if nz_account and nz_account.is_active %}
+            <span class="badge" style="background: #16a34a; color: white; font-size: 0.78rem;">Підключено</span>
+          {% else %}
+            <span class="badge" style="background: #94a3b8; color: white; font-size: 0.78rem;">Не підключено</span>
+          {% endif %}
+        </div>
+        <p style="margin: 0.25rem 0 0; font-size: 0.85rem; color: #475569;">
+          {% if nz_account and nz_account.is_active %}
+            Авторизовано: <strong>{{ nz_account.login|default:user.get_full_name_ukr }}</strong> &bull; Зв'язок із журналами активний
+          {% else %}
+            Підключіть ваш акаунт nz.ua для імпорту класів, розкладу та безпечної синхронізації оцінок.
+          {% endif %}
+        </p>
+      </div>
+    </div>
+    <div style="display: flex; gap: 0.5rem; align-items: center;">
+      {% if nz_account and nz_account.is_active %}
+        <a href="{% url 'portal:nz_journals_list' %}" class="btn btn-primary btn-sm">
+          Журнали на nz.ua &rarr;
+        </a>
+        <button type="button" class="btn btn-outline-secondary btn-sm" onclick="openNzConnectModal()">
+          Перепідключити
+        </button>
+      {% else %}
+        <button type="button" class="btn btn-primary btn-sm" onclick="openNzConnectModal()">
+          Підключити акаунт nz.ua &rarr;
+        </button>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+<!-- Мої журнали -->
+<div style="margin-bottom: 2.5rem;">
+  <h2 style="font-size: 1.25rem; font-weight: 700; color: var(--text-main); margin-bottom: 1rem;">
+    Мої навчальні журнали
+  </h2>
+
+  <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 1.25rem;">
+    {% for j in my_journals %}
+      <div class="card" style="margin-bottom: 0; display: flex; flex-direction: column; justify-content: space-between; transition: transform 0.15s ease, box-shadow 0.15s ease;">
+        <div>
+          <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 0.75rem;">
+            <div style="display: flex; gap: 0.35rem; align-items: center; flex-wrap: wrap;">
+              <span class="user-role-pill" style="font-size: 0.9rem; font-weight: 700; padding: 0.25rem 0.75rem; background: var(--primary-light); color: var(--primary-dark);">
+                {{ j.student_class.name }} клас
+              </span>
+              {% if j.nz_journal_id %}
+                <span class="user-role-pill" style="font-size: 0.75rem; font-weight: 600; background: #e0f2fe; color: #0369a1;" title="Прив'язано до nz.ua (ID: {{ j.nz_journal_id }})">
+                  nz.ua
+                </span>
+              {% endif %}
+            </div>
+            <div style="display: flex; gap: 0.35rem; align-items: center;">
+              {% if j.nz_journal_id and j.unsynced_count > 0 %}
+                <span class="badge" style="background-color: #f59e0b; color: white; font-size: 0.75rem; padding: 0.2rem 0.5rem; border-radius: 4px;" title="Незбережені зміни для nz.ua">
+                  {{ j.unsynced_count }} незб.
+                </span>
+              {% endif %}
+              {% if j.is_archived %}
+                <span class="user-role-pill" style="background-color: var(--danger-bg); color: var(--danger);">
+                  Архівний
+                </span>
+              {% else %}
+                <span class="user-role-pill" style="background-color: var(--success-bg); color: var(--success);">
+                  Активний
+                </span>
+              {% endif %}
+            </div>
+          </div>
+
+          <h3 style="font-size: 1.25rem; font-weight: 700; color: var(--primary-dark); margin-bottom: 0.4rem;">
+            {{ j.subject.name }}
+          </h3>
+          <p style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 1rem;">
+            Навчальний рік: {{ j.academic_year.name }}
+          </p>
+
+          <div style="display: flex; gap: 1rem; font-size: 0.85rem; color: var(--text-main); padding: 0.6rem 0; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); margin-bottom: 1rem;">
+            <div>
+              <strong>{{ j.lessons.count }}</strong> <span style="color: var(--text-muted);">уроків</span>
+            </div>
+            <div>
+              <strong>{{ j.student_class.enrollments.count }}</strong> <span style="color: var(--text-muted);">учнів</span>
+            </div>
+          </div>
+        </div>
+
+        <div style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
+          <a href="{% url 'portal:journal_detail' journal_id=j.id %}" class="btn btn-primary" style="flex: 1;">
+            Відкрити журнал &rarr;
+          </a>
+          <a href="{% url 'portal:export_journal_xlsx' journal_id=j.id %}" class="btn btn-secondary btn-sm" title="Експорт в Excel">
+            XLSX
+          </a>
+          <a href="{% url 'portal:export_journal_pdf' journal_id=j.id %}" class="btn btn-secondary btn-sm" title="Друкований PDF">
+            PDF
+          </a>
+        </div>
+      </div>
+    {% empty %}
+      <div class="card" style="grid-column: 1 / -1; padding: 2.5rem; text-align: center;">
+        <h3 style="color: var(--primary-dark); margin-bottom: 0.5rem;">У вас ще немає створених журналів</h3>
+        <p style="color: var(--text-muted); margin-bottom: 1.25rem;">
+          Створіть свій перший журнал для призначеного класу та предмета.
+        </p>
+        {% if uncreated_assignments %}
+          <a href="{% url 'portal:create_journal' %}" class="btn btn-primary">
+            + Створити журнал зараз
+          </a>
+        {% else %}
+          <p style="font-size: 0.85rem; color: var(--text-light);">
+            Зверніться до суперадміністратора для призначення предметів та класів.
+          </p>
+        {% endif %}
+      </div>
+    {% endfor %}
+  </div>
+</div>
+
+<!-- Журнали на заміну (якщо є) -->
+{% if override_journals %}
+<div>
+  <h2 style="font-size: 1.2rem; font-weight: 700; color: var(--text-main); margin-bottom: 1rem;">
+    Журнали із дозволом на заміну
+  </h2>
+  <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 1.25rem;">
+    {% for j in override_journals %}
+      <div class="card" style="margin-bottom: 0;">
+        <div style="display: flex; justify-content: space-between; margin-bottom: 0.5rem;">
+          <span class="user-role-pill">{{ j.student_class.name }}</span>
+          <span class="user-role-pill" style="background-color: var(--warning-bg); color: var(--warning);">Заміна</span>
+        </div>
+        <h3 style="font-size: 1.1rem; font-weight: 700; color: var(--primary-dark);">{{ j.subject.name }}</h3>
+        <p style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 1rem;">
+          Основний вчитель: {{ j.teacher.get_full_name_ukr }}
+        </p>
+        <a href="{% url 'portal:journal_detail' journal_id=j.id %}" class="btn btn-secondary btn-sm" style="width: 100%;">
+          Переглянути / Внести урок &rarr;
+        </a>
+      </div>
+    {% endfor %}
+  </div>
+</div>
+{% endif %}
+
+<!-- Модальне вікно підключення nz.ua -->
+<div id="nzConnectModal" class="modal" style="display: none; position: fixed; inset: 0; background: rgba(15, 23, 42, 0.6); backdrop-filter: blur(4px); z-index: 1050; align-items: center; justify-content: center;">
+  <div class="modal-dialog" style="max-width: 520px; width: 90%; margin: auto; background: white; border-radius: var(--radius-md); box-shadow: var(--shadow-lg); overflow: hidden;">
+    <div class="modal-header" style="background: #1e3a8a; color: white; padding: 1.25rem; display: flex; justify-content: space-between; align-items: center;">
+      <h5 class="modal-title" style="margin: 0; font-size: 1.15rem; font-weight: 700; color: white;">
+        Підключення до nz.ua (Нові знання)
+      </h5>
+      <button type="button" onclick="closeNzConnectModal()" style="background: transparent; border: none; color: white; font-size: 1.2rem; cursor: pointer;">&times;</button>
+    </div>
+    <form method="POST" action="{% url 'portal:nz_connect' %}" style="padding: 1.5rem;">
+      {% csrf_token %}
+      <input type="hidden" name="next" value="{{ request.path }}">
+
+      <div style="margin-bottom: 1.25rem;">
+        <label style="display: block; font-weight: 600; font-size: 0.88rem; margin-bottom: 0.5rem;">Спосіб підключення:</label>
+        <div style="display: flex; gap: 1rem;">
+          <label style="display: flex; align-items: center; gap: 0.35rem; font-size: 0.88rem; cursor: pointer;">
+            <input type="radio" name="auth_method" value="cookie" checked onchange="toggleAuthFields(this.value)">
+            Кука PHPSESSID (Рекомендовано)
+          </label>
+          <label style="display: flex; align-items: center; gap: 0.35rem; font-size: 0.88rem; cursor: pointer;">
+            <input type="radio" name="auth_method" value="credentials" onchange="toggleAuthFields(this.value)">
+            Логін та пароль
+          </label>
+        </div>
+      </div>
+
+      <!-- Варіант 1: PHPSESSID -->
+      <div id="authMethodCookieBox" style="margin-bottom: 1.25rem;">
+        <label for="phpsessidInput" style="display: block; font-weight: 600; font-size: 0.88rem; margin-bottom: 0.4rem;">
+          Значення PHPSESSID з браузера:
+        </label>
+        <input type="password" autocomplete="off" id="phpsessidInput" name="phpsessid" class="form-control" placeholder="Вставте куку PHPSESSID..." style="font-family: monospace;">
+        <small style="display: block; margin-top: 0.35rem; color: var(--text-muted); font-size: 0.78rem;">
+          Оскільки ви вже увійшли в офіційний акаунт на nz.ua, скопіюйте PHPSESSID з інструментів розробника браузера (DevTools &rarr; Application/Storage &rarr; Cookies &rarr; nz.ua).
+        </small>
+      </div>
+
+      <!-- Варіант 2: Логін і пароль -->
+      <div id="authMethodCredsBox" style="display: none; margin-bottom: 1.25rem;">
+        <div style="margin-bottom: 0.75rem;">
+          <label for="loginInput" style="display: block; font-weight: 600; font-size: 0.88rem; margin-bottom: 0.4rem;">Логін / Email:</label>
+          <input type="text" id="loginInput" name="login" class="form-control" placeholder="Логін на nz.ua">
+        </div>
+        <div>
+          <label for="passwordInput" style="display: block; font-weight: 600; font-size: 0.88rem; margin-bottom: 0.4rem;">Пароль:</label>
+          <input type="password" id="passwordInput" name="password" class="form-control" placeholder="Пароль">
+        </div>
+      </div>
+
+      <div style="display: flex; justify-content: flex-end; gap: 0.5rem; margin-top: 1.5rem;">
+        <button type="button" class="btn btn-secondary" onclick="closeNzConnectModal()">Скасувати</button>
+        <button type="submit" class="btn btn-primary">Підключити &rarr;</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<script>
+function openNzConnectModal() {
+  document.getElementById('nzConnectModal').style.display = 'flex';
+}
+function closeNzConnectModal() {
+  document.getElementById('nzConnectModal').style.display = 'none';
+}
+function toggleAuthFields(val) {
+  if (val === 'cookie') {
+    document.getElementById('authMethodCookieBox').style.display = 'block';
+    document.getElementById('authMethodCredsBox').style.display = 'none';
+  } else {
+    document.getElementById('authMethodCookieBox').style.display = 'none';
+    document.getElementById('authMethodCredsBox').style.display = 'block';
+  }
+}
+</script>
+{% endblock %}

@@ -1,0 +1,51 @@
+<h2 id="assessmentModalTitle">{{ assessment_title }}</h2>
+<form method="post" action="{% url 'portal:assessment_calculate' journal_id=journal.id %}" id="assessmentForm" data-compact="true" data-thematic="{{ is_thematic|yesno:'true,false' }}">
+  {% csrf_token %}
+  <input type="hidden" name="modal" value="1">
+  <input type="hidden" name="school_time_list" value="1">
+  <input type="hidden" name="semester_id" value="{{ assessment_period.semester.pk|default:'' }}">
+  <input type="hidden" name="source_types_present" value="1">
+  {{ form.grade_type.as_hidden }}{{ form.source.as_hidden }}{{ form.rounding.as_hidden }}{{ form.title.as_hidden }}{{ form.target_lesson.as_hidden }}
+  {{ form.non_field_errors }}{{ form.grade_type.errors }}{{ form.lesson_ids.errors }}
+  <div class="assessment-modal-fields">
+    <label for="id_date">Положення оцінки в журналі</label>
+    <div>{{ form.date }}{{ form.date.errors }}</div>
+    <label for="id_lesson_time">Час уроку</label>
+    <div>{{ form.lesson_time }}{{ form.lesson_time.errors }}<small><a href="{% url 'portal:lesson_times' %}?school_id={{ journal.school_id }}">Час уроків школи</a></small></div>
+    {% if is_thematic %}
+    <span class="assessment-field-label">{{ assessment_period_label }}</span>
+    <div class="assessment-date-range">
+      <label for="id_start_date">з</label>{{ form.start_date }}{{ form.start_date.errors }}
+      <label for="id_end_date">по</label>{{ form.end_date }}{{ form.end_date.errors }}
+    </div>
+    {% endif %}
+  </div>
+  {% if not is_thematic %}<div hidden>{{ form.start_date }}{{ form.end_date }}</div>{{ form.start_date.errors }}{{ form.end_date.errors }}{% endif %}
+  <p class="assessment-period-note" id="assessmentPeriodNote">Період розрахунку: {{ assessment_period.start_date|date:'d.m.Y' }} — {{ assessment_period.end_date|date:'d.m.Y' }}.</p>
+  <div class="assessment-type-notice">Оберіть, які типи оцінок враховувати під час розрахунку</div>
+  <label class="assessment-select-all"><input type="checkbox" id="assessmentSelectAll"> Зняти/виділити все</label>
+  {{ form.source_types.errors }}
+  <fieldset class="assessment-type-list">
+    <legend>Типи оцінок</legend>
+    {{ form.source_types }}
+  </fieldset>
+  <div id="assessmentModalError" class="alert alert-danger" role="alert" hidden></div>
+  <button type="submit" name="action" value="preview" class="assessment-calculate-button">Розрахувати</button>
+  {% if rows != None %}
+    <input type="hidden" name="preview_token" value="{{ preview_token }}">
+    <div class="assessment-result" id="assessmentResult">
+      <p class="text-muted">Перевірте результати. За потреби змініть оцінки перед збереженням.</p>
+      <div class="table-responsive assessment-preview">
+        <table class="calendar-table">
+          <thead><tr><th>Учень</th><th>Кількість оцінок</th><th>Середній бал</th><th>Підсумкова оцінка</th></tr></thead>
+          <tbody>{% for row in rows %}<tr>
+            <td>{{ row.student.get_full_name_ukr }}</td><td>{{ row.count }}</td><td>{{ row.average|floatformat:2|default:'—' }}</td>
+            <td><input class="form-control assessment-value" type="text" name="grade_{{ row.student.id }}" value="{{ row.value }}" maxlength="5" aria-label="Підсумкова оцінка: {{ row.student.get_full_name_ukr }}"></td>
+          </tr>{% endfor %}</tbody>
+        </table>
+      </div>
+      <button type="submit" name="action" value="save" class="assessment-calculate-button">Зберегти оцінки</button>
+    </div>
+  {% endif %}
+</form>
+{{ assessment_periods|json_script:'assessment-period-data' }}

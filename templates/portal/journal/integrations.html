@@ -1,0 +1,60 @@
+{% extends 'base.html' %}
+{% block title %}Профілі та API | {{ journal.student_class.name }}{% endblock %}
+{% block content %}
+<div class="schedule-page integration-page">
+  <div class="schedule-page-header">
+    <div><h1>Профілі та API журналу</h1><p>{{ journal.student_class.name }} · {{ journal.subject.name }}</p></div>
+    <a class="btn btn-outline-primary" href="{% url 'portal:journal_detail' journal.id %}">Повернутися до журналу</a>
+  </div>
+  <fieldset class="integration-settings" {% if not can_edit %}disabled{% endif %}>
+  <section class="schedule-card">
+    <h2>Особистий і локальний профілі</h2>
+    {% if journal.nz_owner %}
+      <p>Особистий профіль nz.ua: <strong>{{ journal.nz_owner.user.get_full_name_ukr }}</strong>. Журнал і всі його записи залишаються доступними цьому профілю.</p>
+      {% if journal.local_profile %}<p>Додатковий локальний профіль: <strong>{{ journal.local_profile.get_full_name_ukr }}</strong>.</p>{% else %}<p>Додатковий локальний профіль не підключено.</p>{% endif %}
+      {% if can_unlink %}<form method="post">{% csrf_token %}<button name="action" value="unlink_profile" class="btn btn-outline-danger">Відв’язати локальний профіль</button></form>{% endif %}
+      {% if can_link %}
+        <details class="integration-details"><summary>Підключити додатковий локальний профіль</summary>
+          <p>Підтвердьте пароль цього профілю. Він отримає доступ до перегляду й редагування цього журналу.</p>
+          <form method="post">{% csrf_token %}{{ link_form.as_p }}<button name="action" value="link_profile" class="btn btn-primary">Підключити профіль</button></form>
+        </details>
+      {% endif %}
+    {% else %}<p>Особистий акаунт nz.ua ще не пов’язано з цим журналом. Увійдіть через nz.ua та завантажте свій онлайн-журнал.</p>{% endif %}
+  </section>
+  <section class="schedule-card">
+    <h2>API списку учнів</h2>
+    <p>Ключ відкриває доступ лише до вибраних полів учнів цього журналу. Відвідування, оцінки й контактні дані через цей API не надаються.</p>
+    <p>Адреса: <code class="integration-url">{{ api_url }}</code></p>
+    {% if new_api_key %}<div class="alert alert-success"><strong>Новий ключ — показано один раз:</strong><pre class="integration-token">{{ new_api_key }}</pre><p>Скопіюйте його до налаштувань сервера робіт.</p></div>{% endif %}
+    <p>Передавайте ключ у заголовку <code>Authorization: Bearer ВАШ_КЛЮЧ</code>.</p>
+    <form method="post">{% csrf_token %}{{ api_form.as_p }}<button name="action" value="student_api" class="btn btn-primary">Зберегти доступ і поля</button></form>
+    <div class="schedule-row-actions integration-details">
+      <form method="post">{% csrf_token %}<button name="action" value="rotate_key" class="btn btn-outline-primary">Створити / замінити ключ</button></form>
+      <form method="post">{% csrf_token %}<button name="action" value="revoke_key" class="btn btn-outline-danger">Відкликати ключ і вимкнути API</button></form>
+    </div>
+    <p class="text-muted">{% if grant.token_hash %}Ключ створено.{% else %}Ключ ще не створено.{% endif %} {% if grant.enabled %}API увімкнено.{% else %}API вимкнено.{% endif %}</p>
+  </section>
+  <section class="schedule-card">
+    <h2>Оцінки із сервера робіт</h2>
+    <p>Журнал запитує оцінки після натискання «Отримати оцінки». Дата й ID учня визначають клітинку. За кількох уроків на дату потрібен номер уроку.</p>
+    <p><a href="{% url 'portal:external_grade_review' journal.id %}">Переглянути імпортовані оцінки й схвалити попередні</a></p>
+    {% for connection in connections %}
+      <article class="integration-connection">
+        <h3>{{ connection.name }} {% if not connection.enabled %}<span class="badge">Вимкнено</span>{% endif %}</h3>
+        <p class="integration-url">{{ connection.url }}</p>
+        <p class="text-muted">Останнє отримання: {{ connection.last_pulled_at|date:'d.m.Y H:i'|default:'ще не було' }}. {% if connection.api_key %}Ключ збережено.{% endif %}</p>
+        <a href="?edit={{ connection.pk }}#connectionEditor">Змінити налаштування</a>
+        {% if connection.enabled %}<form method="post" action="{% url 'portal:pull_external_grades' journal.id connection.pk %}" class="integration-pull-form">{% csrf_token %}{{ pull_form.as_p }}<button class="btn btn-primary">Отримати оцінки</button></form>{% endif %}
+      </article>
+    {% empty %}<p>Підключень поки немає.</p>{% endfor %}
+    <details class="integration-details" id="connectionEditor" {% if editing_connection or connection_form.errors %}open{% endif %}>
+      <summary>{% if editing_connection %}Редагувати підключення{% else %}Додати API оцінок{% endif %}</summary>
+      <form method="post">{% csrf_token %}<input type="hidden" name="action" value="connection">
+        {% if editing_connection %}<input type="hidden" name="connection_id" value="{{ editing_connection.pk }}">{% endif %}
+        {{ connection_form.as_p }}<button class="btn btn-primary">Зберегти підключення</button>
+      </form>
+    </details>
+  </section>
+  </fieldset>
+</div>
+{% endblock %}

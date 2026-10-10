@@ -1,0 +1,18 @@
+<div class="attendance-cell-container" style="display: inline-block;">
+  {% if can_edit %}
+    <button
+      type="button"
+      class="attendance-btn {% if attendance.status == 'ABSENT_UNEXCUSED' %}att-absent-unexcused{% elif attendance.status == 'ABSENT_EXCUSED' %}att-absent-excused{% elif attendance.status == 'LATE' %}att-late{% else %}att-present{% endif %}"
+      data-status="{{ attendance.status|default:'PRESENT' }}"
+      data-version="{{ attendance.updated_at|date:'U.u'|default:'0' }}"
+      title="Клікніть для перемикання: Присутній -> Н (Неповажна) -> ХВ (Хворів) -> ЗП (Запізнився)"
+      onclick="cycleAttendance(this, '{{ lesson.id }}', '{{ student.id }}', '{{ lesson.journal.id }}')"
+    >
+      {% if attendance.status == 'ABSENT_UNEXCUSED' %}Н{% elif attendance.status == 'ABSENT_EXCUSED' %}ХВ{% elif attendance.status == 'LATE' %}ЗП{% else %}·{% endif %}
+    </button>
+  {% else %}
+    <span style="font-weight: 700; font-size: 0.8rem; {% if attendance.status == 'ABSENT_UNEXCUSED' %}color: var(--danger);{% elif attendance.status == 'ABSENT_EXCUSED' %}color: var(--warning);{% endif %}">
+      {% if attendance.status == 'ABSENT_UNEXCUSED' %}Н{% elif attendance.status == 'ABSENT_EXCUSED' %}ХВ{% elif attendance.status == 'LATE' %}ЗП{% else %}{% endif %}
+    </span>
+  {% endif %}
+</div>

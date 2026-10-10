@@ -1,0 +1,83 @@
+{% extends 'base.html' %}
+{% block title %}Розклад на тиждень | Журнал{% endblock %}
+{% block content %}
+<div class="schedule-page">
+  <div class="schedule-page-header">
+    <div><h1>Розклад на тиждень</h1><p class="text-muted">{{ selected_teacher.get_full_name_ukr|default:'Оберіть учителя' }} · {{ school.name }}</p></div>
+    <a href="{{ times_url }}" class="btn btn-secondary">Час уроків</a>
+  </div>
+  <form method="get" class="schedule-filters" id="scheduleFilters">
+    {% if user.is_school_admin_user %}
+    <div><label class="form-label" for="scheduleSchool">Школа</label><select id="scheduleSchool" name="school_id" class="form-control" onchange="location.href='?school_id='+this.value">
+      {% for item in schools %}<option value="{{ item.pk }}"{% if item.pk == school.pk %} selected{% endif %}>{{ item.name }}</option>{% endfor %}</select></div>
+    <div><label class="form-label" for="scheduleTeacher">Учитель</label><select id="scheduleTeacher" name="teacher_id" class="form-control" onchange="location.href='?school_id={{ school.pk }}&teacher_id='+this.value">
+      {% for item in teachers %}<option value="{{ item.pk }}"{% if item.pk == selected_teacher.pk %} selected{% endif %}>{{ item.get_full_name_ukr }}</option>{% endfor %}</select></div>
+    {% else %}<input type="hidden" name="school_id" value="{{ school.pk }}">{% endif %}
+    <div><label class="form-label" for="scheduleYear">Навчальний рік</label><select id="scheduleYear" name="year_id" class="form-control">
+      {% for item in years %}<option value="{{ item.pk }}"{% if item.pk == selected_year.pk %} selected{% endif %}>{{ item.name }}</option>{% empty %}<option value="">Немає журналів</option>{% endfor %}</select></div>
+    <div><label class="form-label" for="scheduleWeek">Дата тижня</label><input id="scheduleWeek" name="week" type="date" class="form-control" value="{{ week_start|date:'Y-m-d' }}"></div>
+    <button type="submit" class="btn btn-primary">Показати</button>
+  </form>
+  <div class="schedule-week-navigation">
+    <a class="btn btn-secondary btn-sm" href="{{ previous_url }}" aria-label="Попередній тиждень">←</a>
+    <strong>{{ week_start|date:'d.m.Y' }} — {{ week_end|date:'d.m.Y' }}</strong>
+    <a class="btn btn-secondary btn-sm" href="{{ next_url }}" aria-label="Наступний тиждень">→</a>
+    <a class="btn btn-secondary btn-sm" href="{{ current_url }}">Поточний тиждень</a>
+  </div>
+  <div class="schedule-card schedule-grid-card">
+    <div class="schedule-table-scroll"><table class="weekly-schedule-table" id="weeklyScheduleTable">
+      <thead><tr><th>Час уроку</th>{% for day in days %}<th{% if day.date == today %} class="schedule-today"{% endif %}>{{ day.name }}<span>{{ day.date|date:'d.m' }}</span></th>{% endfor %}</tr></thead>
+      <tbody>{% for row in schedule_rows %}<tr>
+        <th scope="row">{% if row.slot %}{{ row.slot.number }} урок<span>{{ row.slot.start_time|time:'H:i' }} — {{ row.slot.end_time|time:'H:i' }}</span>{% else %}{{ row.label }}{% endif %}</th>
+        {% for cell in row.cells %}<td{% if cell.day.date == today %} class="schedule-today"{% endif %}>
+          {% for item in cell.items %}<article class="schedule-lesson schedule-lesson-{{ item.kind }}">
+            <a class="schedule-lesson-title" href="{{ item.url }}">{{ item.journal.student_class.name }} · {{ item.journal.subject.name }}</a>
+            {% if item.topic %}<p>{{ item.topic }}</p>{% endif %}
+            {% if item.room %}<p>Кабінет {{ item.room }}</p>{% endif %}
+            {% if item.kind == 'recorded' %}<span class="schedule-lesson-status">У журналі</span>
+            {% elif item.can_create %}<a href="{{ item.create_url }}" class="schedule-create-link">+ Створити урок</a>
+            {% elif item.journal.is_archived %}<span>Архівний журнал</span>
+            {% else %}<p>Час недоступний для нових уроків.</p><a href="{{ item.edit_url }}">Змінити заняття</a>{% endif %}
+          </article>{% empty %}<span class="schedule-cell-empty">—</span>{% endfor %}
+        </td>{% endfor %}
+      </tr>{% empty %}<tr><td colspan="8" class="schedule-empty">{% if not has_times %}Спочатку <a href="{{ times_url }}">налаштуйте час уроків</a>, потім додайте заняття до розкладу нижче.{% else %}На цей тиждень немає занять.{% endif %}</td></tr>{% endfor %}</tbody>
+    </table></div>
+    <p class="schedule-grid-note text-muted">За розкладом показані щотижневі заняття. Позначка «У журналі» означає, що урок уже внесений до журналу.</p>
+  </div>
+  <div class="schedule-card" id="scheduleEditor">
+    <h2>{% if editing_entry %}Змінити заняття{% else %}Додати заняття до розкладу{% endif %}</h2>
+    {% if not can_configure %}<p class="text-muted">Спочатку створіть журнал для класу та предмета.</p>
+    {% elif not has_times and not editing_entry %}<p class="text-muted">Перед додаванням заняття <a href="{{ times_url }}">налаштуйте час уроків</a>.</p>
+    {% else %}
+    <form method="post" action="{{ schedule_url }}" id="weeklyScheduleForm">
+      {% csrf_token %}<input type="hidden" name="school_id" value="{{ school.pk }}">
+      <input type="hidden" name="teacher_id" value="{{ selected_teacher.pk }}"><input type="hidden" name="year_id" value="{{ selected_year.pk }}">
+      <input type="hidden" name="week" value="{{ week_start|date:'Y-m-d' }}">
+      {% if editing_entry %}<input type="hidden" name="entry_id" value="{{ editing_entry.pk }}">{% endif %}
+      {{ form.non_field_errors }}
+      <div class="schedule-form-fields">{% for field in form %}<div class="form-group"><label class="form-label" for="{{ field.id_for_label }}">{{ field.label }}</label>{{ field }}{{ field.errors }}</div>{% endfor %}</div>
+      <p class="text-muted">Заняття повторюється щотижня в межах указаного періоду. Записи в журналах створюються через кнопку «Створити урок».</p>
+      <button type="submit" name="action" value="save" class="btn btn-primary">{% if editing_entry %}Зберегти зміни{% else %}Додати до розкладу{% endif %}</button>
+      {% if editing_entry %}<a href="{{ schedule_url }}" class="btn btn-secondary">Скасувати</a>{% endif %}
+    </form>
+    {% endif %}
+  </div>
+  <div class="schedule-card">
+    <h2>Заняття в розкладі</h2>
+    <div class="schedule-table-scroll"><table class="schedule-settings-table">
+      <thead><tr><th>День</th><th>Час</th><th>Клас і предмет</th><th>Період</th><th>Кабінет</th><th>Дії</th></tr></thead>
+      <tbody>{% for entry in entries %}<tr>
+        <td>{{ entry.get_weekday_display }}</td><td>{{ entry.lesson_time }}</td><td>{{ entry.journal.student_class.name }} · {{ entry.journal.subject.name }}</td>
+        <td>{{ entry.start_date|date:'d.m.Y' }} — {{ entry.end_date|date:'d.m.Y' }}</td><td>{{ entry.room|default:'—' }}</td>
+        <td class="schedule-row-actions">{% if not entry.journal.is_archived %}<a class="btn btn-secondary btn-sm" href="{{ schedule_url }}&edit={{ entry.pk }}#scheduleEditor">Змінити</a>
+          <form method="post" action="{{ schedule_url }}">{% csrf_token %}<input type="hidden" name="school_id" value="{{ school.pk }}">
+            <input type="hidden" name="teacher_id" value="{{ selected_teacher.pk }}"><input type="hidden" name="year_id" value="{{ selected_year.pk }}">
+            <input type="hidden" name="week" value="{{ week_start|date:'Y-m-d' }}"><input type="hidden" name="entry_id" value="{{ entry.pk }}">
+            <button class="btn btn-secondary btn-sm" name="action" value="delete">Видалити</button>
+          </form>{% else %}Архівний журнал{% endif %}
+        </td>
+      </tr>{% empty %}<tr><td colspan="6" class="schedule-empty">Додайте заняття, щоб сформувати свій тижневий розклад.</td></tr>{% endfor %}</tbody>
+    </table></div>
+  </div>
+</div>
+{% endblock %}

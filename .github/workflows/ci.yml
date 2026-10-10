@@ -1,0 +1,25 @@
+name: Checks
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: pip install -r requirements.txt
+      - run: python manage.py check --settings=config.test_settings
+      - run: python manage.py makemigrations --check --dry-run --settings=config.test_settings
+      - run: python manage.py test --settings=config.test_settings --noinput
+      - run: node tests/journal_scheduling_check.js
+      - run: for script in *.sh scripts/*.sh; do bash -n "$script"; done
+      - run: ./setup.sh && docker compose config --quiet
+      - run: docker build --build-arg VCS_REF="${{ github.sha }}" -t schooljournal-ci .

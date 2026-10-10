@@ -1,0 +1,158 @@
+{% extends 'base.html' %}
+
+{% block title %}Імпорт тематичного плану | Шкільний журнал{% endblock %}
+
+{% block content %}
+<div style="max-width: 900px; margin: 1.5rem auto;">
+  <div class="card" style="padding: 2rem;">
+    <div class="card-header" style="border: none; padding: 0; margin-bottom: 1.5rem;">
+      <div>
+        <h1 style="font-size: 1.5rem; font-weight: 700; color: var(--primary-dark);">Імпорт календарно-тематичного плану</h1>
+        <p style="color: var(--text-muted); font-size: 0.9rem;">
+          Журнал: <strong>{{ journal.student_class.name }} клас &bull; {{ journal.subject.name }}</strong>
+        </p>
+      </div>
+      <div>
+        <div style="display: inline-flex; gap: 0.5rem;">
+          <a href="{% url 'portal:download_template' template_type='topics' fmt='xlsx' %}" class="btn btn-secondary btn-sm">
+            Шаблон XLSX
+          </a>
+          <a href="{% url 'portal:download_template' template_type='topics' fmt='csv' %}" class="btn btn-secondary btn-sm">
+            Шаблон CSV
+          </a>
+        </div>
+      </div>
+    </div>
+
+    {% if step == 'upload' %}
+      <form method="post" enctype="multipart/form-data">
+        {% csrf_token %}
+        <input type="hidden" name="action" value="upload_file">
+
+        <div class="form-group" style="padding: 2.5rem; border: 2px dashed var(--border); border-radius: var(--radius-md); text-align: center; background: var(--bg-alt);">
+          <div style="font-size: 2.5rem; margin-bottom: 0.5rem; color: var(--primary);">&#128218;</div>
+          <div style="font-weight: 600; font-size: 1.1rem; color: var(--primary-dark); margin-bottom: 0.25rem;">
+            Оберіть файл календарно-тематичного плану (XLSX або CSV)
+          </div>
+          <div style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 1.25rem;">
+            Теми з датами створять проведені уроки. Теми без дат будуть збережені як майбутній план.
+          </div>
+          <input type="file" name="file" accept=".xlsx,.csv" required style="display: inline-block;">
+        </div>
+
+        <div class="alert alert-info" style="font-size: 0.85rem; margin-top: 1.25rem;">
+          <strong>Важливо:</strong> Оновлення тем не видаляє та не змінює оцінки та відвідуваність уже проведених уроків!
+        </div>
+
+        <div style="display: flex; justify-content: flex-end; gap: 0.75rem; margin-top: 1.5rem;">
+          <a href="{% url 'portal:journal_detail' journal_id=journal.id %}" class="btn btn-secondary">Скасувати</a>
+          <button type="submit" class="btn btn-primary">Попередній перегляд &rarr;</button>
+        </div>
+      </form>
+
+    {% elif step == 'preview' %}
+      <div style="margin-bottom: 1.5rem;">
+        <div style="display: flex; gap: 1rem; margin-bottom: 1.25rem;">
+          <div class="user-role-pill" style="background-color: var(--primary-light); color: var(--primary);">
+            Всього тем: <strong>{{ preview_result.total_rows }}</strong>
+          </div>
+          <div class="user-role-pill" style="background-color: var(--success-bg); color: var(--success);">
+            Коректних: <strong>{{ preview_result.valid_rows }}</strong>
+          </div>
+          {% if preview_result.error_rows > 0 %}
+            <div class="user-role-pill" style="background-color: var(--danger-bg); color: var(--danger);">
+              З помилками: <strong>{{ preview_result.error_rows }}</strong>
+            </div>
+          {% endif %}
+        </div>
+
+        {% if preview_result.errors %}
+          <div class="alert alert-danger" style="font-size: 0.85rem;">
+            <strong>Помилки у файлі:</strong>
+            <ul style="margin-left: 1.25rem; margin-top: 0.25rem;">
+              {% for err in preview_result.errors %}
+                <li>{{ err }}</li>
+              {% endfor %}
+            </ul>
+          </div>
+        {% endif %}
+
+        {% if preview_result.warnings %}
+          <div class="alert alert-warning" style="font-size: 0.85rem;">
+            <strong>Увага (збіги з наявними уроками):</strong>
+            <ul style="margin-left: 1.25rem; margin-top: 0.25rem;">
+              {% for w in preview_result.warnings %}
+                <li>{{ w }}</li>
+              {% endfor %}
+            </ul>
+          </div>
+        {% endif %}
+
+        <div style="max-height: 380px; overflow-y: auto; border: 1px solid var(--border); border-radius: var(--radius-sm); margin-bottom: 1.5rem;">
+          <table style="width: 100%; border-collapse: collapse; font-size: 0.85rem;">
+            <thead style="background: var(--bg-alt); position: sticky; top: 0;">
+              <tr style="border-bottom: 1px solid var(--border); text-align: left;">
+                <th style="padding: 0.5rem;">№</th>
+                <th style="padding: 0.5rem;">Тема уроку</th>
+                <th style="padding: 0.5rem;">Дата</th>
+                <th style="padding: 0.5rem;">Домашнє завдання</th>
+                <th style="padding: 0.5rem;">Тип</th>
+                <th style="padding: 0.5rem;">Статус</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for row in preview_result.preview_data %}
+                <tr style="border-bottom: 1px solid var(--border); {% if not row.is_valid %}background: var(--danger-bg);{% elif row.exists_lesson %}background: var(--warning-bg);{% endif %}">
+                  <td style="padding: 0.5rem;">{{ row.topic_number }}</td>
+                  <td style="padding: 0.5rem; font-weight: 600;">{{ row.title }}</td>
+                  <td style="padding: 0.5rem; white-space: nowrap;">{{ row.date_display }}</td>
+                  <td style="padding: 0.5rem;">{{ row.homework|default:"—" }}</td>
+                  <td style="padding: 0.5rem;">{{ row.lesson_type }}</td>
+                  <td style="padding: 0.5rem;">
+                    {% if not row.is_valid %}
+                      <span style="color: var(--danger); font-weight: 700;">Помилка</span>
+                    {% elif row.exists_lesson %}
+                      <span style="color: #b45309; font-weight: 600;">Оновлення уроку</span>
+                    {% else %}
+                      <span style="color: var(--success); font-weight: 600;">Новий</span>
+                    {% endif %}
+                  </td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+
+        <form method="post">
+          {% csrf_token %}
+          <input type="hidden" name="action" value="confirm_import">
+
+          <div class="form-group">
+            <label class="form-label">Режим імпорту:</label>
+            <div style="display: flex; gap: 1.5rem; font-size: 0.9rem;">
+              <label style="display: flex; align-items: center; gap: 0.4rem; cursor: pointer;">
+                <input type="radio" name="import_mode" value="add_and_update" checked>
+                Додати нові та оновити наявні теми
+              </label>
+              <label style="display: flex; align-items: center; gap: 0.4rem; cursor: pointer;">
+                <input type="radio" name="import_mode" value="add_only">
+                Лише додати нові теми (пропустити збіги)
+              </label>
+            </div>
+          </div>
+
+          <div class="alert alert-info" style="font-size: 0.85rem;">
+            Оцінки та журнал відвідуваності наявних уроків будуть повністю збережені.
+          </div>
+
+          <div style="display: flex; justify-content: flex-end; gap: 0.75rem; margin-top: 1.5rem;">
+            <a href="{{ request.path }}" class="btn btn-secondary">Завантажити інший файл</a>
+            <button type="submit" class="btn btn-primary">Підтвердити та застосувати</button>
+          </div>
+        </form>
+      </div>
+    {% endif %}
+
+  </div>
+</div>
+{% endblock %}

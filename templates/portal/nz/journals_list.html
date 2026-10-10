@@ -1,0 +1,129 @@
+{% extends 'base.html' %}
+
+{% block title %}Журнали nz.ua | Електронний журнал{% endblock %}
+
+{% block content %}
+<div class="card-header" style="border: none; padding: 0; margin-bottom: 1.5rem; display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 1rem;">
+  <div>
+    <div style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.25rem;">
+      <a href="{% url 'portal:teacher_dashboard' %}" class="btn btn-sm btn-secondary" style="padding: 0.2rem 0.5rem;">
+        &larr; Назад до кабінету
+      </a>
+      <h1 style="font-size: 1.6rem; font-weight: 700; color: var(--primary-dark); margin: 0;">
+        Журнали на порталі nz.ua
+      </h1>
+    </div>
+    <p style="color: var(--text-muted); font-size: 0.95rem; margin: 0;">
+      Підключено як: <strong>{{ account.login|default:user.get_full_name_ukr }}</strong> &bull; Останнє оновлення: {{ account.last_synced_at|date:"d.m.Y H:i"|default:"сьогодні" }}
+    </p>
+  </div>
+  <div style="display: flex; gap: 0.5rem;">
+    <button type="button" class="btn btn-secondary btn-sm" onclick="location.reload()">
+      &#8635; Оновити список з nz.ua
+    </button>
+    <form method="POST" action="{% url 'portal:nz_disconnect' %}" style="display: inline;" onsubmit="return confirm('Ви впевнені, що бажаєте відключити акаунт nz.ua?');">
+      {% csrf_token %}
+      <button type="submit" class="btn btn-outline-danger btn-sm">
+        Відключити nz.ua
+      </button>
+    </form>
+  </div>
+</div>
+
+<div class="card" style="padding: 1.5rem; margin-bottom: 1.5rem;">
+  <div style="display: flex; align-items: center; gap: 0.75rem; margin-bottom: 1.25rem;">
+    <div style="width: 10px; height: 10px; border-radius: 50%; background: #16a34a;"></div>
+    <h2 style="font-size: 1.15rem; font-weight: 700; color: #0f172a; margin: 0;">
+      Знайдені журнали вчителя на https://nz.ua/journal/list ({{ remote_journals|length }})
+    </h2>
+  </div>
+
+  {% if remote_journals %}
+    <div class="table-responsive">
+      <table class="table" style="width: 100%; border-collapse: collapse; font-size: 0.9rem;">
+        <thead>
+          <tr style="background: #f8fafc; border-bottom: 2px solid #e2e8f0; text-align: left; color: #475569;">
+            <th style="padding: 0.75rem 1rem;">Клас</th>
+            <th style="padding: 0.75rem 1rem;">Предмет / Назва на nz.ua</th>
+            <th style="padding: 0.75rem 1rem;">ID nz.ua</th>
+            <th style="padding: 0.75rem 1rem;">Локальний журнал</th>
+            <th style="padding: 0.75rem 1rem; text-align: right;">Дії</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for rj in remote_journals %}
+            <tr style="border-bottom: 1px solid #f1f5f9; vertical-align: middle;">
+              <td style="padding: 0.75rem 1rem;">
+                <span class="user-role-pill" style="font-weight: 700; background: var(--primary-light); color: var(--primary-dark);">
+                  {{ rj.class_name }}
+                </span>
+              </td>
+              <td style="padding: 0.75rem 1rem;">
+                <strong>{{ rj.subject_name }}</strong>
+                <div style="font-size: 0.8rem; color: #64748b;">
+                  {{ rj.full_title }}
+                </div>
+              </td>
+              <td style="padding: 0.75rem 1rem; font-family: monospace; color: #0284c7;">
+                <code>{{ rj.nz_journal_id }}</code>
+                {% if rj.nz_subgroup_id %}
+                  <span style="font-size: 0.78rem; color: #64748b;">(підгр. {{ rj.nz_subgroup_id }})</span>
+                {% endif %}
+              </td>
+              <td style="padding: 0.75rem 1rem;">
+                {% if rj.local_journal %}
+                  <div style="display: flex; align-items: center; gap: 0.4rem;">
+                    <span style="color: #16a34a; font-weight: 600;">&#10003; Прив'язано:</span>
+                    <a href="{% url 'portal:journal_detail' journal_id=rj.local_journal.id %}" style="font-weight: 600; color: var(--primary);">
+                      {{ rj.local_journal.student_class.name }} &mdash; {{ rj.local_journal.subject.name }}
+                    </a>
+                  </div>
+                  <div style="font-size: 0.78rem; color: #64748b;">
+                    Остання синхр.: {{ rj.local_journal.nz_last_sync_at|date:"d.m.Y H:i"|default:"ще не було" }}
+                  </div>
+                {% else %}
+                  <span style="color: #94a3b8; font-style: italic;">Не прив'язано</span>
+                {% endif %}
+              </td>
+              <td style="padding: 0.75rem 1rem; text-align: right;">
+                <div style="display: inline-flex; gap: 0.5rem; align-items: center;">
+                  {% if rj.local_journal %}
+                    <form method="POST" action="{% url 'portal:nz_journal_import_for_journal' journal_id=rj.local_journal.id %}" onsubmit="return confirm('Завантажити дані (учнів, уроки, оцінки) з nz.ua у локальний журнал?');">
+                      {% csrf_token %}
+                      <input type="hidden" name="nz_journal_id" value="{{ rj.nz_journal_id }}">
+                      <input type="hidden" name="nz_subgroup_id" value="{{ rj.nz_subgroup_id }}">
+                      <button type="submit" class="btn btn-sm btn-outline-primary" title="Завантажити з nz.ua">
+                        &#8681; Завантажити дані
+                      </button>
+                    </form>
+                    <a href="{% url 'portal:journal_detail' journal_id=rj.local_journal.id %}" class="btn btn-sm btn-primary">
+                      Відкрити журнал &rarr;
+                    </a>
+                  {% else %}
+                    <!-- Автоматичне створення та завантаження журналу -->
+                    <form method="POST" action="{% url 'portal:nz_journal_import' %}" style="display: inline-flex; margin: 0;">
+                      {% csrf_token %}
+                      <input type="hidden" name="nz_journal_id" value="{{ rj.nz_journal_id }}">
+                      <input type="hidden" name="nz_subgroup_id" value="{{ rj.nz_subgroup_id }}">
+                      <input type="hidden" name="class_name" value="{{ rj.class_name }}">
+                      <input type="hidden" name="subject_name" value="{{ rj.subject_name }}">
+                      <button type="submit" class="btn btn-sm btn-success" style="font-weight: 600; white-space: nowrap; display: inline-flex; align-items: center; gap: 0.35rem;">
+                        <span>+ Створити та завантажити журнал &rarr;</span>
+                      </button>
+                    </form>
+                  {% endif %}
+                </div>
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% else %}
+    <div style="padding: 2.5rem; text-align: center; color: var(--text-muted);">
+      <p style="font-size: 1.1rem; margin-bottom: 0.5rem;">Не знайдено доступних журналів у вашому акаунті на nz.ua.</p>
+      <p style="font-size: 0.85rem;">Перевірте, чи викладаєте ви предмети в поточному семестрі на порталі nz.ua.</p>
+    </div>
+  {% endif %}
+</div>
+{% endblock %}

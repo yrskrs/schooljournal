@@ -1,0 +1,23 @@
+{% extends 'base.html' %}
+{% block title %}Реєстрація школи | Шкільний журнал{% endblock %}
+{% block content %}
+<div class="registration-page card">
+  <h1>Реєстрація школи</h1>
+  <p>Створіть школу та її адміністратора. Після реєстрації додайте вчителів, класи й предмети у кабінеті школи.</p>
+  <p>Учитель може <a href="{% url 'login' %}">увійти через nz.ua</a> та працювати з особистими журналами.</p>
+  <form method="post">
+    {% csrf_token %}
+    {% if form.non_field_errors %}<div class="alert alert-error">{{ form.non_field_errors }}</div>{% endif %}
+    {% for field in form %}
+    <div class="form-group">
+      <label class="form-label" for="{{ field.id_for_label }}">{{ field.label }}{% if field.field.required %} *{% endif %}</label>
+      {{ field }}
+      {% if field.errors %}<div class="field-errors" role="alert">{{ field.errors }}</div>{% endif %}
+      {% if field.help_text %}<div class="form-help">{{ field.help_text|safe }}</div>{% endif %}
+    </div>
+    {% endfor %}
+    <button class="btn btn-primary" type="submit">Зареєструвати школу</button>
+    <a class="btn btn-secondary" href="{% url 'login' %}">Вже маю обліковий запис</a>
+  </form>
+</div>
+{% endblock %}

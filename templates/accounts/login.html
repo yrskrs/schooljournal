@@ -1,0 +1,173 @@
+{% extends 'base.html' %}
+
+{% block title %}Вхід до системи | Електронний шкільний журнал{% endblock %}
+
+{% block content %}
+<div style="max-width: 480px; margin: 2.5rem auto;">
+  <div class="card" style="padding: 2.25rem; box-shadow: var(--shadow-lg); border-radius: var(--radius-md);">
+    <div style="text-align: center; margin-bottom: 1.75rem;">
+      <div class="brand-icon" style="width: 54px; height: 54px; margin: 0 auto 0.75rem auto; font-size: 1.75rem;">Ж</div>
+      <h1 style="font-size: 1.5rem; font-weight: 700; color: var(--primary-dark); margin: 0;">Вхід у журнал</h1>
+      <p style="color: var(--text-muted); font-size: 0.88rem; margin-top: 0.25rem;">
+        Увійдіть через nz.ua — особистий профіль створиться автоматично
+      </p>
+    </div>
+
+    <!-- Якщо є збережені акаунти nz.ua, пропонуємо швидкий вхід -->
+    {% if saved_nz_accounts %}
+      <div style="background: linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%); border: 1px solid #bfdbfe; border-radius: 10px; padding: 1.15rem; margin-bottom: 1.75rem;">
+        <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.75rem;">
+          <div style="display: flex; align-items: center; gap: 0.4rem; font-weight: 700; color: #1e40af; font-size: 0.88rem;">
+            <span>&#128214;</span>
+            <span>Ваш акаунт на цьому пристрої:</span>
+          </div>
+          <span class="badge" style="background: #16a34a; color: white; font-size: 0.72rem;">Активний</span>
+        </div>
+
+        {% for acc in saved_nz_accounts %}
+          <div style="background: white; border: 1px solid #e2e8f0; border-radius: 8px; padding: 0.85rem; margin-bottom: 0.5rem; box-shadow: 0 1px 2px rgba(0,0,0,0.05);">
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+              <div>
+                <div style="font-weight: 700; color: #0f172a; font-size: 0.95rem;">
+                  {{ acc.user.get_full_name_ukr }}
+                </div>
+                <div style="font-size: 0.8rem; color: #64748b;">
+                  Логін: <code>{{ acc.login|default:acc.user.username }}</code>
+                  {% if acc.user.school %}&bull; {{ acc.user.school.short_name|default:acc.user.school.name }}{% endif %}
+                </div>
+              </div>
+            </div>
+
+            <form method="POST" action="{% url 'nz_quick_login' %}" style="margin-top: 0.75rem;">
+              {% csrf_token %}
+              <input type="hidden" name="account_id" value="{{ acc.id }}">
+              <button type="submit" class="btn btn-primary btn-sm" style="width: 100%; font-weight: 600; padding: 0.5rem; background: #2563eb; border-color: #2563eb; display: flex; align-items: center; justify-content: center; gap: 0.35rem;">
+                <span>&#8644;</span>
+                <span>Увійти як {{ acc.user.get_short_name_ukr }}</span>
+              </button>
+            </form>
+          </div>
+        {% endfor %}
+
+        <div style="text-align: center; margin-top: 0.5rem;">
+          <small style="color: #64748b; font-size: 0.75rem;">
+            Або скористайтесь іншим способом входу нижче:
+          </small>
+        </div>
+      </div>
+    {% endif %}
+
+    <!-- Кнопка швидкого входу через новий акаунт nz.ua -->
+    <div style="margin-bottom: 1.5rem;">
+      <button type="button" class="btn btn-outline-primary" onclick="toggleNzLoginForm()" style="width: 100%; padding: 0.7rem; font-weight: 600; border-color: #2563eb; color: #1d4ed8; background: #f8fafc; display: flex; align-items: center; justify-content: center; gap: 0.5rem; border-radius: var(--radius-sm);">
+        <span style="font-size: 1.1rem;">&#8644;</span>
+        <span>Увійти через портал nz.ua</span>
+      </button>
+    </div>
+
+    <!-- Форма входу через nz.ua (розгортається по кліку) -->
+    <div id="nzLoginBox" style="display: block; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 1.25rem; margin-bottom: 1.5rem;">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem;">
+        <h6 style="margin: 0; font-size: 0.95rem; font-weight: 700; color: #1e3a8a;">
+          Авторизація через nz.ua
+        </h6>
+        <button type="button" onclick="toggleNzLoginForm()" style="background: none; border: none; font-size: 1.1rem; color: #64748b; cursor: pointer;">&times;</button>
+      </div>
+
+      <form method="POST" action="{% url 'nz_login' %}">
+        {% csrf_token %}
+        <div style="margin-bottom: 1rem;">
+          <div style="display: flex; gap: 1rem; font-size: 0.85rem;">
+            <label style="cursor: pointer; display: flex; align-items: center; gap: 0.25rem;">
+              <input type="radio" name="auth_method" value="cookie" onchange="toggleAuthFields(this.value)">
+              PHPSESSID
+            </label>
+            <label style="cursor: pointer; display: flex; align-items: center; gap: 0.25rem;">
+              <input type="radio" name="auth_method" value="credentials" checked onchange="toggleAuthFields(this.value)">
+              Логін та пароль
+            </label>
+          </div>
+        </div>
+
+        <div id="authCookieDiv" style="display: none; margin-bottom: 1rem;">
+          <label style="display: block; font-size: 0.82rem; font-weight: 600; margin-bottom: 0.3rem;">
+            Кука сесії PHPSESSID:
+          </label>
+          <input type="password" name="phpsessid" autocomplete="off" class="form-control form-control-sm" placeholder="Вставте PHPSESSID з браузера..." style="font-family: monospace;">
+          <small style="display: block; color: var(--text-muted); font-size: 0.75rem; margin-top: 0.25rem;">
+            Якщо ви вже увійшли на nz.ua, скопіюйте PHPSESSID із Cookies сторінки nz.ua.
+          </small>
+        </div>
+
+        <div id="authCredsDiv" style="margin-bottom: 1rem;">
+          <div style="margin-bottom: 0.5rem;">
+            <label style="display: block; font-size: 0.82rem; font-weight: 600; margin-bottom: 0.25rem;">Логін / Email:</label>
+            <input type="text" name="login" class="form-control form-control-sm" placeholder="Логін nz.ua">
+          </div>
+          <div>
+            <label style="display: block; font-size: 0.82rem; font-weight: 600; margin-bottom: 0.25rem;">Пароль:</label>
+            <input type="password" name="password" autocomplete="current-password" class="form-control form-control-sm" placeholder="Пароль nz.ua">
+          </div>
+        </div>
+
+        <label style="display: block; font-size: 0.82rem; margin-bottom: 1rem;">
+          <input type="checkbox" name="remember_device" value="1"> Запам’ятати вхід на моєму особистому пристрої
+        </label>
+        <small style="display: block; margin-bottom: 0.75rem;">Пароль використовується для входу в nz.ua й не зберігається у локальному журналі.</small>
+        <button type="submit" class="btn btn-primary btn-sm" style="width: 100%; font-weight: 600;">
+          Підтвердити вхід &rarr;
+        </button>
+      </form>
+    </div>
+
+    <div style="display: flex; align-items: center; margin-bottom: 1.5rem;">
+      <div style="flex: 1; height: 1px; background: var(--border);"></div>
+      <div style="padding: 0 0.75rem; font-size: 0.8rem; color: var(--text-muted); text-transform: uppercase;">
+        додатково: локальний профіль
+      </div>
+      <div style="flex: 1; height: 1px; background: var(--border);"></div>
+    </div>
+
+    {% if school_registration_enabled %}
+    <div class="registration-callout">
+      <strong>Потрібен журнал для вашої школи?</strong>
+      <p>Створіть школу й обліковий запис її адміністратора.</p>
+      <a class="btn btn-primary" href="{% url 'register_school' %}">Зареєструвати школу</a>
+    </div>
+    {% endif %}
+    <!-- Стандартна форма входу -->
+    <form method="post" action="{% url 'login' %}">
+      {% csrf_token %}
+
+      <div class="form-group" style="margin-bottom: 1rem;">
+        <label class="form-label" for="{{ form.username.id_for_label }}">Логін у журналі</label>
+        {{ form.username }}
+      </div>
+
+      <div class="form-group" style="margin-bottom: 1.25rem;">
+        <label class="form-label" for="{{ form.password.id_for_label }}">Пароль</label>
+        {{ form.password }}
+      </div>
+
+      <button type="submit" class="btn btn-secondary" style="width: 100%; padding: 0.75rem; font-size: 0.95rem; font-weight: 600;">
+        Увійти за паролем
+      </button>
+    </form>
+
+    <div style="margin-top: 1.75rem; padding-top: 1rem; border-top: 1px solid var(--border); font-size: 0.82rem; color: var(--text-muted); text-align: center;">
+      Система локального захищеного розгортання шкільного журналу.
+    </div>
+  </div>
+</div>
+
+<script>
+function toggleNzLoginForm() {
+  const box = document.getElementById('nzLoginBox');
+  box.style.display = (box.style.display === 'none' || box.style.display === '') ? 'block' : 'none';
+}
+function toggleAuthFields(val) {
+  document.getElementById('authCookieDiv').style.display = (val === 'cookie') ? 'block' : 'none';
+  document.getElementById('authCredsDiv').style.display = (val === 'credentials') ? 'block' : 'none';
+}
+</script>
+{% endblock %}

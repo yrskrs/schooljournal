@@ -1,0 +1,5 @@
+# Лише локальна розробка: docker compose -f compose.yaml -f compose.dev.yaml up -d --build
+services:
+  web:
+    volumes:
+      - .:/app

@@ -1,0 +1,16 @@
+{% extends 'base.html' %}
+
+{% block title %}Доступ заборонено (403) | Шкільний журнал{% endblock %}
+
+{% block content %}
+<div style="max-width: 500px; margin: 4rem auto; text-align: center;">
+  <div class="card" style="padding: 2.5rem;">
+    <h1 style="font-size: 3rem; font-weight: 700; color: var(--danger); margin-bottom: 0.5rem;">403</h1>
+    <h2 style="font-size: 1.3rem; margin-bottom: 0.75rem;">Доступ обмежено</h2>
+    <p style="color: var(--text-muted); font-size: 0.95rem; margin-bottom: 1.5rem;">
+      У вас немає прав для перегляду або редагування цих даних (порушення прав доступу або ізоляції шкіл).
+    </p>
+    <a href="{% url 'portal:dashboard' %}" class="btn btn-primary">Повернутися на головну</a>
+  </div>
+</div>
+{% endblock %}
