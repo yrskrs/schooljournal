@@ -14,7 +14,7 @@ main() {
     target=$(git rev-parse --verify "$ref^{commit}")
     git merge-base --is-ancestor "$old_commit" "$target" || { echo "Target is not a forward update. Use restore.sh for rollback." >&2; return 1; }
     if [[ "$old_commit" == "$target" ]]; then
-        if dc exec -T -e EXPECTED_VERSION="$(cat "$JOURNAL_ROOT/VERSION")" web python -c 'import json, os, urllib.request; d=json.load(urllib.request.urlopen("http://localhost:8000/healthz/", timeout=10)); assert d["status"] == "ok" and d["version"] == os.environ["EXPECTED_VERSION"]'; then
+        if [[ "$(docker inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$(dc ps -aq web)")" == "$target" ]] && dc exec -T -e EXPECTED_VERSION="$(cat "$JOURNAL_ROOT/VERSION")" web python -c 'import json, os, urllib.request; d=json.load(urllib.request.urlopen("http://localhost:8000/healthz/", timeout=10)); assert d["status"] == "ok" and d["version"] == os.environ["EXPECTED_VERSION"]'; then
             echo "Already at requested revision; running version verified."
             return 0
         fi
