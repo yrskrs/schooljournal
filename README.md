@@ -23,7 +23,7 @@
 Після публікації гілки release/v1.0.0:
 
 ~~~bash
-git clone --branch release/v1.0.0 git@github.com:yrskrs/schooljournal.git
+git clone --branch release/v1.0.0 https://github.com/yrskrs/schooljournal.git
 cd schooljournal
 ./setup.sh
 # Відредагуйте .env під адресу сервера
@@ -32,7 +32,7 @@ docker compose up -d --build --wait --wait-timeout 180
 docker compose exec web python manage.py createsuperuser
 ~~~
 
-Для читання публічного репозиторію можна використати HTTPS замість SSH. Після злиття релізу в main розгортайте main. Гілку та ключ SSH налаштуйте до виконання команд.
+Клонування публічного репозиторію через HTTPS не потребує SSH-ключа чи входу в GitHub. Після злиття релізу в main розгортайте main.
 
 setup.sh створює .env з випадковими SECRET_KEY і паролем PostgreSQL, правами 0600 та без демонстраційних даних. Наявний .env не переписує. Вкажіть:
 
