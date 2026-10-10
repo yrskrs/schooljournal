@@ -12,6 +12,8 @@ DEBUG = os.getenv('DEBUG', 'False').lower() in ('true', '1', 't')
 SCHOOL_REGISTRATION_ENABLED = os.getenv('SCHOOL_REGISTRATION_ENABLED', 'True').lower() in ('true', '1', 't')
 INITIAL_SETUP_ENABLED = os.getenv('INITIAL_SETUP_ENABLED', 'True').lower() in ('true', '1', 't')
 INITIAL_SETUP_TOKEN = os.getenv('INITIAL_SETUP_TOKEN', '').strip()
+# Recovery is explicitly enabled on the server, never inferred from demo names.
+INITIAL_SETUP_RECOVERY_USER_ID = int(os.getenv('INITIAL_SETUP_RECOVERY_USER_ID', '0'))
 
 ALLOWED_HOSTS = [h.strip() for h in os.getenv('ALLOWED_HOSTS', 'localhost,127.0.0.1').split(',') if h.strip()]
 

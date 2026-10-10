@@ -2,9 +2,14 @@
 {% block title %}Початкове налаштування | Шкільний журнал{% endblock %}
 {% block content %}
 <div class="registration-page card">
+  {% if recovering_admin %}
+  <h1>Налаштувати доступ адміністратора</h1>
+  <p>На сервері дозволено одноразове відновлення доступу. Задайте власний логін і новий пароль. Наявний обліковий запис, школи, журнали й оцінки збережуться.</p>
+  {% else %}
   <h1>Створити суперадміністратора</h1>
   <p>Вітаємо у шкільному журналі. Створіть обліковий запис адміністратора сервісу: він керуватиме всіма школами та матиме доступ до технічної панелі.</p>
   <p>Ця форма доступна лише під час початкового налаштування. Після створення адміністратора відкриється його кабінет.</p>
+  {% endif %}
   {% if setup_unconfigured %}
     <div class="alert alert-error" role="alert">Код початкового налаштування ще не задано.</div>
     <p>На сервері виконайте <code>./setup.sh</code>, щоб додати код <code>INITIAL_SETUP_TOKEN</code> до файлу <code>.env</code>. Перезапустіть контейнер web командою <code>./service.sh up -d --force-recreate web</code> та оновіть цю сторінку. Код має містити щонайменше 32 символи.</p>
@@ -20,7 +25,7 @@
           {% if field.help_text %}<div class="form-help">{{ field.help_text|safe }}</div>{% endif %}
         </div>
       {% endfor %}
-      <button class="btn btn-primary" type="submit">Створити суперадміністратора</button>
+      <button class="btn btn-primary" type="submit">{% if recovering_admin %}Зберегти доступ адміністратора{% else %}Створити суперадміністратора{% endif %}</button>
     </form>
   {% endif %}
 </div>

@@ -76,3 +76,12 @@ class InitialSuperadminForm(UserCreationForm):
         if len(expected) < 32 or not constant_time_compare(token, expected):
             raise forms.ValidationError('Невірний код початкового налаштування.')
         return token
+
+    def clean_username(self):
+        username = self.cleaned_data['username']
+        matches = User.objects.filter(username__iexact=username)
+        if self.instance.pk:
+            matches = matches.exclude(pk=self.instance.pk)
+        if matches.exists():
+            raise forms.ValidationError('Цей логін уже зайнято. Виберіть інший.')
+        return username

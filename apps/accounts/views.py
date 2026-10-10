@@ -13,7 +13,7 @@ from django.db import transaction, IntegrityError
 from django.http import Http404
 from django.views.decorators.http import require_http_methods
 from .models import User, InitialSetupState
-from .bootstrap import initial_setup_required, global_admin_exists
+from .bootstrap import initial_setup_required, global_admin_exists, setup_recovery_user
 from django.views.decorators.cache import never_cache
 from apps.schools.models import School
 from apps.journals.models import NZAccount
@@ -33,33 +33,45 @@ def initial_setup(request):
     if len(settings.INITIAL_SETUP_TOKEN) < 32:
         return render(request, 'accounts/initial_setup.html', {'setup_unconfigured': True}, status=503)
 
-    form = InitialSuperadminForm(request.POST if request.method == 'POST' else None)
+    recovery_user = setup_recovery_user()
+    form = InitialSuperadminForm(request.POST if request.method == 'POST' else None, instance=recovery_user)
     if request.method == 'POST' and form.is_valid():
         try:
             with transaction.atomic():
                 state = InitialSetupState.objects.select_for_update().get(pk=1)
-                if state.completed_at or global_admin_exists():
+                current_recovery = setup_recovery_user()
+                if state.completed_at or (not recovery_user and global_admin_exists()):
                     return redirect('login')
-                user = form.save(commit=False)
-                user.role = User.Role.SUPERADMIN
-                user.is_superuser = True
+                if recovery_user:
+                    if current_recovery is None or current_recovery.pk != recovery_user.pk:
+                        return redirect('login')
+                    user = User.objects.select_for_update().get(pk=current_recovery.pk)
+                    for field in ('username', 'email', 'first_name', 'last_name'):
+                        setattr(user, field, form.cleaned_data[field])
+                    user.set_password(form.cleaned_data['password1'])
+                else:
+                    user = form.save(commit=False)
+                    user.role = User.Role.SUPERADMIN
+                    user.is_superuser = True
+                    user.school = None
                 user.is_staff = True
                 user.is_active = True
-                user.school = None
                 user.save()
                 state.completed_at = timezone.now()
                 state.save(update_fields=['completed_at'])
                 from apps.journals.models import AuditLog
-                AuditLog.objects.create(user=user, action=AuditLog.Action.CREATE,
+                AuditLog.objects.create(user=user, action=AuditLog.Action.UPDATE if recovery_user else AuditLog.Action.CREATE,
                     target_model='User', target_id=str(user.pk),
-                    description='Суперадміністратора створено під час початкового налаштування через браузер.')
+                    description='Доступ суперадміністратора відновлено через браузер.' if recovery_user else
+                        'Суперадміністратора створено під час початкового налаштування через браузер.')
         except IntegrityError:
             form.add_error('username', 'Цей логін уже зайнято. Виберіть інший.')
         else:
             login(request, user)
-            messages.success(request, 'Суперадміністратора створено. Початкове налаштування завершено.')
+            messages.success(request, 'Доступ суперадміністратора відновлено.' if recovery_user else
+                'Суперадміністратора створено. Початкове налаштування завершено.')
             return redirect('portal:superadmin_dashboard')
-    return render(request, 'accounts/initial_setup.html', {'form': form})
+    return render(request, 'accounts/initial_setup.html', {'form': form, 'recovering_admin': bool(recovery_user)})
 
 
 @sensitive_post_parameters('password1', 'password2')

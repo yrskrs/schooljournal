@@ -23,28 +23,7 @@ class Command(BaseCommand):
         self.stdout.write("Початок створення демонстраційних даних...")
 
         with transaction.atomic():
-            # 1. Суперадміністратор
-            admin_username = os.getenv('FIRST_SUPERADMIN_USERNAME', 'admin')
-            admin_email = os.getenv('FIRST_SUPERADMIN_EMAIL', 'admin@school.local')
-            admin_password = os.getenv('FIRST_SUPERADMIN_PASSWORD', 'AdminSecurePass123!')
-
-            admin_user, admin_created = User.objects.get_or_create(
-                username=admin_username,
-                defaults={
-                    'email': admin_email,
-                    'role': User.Role.SUPERADMIN,
-                    'first_name': 'Адміністратор',
-                    'last_name': 'Головний',
-                    'patronymic': 'Системний',
-                    'is_staff': True,
-                    'is_superuser': True,
-                }
-            )
-            if admin_created:
-                admin_user.set_password(admin_password)
-                admin_user.save()
-                self.stdout.write(self.style.SUCCESS(f"Створено суперадміністратора: {admin_username}"))
-
+            # Global administrators are created only by the browser bootstrap.
             # 2. Школа
             school, _ = School.objects.get_or_create(
                 name="Київський ліцей № 142",
@@ -363,6 +342,6 @@ class Command(BaseCommand):
                 f.write(tp_xlsx)
 
         self.stdout.write(self.style.SUCCESS("Демонстраційні дані та файли-зразки успішно створено!"))
-        self.stdout.write(self.style.NOTICE(f"Суперадміністратор: {admin_username} / {admin_password}"))
+        self.stdout.write(self.style.NOTICE('Суперадміністратор створюється через початкове налаштування у браузері.'))
         self.stdout.write(self.style.NOTICE("Вчитель математики: kovalenko.o / TeacherPass123!"))
         self.stdout.write(self.style.NOTICE("Вчитель мови/літ.: melnyk.v / TeacherPass123!"))
