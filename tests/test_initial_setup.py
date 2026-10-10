@@ -360,7 +360,7 @@ class LanFirstRunTests(TestCase):
         self.assertRedirects(client.get(reverse('login')), reverse('initial_setup'))
         response = client.get(reverse('initial_setup'))
         self.assertEqual(response.status_code, 200)
-        data = self.data(csrfmiddlewaretoken=client.cookies['csrftoken'].value)
+        data = self.data(csrfmiddlewaretoken=client.cookies['schooljournal_csrftoken'].value)
         self.assertRedirects(client.post(reverse('initial_setup'), data, HTTP_ORIGIN='http://192.168.1.13:8085'), reverse('portal:superadmin_dashboard'))
         self.assertEqual(client.get('/admin/').status_code, 200)
 

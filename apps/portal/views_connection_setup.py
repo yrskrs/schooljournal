@@ -11,7 +11,7 @@ from django.views.decorators.http import require_http_methods
 from apps.curriculum.models import Student, ClassEnrollment
 from apps.journals.models import Journal, GradeAPIConnection, GradeStudentMapping, AuditLog
 from apps.journals.services.assessment import journal_students
-from apps.journals.services.connection_setup import fetch_source_roster, roster_version, selected_students, SOURCES
+from apps.journals.services.connection_setup import fetch_source_roster, roster_version, selected_students, SOURCES, ensure_same_source
 from apps.journals.services.external_grades import ExternalAPIError
 from apps.portal.forms_connection_setup import ConnectSourceForm, SourceContextForm, ConfirmStudentsForm
 from apps.portal.permissions import has_journal_access
@@ -48,6 +48,8 @@ def connect_source(request, journal_id):
     if connection_id and connection is None:
         raise PermissionDenied('Некоректне підключення.')
     setup = ConnectSourceForm(initial={'source': request.GET.get('source', 'schooltest')})
+    if connection:
+        setup = ConnectSourceForm(initial={'source': connection.source, 'site_url': connection.url.rsplit('/api/v2/journal/grades/', 1)[0]})
     context = mapping = None
     action = request.POST.get('action')
     if request.method == 'POST':
@@ -59,11 +61,18 @@ def connect_source(request, journal_id):
                     payload = fetch_source_roster(data['grades_url'], data['api_key'], data['source'])
                     with transaction.atomic():
                         journal = _lock(journal, request.user)
-                        connection = journal.grade_apis.filter(source=data['source'], contract_version=2, url=data['grades_url']).order_by('pk').first()
+                        if connection:
+                            connection = journal.grade_apis.select_for_update().get(pk=connection.pk)
+                            if connection.source != data['source']:
+                                raise ExternalAPIError('Це підключення належить іншому джерелу. Поверніться до журналу та підключіть нове джерело окремо.')
+                        else:
+                            connection = journal.grade_apis.filter(source=data['source'], contract_version=2, url=data['grades_url']).order_by('pk').first()
                         if connection is None:
                             connection = GradeAPIConnection(journal=journal, source=data['source'], contract_version=2,
                                 name=SOURCES[data['source']], url=data['grades_url'], enabled=False)
+                        ensure_same_source(connection, payload)
                         connection.api_key = data['api_key']
+                        connection.url = data['grades_url']
                         connection.roster_cache = payload
                         connection.roster_checked_at = timezone.now()
                         connection.save()
@@ -76,6 +85,7 @@ def connect_source(request, journal_id):
                 with transaction.atomic():
                     _lock(journal, request.user)
                     connection = GradeAPIConnection.objects.select_for_update().get(pk=connection.pk)
+                    ensure_same_source(connection, payload)
                     connection.roster_cache = payload
                     connection.roster_checked_at = timezone.now()
                     connection.save(update_fields=['roster_cache', 'roster_checked_at'])

@@ -30,7 +30,10 @@ services:
   workdb: *db
   journaldb: *db
   test:
-    image: schooltest5-app:1.4.1
+    networks:
+      default:
+        ipv4_address: ${CHECK_TEST_IP:-10.253.141.10}
+    image: schooltest5-app:1.4.2
     environment:
       SECRET_KEY: synthetic-test-integration-secret
       DATABASE_URL: postgresql://checks:synthetic-checks-only@testdb:5432/checks
@@ -47,7 +50,10 @@ services:
       interval: 2s
       retries: 30
   work:
-    image: schoolwork2-app:4.3.0
+    networks:
+      default:
+        ipv4_address: ${CHECK_WORK_IP:-10.253.141.11}
+    image: schoolwork2-app:4.3.1
     environment: *work-env
     depends_on:
       workdb: {condition: service_healthy}
@@ -58,13 +64,16 @@ services:
       retries: 30
       start_period: 20s
   worker:
-    image: schoolwork2-app:4.3.0
+    image: schoolwork2-app:4.3.1
     environment: *work-env
     command: [python, manage.py, process_ai_jobs]
     depends_on:
       work: {condition: service_healthy}
   journal:
-    image: schooljournal-web:1.2.1
+    networks:
+      default:
+        ipv4_address: ${CHECK_JOURNAL_IP:-10.253.141.12}
+    image: schooljournal-web:1.2.2
     environment:
       SECRET_KEY: synthetic-journal-integration-secret
       ALLOWED_HOSTS: 'journal,localhost,127.0.0.1'
@@ -89,3 +98,10 @@ services:
       interval: 2s
       retries: 30
       start_period: 20s
+
+# Dedicated synthetic-only subnet; stable source IPs survive container recreation.
+networks:
+  default:
+    ipam:
+      config:
+        - subnet: ${CHECK_SUBNET:-10.253.141.0/24}

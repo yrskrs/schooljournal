@@ -16,6 +16,7 @@ INITIAL_SETUP_TOKEN = os.getenv('INITIAL_SETUP_TOKEN', '').strip()
 INITIAL_SETUP_RECOVERY_USER_ID = int(os.getenv('INITIAL_SETUP_RECOVERY_USER_ID', '0'))
 
 ALLOWED_HOSTS = [h.strip() for h in os.getenv('ALLOWED_HOSTS', 'localhost,127.0.0.1').split(',') if h.strip()]
+ALLOW_PRIVATE_NETWORK_HOSTS = os.getenv('ALLOW_PRIVATE_NETWORK_HOSTS', 'True').lower() in ('true', '1')
 
 csrf_origins = os.getenv('CSRF_TRUSTED_ORIGINS', '')
 if csrf_origins:
@@ -39,8 +40,10 @@ INSTALLED_APPS = [
 ]
 
 MIDDLEWARE = [
+    'config.middleware.PrivateNetworkHostMiddleware',
     'django.middleware.security.SecurityMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
+    'config.middleware.LegacySessionCookieMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
@@ -140,6 +143,8 @@ FILE_UPLOAD_MAX_MEMORY_SIZE = 10485760
 # Безпека за зворотним проксі Nginx
 SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
 SESSION_COOKIE_SECURE = os.getenv('SESSION_COOKIE_SECURE', 'False').lower() in ('true', '1')
+SESSION_COOKIE_NAME = 'schooljournal_sessionid'
+CSRF_COOKIE_NAME = 'schooljournal_csrftoken'
 CSRF_COOKIE_SECURE = os.getenv('CSRF_COOKIE_SECURE', 'False').lower() in ('true', '1')
 SECURE_SSL_REDIRECT = os.getenv('SECURE_SSL_REDIRECT', 'False').lower() in ('true', '1')
 

@@ -6,7 +6,7 @@
     <div><h1>Профілі та API журналу</h1><p>{{ journal.student_class.name }} · {{ journal.subject.name }}</p></div>
     <a class="btn btn-outline-primary" href="{% url 'portal:journal_detail' journal.id %}">Повернутися до журналу</a>
   </div>
-  <section class="schedule-card"><h2>Підключення тестів і завдань</h2><p>Для цих двох сайтів використовуйте майстер: вставте код підключення, виберіть назви класу й предмета та підтвердьте учнів.</p><a class="btn btn-primary" href="{% url 'portal:connect_source' journal.pk %}">Підключити тести / завдання</a></section>
+  <section class="schedule-card"><h2>Підключення тестів і завдань</h2><p>Для цих двох сайтів використовуйте майстер: вставте адресу сайту з IP і портом та окремо ключ API, виберіть назви класу й предмета та підтвердьте учнів.</p><a class="btn btn-primary" href="{% url 'portal:connect_source' journal.pk %}">Підключити тести / завдання</a></section>
   <fieldset class="integration-settings" {% if not can_edit %}disabled{% endif %}>
   <section class="schedule-card">
     <h2>Особистий і локальний профілі</h2>

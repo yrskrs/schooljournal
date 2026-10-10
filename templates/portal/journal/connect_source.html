@@ -20,13 +20,15 @@
       <button name="action" value="students" class="btn btn-primary">Зберегти підключення</button>
     </form>
   </section>{% endif %}
-  <details class="schedule-card"><summary>Підключити інший сайт або змінити ключ</summary>
-  {% else %}<section class="schedule-card"><h2>1. Вставте дані із сайту</h2><p>У тестах відкрийте «Підключення до журналу», у завданнях — «Налаштування → API та журнал». Створіть ключ і скопіюйте код підключення сюди.</p>{% endif %}
-    <form method="post">{% csrf_token %}{{ setup_form.non_field_errors }}<p>{{ setup_form.connection_code.label_tag }} {{ setup_form.connection_code }} {{ setup_form.connection_code.errors }}</p>
-      <details {% if setup_form.errors %}open{% endif %}><summary>Або введіть адресу й ключ окремо</summary><p>{{ setup_form.source.label_tag }} {{ setup_form.source }} {{ setup_form.source.errors }}</p><p>{{ setup_form.site_url.label_tag }} {{ setup_form.site_url }} {{ setup_form.site_url.errors }}</p><p>{{ setup_form.api_key.label_tag }} {{ setup_form.api_key }} {{ setup_form.api_key.errors }}</p></details>
+  <details class="schedule-card" {% if setup_form.errors %}open{% endif %}><summary>Змінити IP, порт або ключ цього підключення</summary>
+  {% else %}<section class="schedule-card"><h2>1. Вкажіть адресу та ключ</h2><p>У тестах відкрийте «Підключення до журналу», у завданнях — «Налаштування → API та журнал». Натисніть «Створити ключ API». Скопіюйте адресу сайту та ключ у відповідні поля нижче.</p>{% endif %}
+    <form method="post">{% csrf_token %}{% if connection %}<input type="hidden" name="connection_id" value="{{ connection.pk }}">{% endif %}{{ setup_form.non_field_errors }}
+      <p>{{ setup_form.source.label_tag }} {{ setup_form.source }} {{ setup_form.source.errors }}</p><p>{{ setup_form.site_url.label_tag }} {{ setup_form.site_url }} {{ setup_form.site_url.errors }}<small>{{ setup_form.site_url.help_text }}</small></p><p>{{ setup_form.api_key.label_tag }} {{ setup_form.api_key }} {{ setup_form.api_key.errors }}</p>
+      <details {% if setup_form.connection_code.errors %}open{% endif %}><summary>Код зі старої версії</summary><p>{{ setup_form.connection_code.label_tag }} {{ setup_form.connection_code }} {{ setup_form.connection_code.errors }}</p></details>
       <p><button name="action" value="connect" class="btn btn-primary">Підключити й отримати назви</button></p>
     </form>
   {% if connection %}</details>{% else %}</section>{% endif %}
   <p>Ця сторінка не імпортує оцінок. Відкрийте журнал і натисніть «Синхронізувати з тестами» або «Синхронізувати із завданнями» за потрібний період.</p>
+  <p>Сайти можуть працювати на різних серверах і в різних мережах. У разі зміни IP чи порту змініть адресу в цьому підключенні. Коли джерело недоступне, журнал працює зі збереженими списками й оцінками. Після відновлення зв’язку повторіть синхронізацію.</p>
 </div>
 {% endblock %}

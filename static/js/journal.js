@@ -26,7 +26,7 @@ document.addEventListener('DOMContentLoaded', function () {
 
   // 2. Налаштування CSRF для HTMX
   document.body.addEventListener('htmx:configRequest', function (evt) {
-    const csrfToken = getCookie('csrftoken');
+    const csrfToken = getCookie('schooljournal_csrftoken');
     if (csrfToken) {
       evt.detail.headers['X-CSRFToken'] = csrfToken;
     }
@@ -844,7 +844,7 @@ function cycleAttendance(btn, lessonId, studentId, journalId) {
   fetch(`/journal/${journalId}/attendance/update/`, {
     method: 'POST',
     headers: {
-      'X-CSRFToken': getCookie('csrftoken')
+      'X-CSRFToken': getCookie('schooljournal_csrftoken')
     },
     body: formData
   })
@@ -981,7 +981,7 @@ function pullNzJournal(journalId) {
   fetch(`/journal/${journalId}/nz/import/`, {
     method: 'POST',
     headers: {
-      'X-CSRFToken': getCookie('csrftoken'),
+      'X-CSRFToken': getCookie('schooljournal_csrftoken'),
       'X-Requested-With': 'XMLHttpRequest'
     },
     body: formData
@@ -1044,7 +1044,7 @@ function submitNzSync(journalId) {
   fetch(`/journal/${journalId}/nz/sync/`, {
     method: 'POST',
     headers: {
-      'X-CSRFToken': getCookie('csrftoken'),
+      'X-CSRFToken': getCookie('schooljournal_csrftoken'),
       'X-Requested-With': 'XMLHttpRequest'
     },
     body: formData

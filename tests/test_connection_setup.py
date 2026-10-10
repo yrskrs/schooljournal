@@ -1,7 +1,8 @@
 import json
 from unittest.mock import patch
 
-from django.test import TestCase
+from django.test import TestCase, Client, override_settings
+from django.conf import settings
 from django.urls import reverse
 from apps.accounts.models import User
 from apps.curriculum.models import Student, ClassEnrollment
@@ -12,6 +13,90 @@ from tests import test_journal_workflows as workflows
 
 
 class ConnectionSetupTests(TestCase):
+    def test_refresh_cannot_replace_a_previously_confirmed_server(self):
+        self.payload['instance_id'] = '11111111-1111-4111-8111-111111111111'
+        connection = self.connect(); self.context(connection); connection.refresh_from_db(); self.confirm(connection)
+        other = {**self.payload, 'instance_id': '22222222-2222-4222-8222-222222222222'}
+        with patch('apps.portal.views_connection_setup.fetch_source_roster', return_value=other):
+            response = self.client.post(self.url, {'action': 'refresh', 'connection_id': connection.pk})
+        self.assertContains(response, 'За цією адресою інший сервіс')
+        connection.refresh_from_db()
+        self.assertEqual(connection.roster_cache, self.payload)
+        self.assertEqual(connection.student_mappings.get().student, self.student)
+        self.assertTrue(connection.enabled)
+
+    @override_settings(ALLOWED_HOSTS=['testserver'], CSRF_TRUSTED_ORIGINS=[], ALLOW_PRIVATE_NETWORK_HOSTS=True)
+    def test_new_lan_ip_accepts_own_origin_csrf_and_rejects_foreign_origin(self):
+        client = Client(enforce_csrf_checks=True, HTTP_HOST='10.35.2.7:8085')
+        client.force_login(self.teacher)
+        self.assertEqual(client.get(self.url).status_code, 200)
+        data = {'action': 'connect', 'source': 'schooltest', 'site_url': 'http://192.168.8.25:8000',
+            'api_key': 'synthetic-ip-key', 'csrfmiddlewaretoken': client.cookies[settings.CSRF_COOKIE_NAME].value}
+        with patch('apps.portal.views_connection_setup.fetch_source_roster', return_value=self.payload) as remote:
+            self.assertEqual(client.post(self.url, data, HTTP_ORIGIN='http://10.35.2.7:8085').status_code, 302)
+            remote.assert_called_once()
+            remote.reset_mock()
+            self.assertEqual(client.post(self.url, data, HTTP_ORIGIN='http://evil.example').status_code, 403)
+            remote.assert_not_called()
+
+    def test_plain_key_and_ip_address_are_visible_and_used_directly(self):
+        page = self.client.get(self.url)
+        self.assertContains(page, 'IP і порт')
+        with patch('apps.portal.views_connection_setup.fetch_source_roster', return_value=self.payload) as remote:
+            response = self.client.post(self.url, {'action': 'connect', 'source': 'schooltest',
+                'site_url': 'http://10.25.4.21:8000', 'api_key': '  synthetic-ip-key  '})
+        self.assertEqual(response.status_code, 302)
+        remote.assert_called_once_with('http://10.25.4.21:8000/api/v2/journal/grades/', 'synthetic-ip-key', 'schooltest')
+
+    def test_old_json_in_key_field_respects_explicit_new_ip(self):
+        with patch('apps.portal.views_connection_setup.fetch_source_roster', return_value=self.payload) as remote:
+            response = self.client.post(self.url, {'action': 'connect', 'source': 'schooltest',
+                'site_url': 'http://172.20.5.18:8000', 'api_key': json.dumps({'source': 'schooltest',
+                    'site_url': 'http://schooltest-api:8000', 'api_key': 'synthetic-old-key'})})
+        self.assertEqual(response.status_code, 302)
+        remote.assert_called_once_with('http://172.20.5.18:8000/api/v2/journal/grades/', 'synthetic-old-key', 'schooltest')
+
+    def test_ip_change_keeps_connection_pupil_mapping_and_manual_grade(self):
+        self.payload['instance_id'] = '11111111-1111-4111-8111-111111111111'
+        connection = self.connect(); self.context(connection); connection.refresh_from_db(); self.confirm(connection)
+        Grade.objects.create(lesson=self.l1, student=self.student, value='11', created_by=self.teacher)
+        with patch('apps.portal.views_connection_setup.fetch_source_roster', return_value=self.payload):
+            response = self.client.post(self.url, {'action': 'connect', 'connection_id': connection.pk,
+                'source': 'schooltest', 'site_url': 'http://10.25.4.21:8000', 'api_key': 'synthetic-new-key'})
+        self.assertEqual(response.status_code, 302)
+        connection.refresh_from_db()
+        self.assertEqual(connection.url, 'http://10.25.4.21:8000/api/v2/journal/grades/')
+        self.assertEqual(GradeAPIConnection.objects.count(), 1)
+        self.assertEqual(connection.student_mappings.get().student, self.student)
+        self.assertTrue(connection.enabled)
+        self.assertEqual(Grade.objects.get().value, '11')
+
+    def test_other_server_at_new_ip_cannot_take_over_existing_history(self):
+        self.payload['instance_id'] = '11111111-1111-4111-8111-111111111111'
+        connection = self.connect()
+        other = {**self.payload, 'instance_id': '22222222-2222-4222-8222-222222222222'}
+        with patch('apps.portal.views_connection_setup.fetch_source_roster', return_value=other):
+            response = self.client.post(self.url, {'action': 'connect', 'connection_id': connection.pk,
+                'source': 'schooltest', 'site_url': 'http://10.25.4.21:8000', 'api_key': 'synthetic-other-key'})
+        self.assertContains(response, 'За цією адресою інший сервіс')
+        previous_url = connection.url
+        connection.refresh_from_db()
+        self.assertEqual(connection.url, previous_url)
+        self.assertEqual(connection.api_key, 'synthetic-private-export-key')
+
+    def test_valid_legacy_session_migrates_without_second_login(self):
+        original = self.client.cookies[settings.SESSION_COOKIE_NAME].value
+        self.client.cookies['sessionid'] = original
+        del self.client.cookies[settings.SESSION_COOKIE_NAME]
+        response = self.client.get(self.url)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.wsgi_request.user, self.teacher)
+        self.assertEqual(response.cookies[settings.SESSION_COOKIE_NAME].value, original)
+        self.client.cookies['sessionid'] = 'foreign-service-session-that-is-not-ours'
+        self.assertEqual(self.client.get(self.url).status_code, 200)
+        outsider = Client(); outsider.cookies['sessionid'] = 'foreign-service-session-that-is-not-ours'
+        self.assertEqual(outsider.get(self.url).status_code, 302)
+
     def setUp(self):
         workflows.JournalWorkflowsTests.setUp(self)
         self.url = reverse('portal:connect_source', kwargs={'journal_id': self.journal.pk})

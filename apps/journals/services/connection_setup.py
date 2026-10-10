@@ -1,6 +1,7 @@
 """Fetch source names; identities are committed only after teacher confirmation."""
 import hashlib
 import json
+from uuid import UUID
 from urllib.parse import urlsplit, urlunsplit
 
 import requests
@@ -9,6 +10,12 @@ from django.core.exceptions import ValidationError
 from .external_grades import ExternalAPIError, validate_api_url
 
 SOURCES = {'schooltest': 'Тести', 'schoolwork': 'Завдання'}
+
+
+def ensure_same_source(connection, payload):
+    previous = connection.roster_cache.get('instance_id')
+    if previous and payload.get('instance_id') != previous:
+        raise ExternalAPIError('За цією адресою інший сервіс або його версія не підтверджує ідентичність. Перевірте адресу; попереднє підключення та оцінки збережено.')
 
 
 def source_urls(value):
@@ -29,6 +36,11 @@ def validate_roster(payload, source):
     if not isinstance(payload, dict) or payload.get('schema_version') != 2 or payload.get('source') != source:
         raise ExternalAPIError('Сайт не підтримує це підключення. Оновіть його з GitHub; збережені дані журналу залишаються.')
     output = {'schema_version': 2, 'source': source}
+    if 'instance_id' in payload:
+        try:
+            output['instance_id'] = str(UUID(payload['instance_id']))
+        except (ValueError, TypeError, AttributeError) as error:
+            raise ExternalAPIError('Некоректна ідентичність сервісу. Попередні дані збережено.') from error
     for kind in ('classes', 'subjects', 'students'):
         rows = payload.get(kind)
         if not isinstance(rows, list) or len(rows) > 50000:

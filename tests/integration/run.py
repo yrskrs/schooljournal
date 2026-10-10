@@ -2,6 +2,7 @@
 """Only synthetic containers from this directory's isolated Compose project."""
 import datetime as dt
 import json
+import os
 from pathlib import Path
 import subprocess
 import time
@@ -12,7 +13,9 @@ ROOT=Path(__file__).resolve().parent
 COMMAND=['docker','compose','-f',str(ROOT/'compose.yaml')]
 BASE={'test':'http://127.0.0.1:19080','work':'http://127.0.0.1:19000','journal':'http://127.0.0.1:19085'}
 TOKENS={'test':'synthetic-test-roster-token','work':'synthetic-work-roster-token','journal':'synthetic-journal-roster-token'}
-SESSIONS={key:requests.Session() for key in BASE}
+BROWSER=requests.Session()
+SESSIONS={key:BROWSER for key in BASE}
+CSRF_COOKIES={'work':'schoolwork2_csrftoken','journal':'schooljournal_csrftoken'}
 
 
 def dc(*args):
@@ -43,7 +46,7 @@ def get(service,path,**kwargs):
 
 def post(service,path,data):
     data=dict(data)
-    if service!='test':data['csrfmiddlewaretoken']=SESSIONS[service].cookies.get('csrftoken','')
+    if service!='test':data['csrfmiddlewaretoken']=SESSIONS[service].cookies.get(CSRF_COOKIES[service],'')
     return SESSIONS[service].post(BASE[service]+path,data=data,headers={'Referer':BASE[service]+path},timeout=45)
 
 def snapshot(service):
@@ -110,11 +113,15 @@ def simple_connections():
         else:
             response = post(service, path, {'action': 'create_simple_journal_api_key'})
         assert response.status_code == 200
-        field = BeautifulSoup(response.text, 'html.parser').select_one('#journal-connection-code')
-        assert field, 'Source did not provide copyable connection code'
-        connection_code = field.get_text()
+        field = BeautifulSoup(response.text, 'html.parser').select_one('#journal-api-key')
+        assert field, 'Source did not provide a plain API key'
+        api_key = field.get_text().strip()
+        assert not api_key.startswith('{')
+        container = dc('ps','-q',service).strip()
+        metadata = json.loads(subprocess.check_output(['docker','inspect',container],text=True))[0]
+        source_ip = next(iter(metadata['NetworkSettings']['Networks'].values()))['IPAddress']
         journal_path = '/journal/1/connect/'
-        response = post('journal', journal_path, {'action': 'connect', 'connection_code': connection_code})
+        response = post('journal', journal_path, {'action': 'connect', 'source':'schooltest' if service=='test' else 'schoolwork', 'site_url':'http://'+source_ip+':8000','api_key':api_key})
         assert response.status_code == 200, response.text[:200]
         soup = BeautifulSoup(response.text, 'html.parser')
         form = next(form for form in soup.select('form') if form.select_one('button[value=context]'))
@@ -133,7 +140,7 @@ def simple_connections():
         data.update(action='students', confirm='on')
         assert post('journal', journal_path, data).status_code == 200
         assert not grade_state()['grades'], 'Setup unexpectedly imported grades'
-        log(service + ' API created in its UI; journal copies code, chooses class/subject names and confirms pupils without numeric input')
+        log(service + ' API created in its UI; journal uses a plain key and IP, chooses class/subject names and confirms pupils without numeric input')
     assert int(code('journal', "from apps.journals.models import GradeAPIConnection;print(GradeAPIConnection.objects.filter(enabled=True).exclude(roster_cache={}).count())")) == 2
 
 
@@ -143,11 +150,47 @@ def manual(value,date='2026-09-05',student=1):
     assert response.status_code==200,response.text[:250]
 
 
+def changed_ip():
+    """A second isolated interface changes the actual source IP, keeping its DB."""
+    network = 'school-api-ip-change-check'
+    containers = {service: dc('ps', '-q', service).strip() for service in ('test', 'journal')}
+    subprocess.run(['docker', 'network', 'create', '--internal', network], check=True, capture_output=True)
+    before_network = json.loads(subprocess.check_output(['docker', 'inspect', containers['test']], text=True))[0]
+    original_address = 'http://' + before_network['NetworkSettings']['Networks']['school-api-checks_default']['IPAddress'] + ':8000'
+    attached = []
+    try:
+        for container in containers.values():
+            subprocess.run(['docker', 'network', 'connect', network, container], check=True, capture_output=True)
+            attached.append(container)
+        metadata = json.loads(subprocess.check_output(['docker', 'inspect', containers['test']], text=True))[0]
+        address = 'http://' + metadata['NetworkSettings']['Networks'][network]['IPAddress'] + ':8000'
+        connection = json.loads(code('journal', "from apps.journals.models import GradeAPIConnection;import json\nc=GradeAPIConnection.objects.get(source='schooltest',enabled=True);print(json.dumps({'id':c.pk,'key':c.api_key,'url':c.url,'mappings':list(c.student_mappings.values_list('external_id','student_id'))}))"))
+        before = grade_state()
+        for target in (address, original_address):
+            response = post('journal', '/journal/1/connect/', {'action': 'connect', 'connection_id': connection['id'],
+                'source': 'schooltest', 'site_url': target, 'api_key': connection['key']})
+            assert response.status_code == 200 and '?connection=' in response.url, 'Changing the source IP failed'
+            after = json.loads(code('journal', "from apps.journals.models import GradeAPIConnection;import json\nc=GradeAPIConnection.objects.get(source='schooltest',enabled=True);print(json.dumps({'url':c.url,'mappings':list(c.student_mappings.values_list('external_id','student_id')),'count':GradeAPIConnection.objects.filter(source='schooltest').count()}))"))
+            assert after['url'] == target + '/api/v2/journal/grades/'
+            assert after['count'] == 1 and after['mappings'] == connection['mappings']
+            assert grade_state() == before, 'Changing the IP altered grades or imported automatically'
+        log('source IP changes over actual HTTP keep the connection, pupil mappings and imported/manual grades; original address restored')
+    finally:
+        for container in attached:
+            subprocess.run(['docker', 'network', 'disconnect', network, container], check=True, capture_output=True)
+        subprocess.run(['docker', 'network', 'rm', network], check=True, capture_output=True)
+
+
 def main():
     for service in ('journal','work','test'):
         print('Seeding',service,flush=True)
         code(service,(ROOT/('seed_'+service+'.py')).read_text())
     for service in BASE:login(service)
+    for service,path in [('journal','/journal/1/connect/'),('work','/teacher/settings/?tab=api'),('test','/teacher/integrations')]:
+        response=get(service,path,allow_redirects=False)
+        assert response.status_code==200, 'A second service login replaced the '+service+' session'
+    assert 'schooljournal_sessionid' in BROWSER.cookies and 'schoolwork2_sessionid' in BROWSER.cookies
+    log('one browser cookie jar keeps all three teacher logins and independent CSRF tokens on the same IP with different ports')
     map_rows('work');map_rows('journal');until(ready,'three native rosters converge without name matching')
     simple_connections()
     assert not grade_state()['grades'];time.sleep(3);assert not grade_state()['grades'];log('background roster exchange never imports marks')
@@ -189,7 +232,9 @@ def main():
     dc('pause','test','journal','worker')
     code('work',"from feed.models import Student;s=Student.objects.get(pk=1);s.first_name='ВерсіяЗавдань';s.save()")
     edit_test="from app.models import RosterStudent;from app.services.roster_backend import operate\ndef edit(engine,store):\n row=engine.native.db.get(RosterStudent,1);row.first_name='ВерсіяТестів';engine.capture()\noperate(edit)"
-    subprocess.run(COMMAND+['run','--rm','--no-deps','-T','--entrypoint','python','test','-'],input=edit_test,check=True,capture_output=True,text=True,timeout=30)
+    editor_env = dict(os.environ, CHECK_TEST_IP=os.environ.get('CHECK_EDITOR_IP', '10.253.141.20'))
+    subprocess.run(COMMAND+['run','--rm','--no-deps','-T','--entrypoint','python','test','-'],input=edit_test,
+        env=editor_env, check=True,capture_output=True,text=True,timeout=30)
     dc('unpause','test','journal','worker')
     until(lambda:'Конфлікт' in get('work','/teacher/roster-sync/').text,'concurrent native edits produce a visible manual conflict')
     page=get('work','/teacher/roster-sync/');soup=BeautifulSoup(page.text,'html.parser')
@@ -253,6 +298,7 @@ def main():
     assert response.status_code == 200 and '/student/instruction/' in response.url
     assert code('test', "from app.database import SessionLocal;from app.models import StudentAttempt,TestSession\nwith SessionLocal() as db:\n s=db.query(TestSession).filter_by(access_code='LEGACY1').one();a=db.query(StudentAttempt).filter_by(session_id=s.id).one();print(s.roster_class_id is None and a.roster_student_id is None)") == 'True'
     log('API creation preserves legacy pupil login with an empty roster; no pupil is merged by name')
+    changed_ip()
     log('all isolated Docker integration scenarios completed')
 
 if __name__=='__main__':main()

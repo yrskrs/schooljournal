@@ -7,16 +7,18 @@ from apps.journals.services.connection_setup import SOURCES, source_urls, select
 
 
 class ConnectSourceForm(forms.Form):
-    connection_code = forms.CharField(label='Код підключення із сайту тестів або завдань', required=False,
+    connection_code = forms.CharField(label='Код підключення зі старої версії', required=False, max_length=5000,
         widget=forms.Textarea(attrs={'rows': 3, 'autocomplete': 'off', 'class': 'form-control'}))
     source = forms.ChoiceField(label='Що підключаємо', choices=list(SOURCES.items()), required=False)
-    site_url = forms.URLField(label='Адреса сайту', max_length=450, required=False)
+    site_url = forms.URLField(label='Адреса сайту тестів або завдань (IP і порт)', max_length=450, required=False,
+        help_text='Вставте повну адресу, за якою відкриваєте джерело, наприклад http://192.168.10.25:8000. Вона має бути доступна серверу журналу.')
     api_key = forms.CharField(label='Ключ API', required=False, max_length=500,
         widget=forms.PasswordInput(attrs={'autocomplete': 'new-password'}))
 
     def clean(self):
         data = super().clean()
-        code = data.get('connection_code', '').strip()
+        key = data.get('api_key', '').strip()
+        code = data.get('connection_code', '').strip() or (key if key.startswith('{') else '')
         if code:
             try:
                 payload = json.loads(code)
@@ -25,9 +27,11 @@ class ConnectSourceForm(forms.Form):
                 for key in ('source', 'site_url', 'api_key'):
                     if not isinstance(payload.get(key), str):
                         raise ValueError
-                    data[key] = payload[key].strip()
+                    if key != 'site_url' or not data.get('site_url'):
+                        data[key] = payload[key].strip()
             except (ValueError, TypeError):
-                raise forms.ValidationError('Скопіюйте повний код підключення із сайту джерела.')
+                raise forms.ValidationError('Вставте лише ключ API в поле ключа й адресу сайту в поле адреси. Старий код має містити source, site_url та api_key.')
+        data['api_key'] = data.get('api_key', '').strip()
         if data.get('source') not in SOURCES:
             self.add_error('source', 'Оберіть тести або завдання.')
         if not data.get('api_key') or len(data['api_key']) > 500 or any(c in data['api_key'] for c in ('\r', '\n')):
