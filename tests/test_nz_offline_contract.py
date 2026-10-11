@@ -3,6 +3,7 @@ import datetime as dt
 import json
 from pathlib import Path
 from unittest.mock import MagicMock, patch
+import requests
 
 from django.core import signing
 from django.test import TestCase
@@ -427,36 +428,6 @@ class NZOfflineContractTests(TestCase):
         self.assertEqual(l601.lesson_number, 3)
         self.assertEqual(l601.lesson_time, dt.time(10, 30))
 
-    def test_real_journal_9g_html_parsing(self):
-        real_file = Path('/home/flinux/Документи/allWork/schooljournal/nz.uz/Журнал 9-Г _ Нові знання.html')
-        if not real_file.exists():
-            return
-        service = NZService()
-        html = real_file.read_text(encoding='utf-8')
-        data = service.fetch_journal_data('14904615', html_content=html)
-        self.assertIn('buzzers', data)
-        self.assertEqual(len(data['buzzers']), 8)
-        self.assertEqual(data['buzzers']['9788288']['number'], 1)
-        self.assertEqual(data['buzzers']['9788288']['start_time'], dt.time(8, 35))
-        self.assertEqual(data['buzzers']['9788299']['number'], 8)
-        self.assertEqual(data['buzzers']['9788299']['start_time'], dt.time(15, 20))
-        self.assertEqual(len(data['lessons']), 9)
-
-    def test_real_journal_7b_html_homework_parsing(self):
-        real_file = Path('/home/flinux/Документи/allWork/schooljournal/nz.uz/Журнал 7-Б _ Нові знання.html')
-        if not real_file.exists():
-            return
-        service = NZService()
-        html = real_file.read_text(encoding='utf-8')
-        data = service.fetch_journal_data('14896699', html_content=html)
-        self.assertEqual(len(data['lessons']), 20)
-        l6 = next(l for l in data['lessons'] if l['nz_schedule_id'] == '4730185')
-        self.assertEqual(l6['homework'], 'Опрацювати ст 11-13.  Виконати Вправу 62 ст 12')
-        self.assertEqual(l6['homework_due_date'], dt.date(2026, 9, 16))
-        l15 = next(l for l in data['lessons'] if l['nz_schedule_id'] == '5079314')
-        self.assertEqual(l15['homework'], 'Виконати вправи 123, 125 Матеріали знаходяться в класрумі')
-        self.assertEqual(l15['homework_due_date'], dt.date(2026, 10, 3))
-
     def test_split_cells_homework_and_due_date_parsing(self):
         html = """<!doctype html><html><head><meta name="csrf-token" content="token"></head><body>
         <select id="semester"><option selected>I семестр 2026/2027</option></select>
@@ -709,4 +680,97 @@ class NZOfflineContractTests(TestCase):
             self.assertEqual(data['lessons'][1]['nz_schedule_id'], '2002')
             self.assertEqual(data['lessons'][1]['homework'], 'ДЗ другої сторінки')
             self.assertEqual(len(data['marks']), 2)
+
+    @staticmethod
+    def pagination_page(page, last_page=2, active_markup=None, schedule=None):
+        active_markup = active_markup or f'<span>{page}</span>'
+        links = ''.join(f'<li><a href="?journal=7001&amp;page={number}">{number}</a></li>'
+                        for number in range(1, last_page + 1) if number != page)
+        schedule = schedule or str(2000 + page)
+        return f'''<meta name="csrf-token" content="synthetic-token">
+        <select id="semester"><option selected>I семестр 2026/2027</option></select>
+        <ul class="pagination"><li class="active">{active_markup}</li>{links}</ul>
+        <table class="point-table"><thead><tr>
+        <td class="pt-point"><a href="/journal/add-edit-lesson?schedule={schedule}&amp;journal=7001">{page + 6}</a>
+        <span class="pt-month">Вер.</span></td></tr></thead><tbody>
+        <tr><td class="pt-theme" data-student-id="9001">Вигаданий Учень</td>
+        <td class="pt-point"><input value="10" data-mark-id="{page}"></td></tr>
+        </tbody></table>'''
+
+    def test_failed_pagination_preserves_existing_journal_during_replace(self):
+        failures = [
+            MagicMock(status_code=503, url='https://nz.ua/journal/index?page=2', text='Недоступно'),
+            MagicMock(status_code=200, url='https://nz.ua/login', text='Вхід'),
+            MagicMock(status_code=200, url='https://nz.ua/journal/index?page=2', text='LoginForm'),
+            MagicMock(status_code=200, url='https://nz.ua/journal/index?page=2', text='<html>Змінена структура</html>'),
+            MagicMock(status_code=200, url='https://nz.ua/journal/index?page=2', text='<table class="point-table"></table>'),
+            requests.Timeout('Synthetic timeout'),
+        ]
+        before = list(self.journal.lessons.values_list('pk', 'topic', 'homework'))
+        grades_before = list(Grade.objects.filter(lesson__journal=self.journal).values_list('pk', 'value'))
+        for failure in failures:
+            with self.subTest(failure=type(failure).__name__):
+                service = NZService()
+                first = MagicMock(status_code=200, url='https://nz.ua/journal/index?journal=7001',
+                                  text=self.pagination_page(1))
+                with patch.object(service.session, 'get', side_effect=[first, failure]), self.assertRaises(NZServiceError):
+                    service.import_journal_to_local('7001', self.journal, replace=True)
+                self.assertEqual(list(self.journal.lessons.values_list('pk', 'topic', 'homework')), before)
+                self.assertEqual(list(Grade.objects.filter(lesson__journal=self.journal).values_list('pk', 'value')), grades_before)
+
+    def test_pagination_rejects_server_returning_wrong_page(self):
+        service = NZService()
+        first = MagicMock(status_code=200, url='https://nz.ua/journal/index?journal=7001', text=self.pagination_page(1))
+        wrong = MagicMock(status_code=200, url='https://nz.ua/journal/index?journal=7001&page=2', text=self.pagination_page(1))
+        with patch.object(service.session, 'get', side_effect=[first, wrong]), self.assertRaises(NZServiceError):
+            service.fetch_journal_data('7001')
+
+    def test_sliding_pagination_discovers_further_pages(self):
+        service = NZService()
+        responses = [MagicMock(status_code=200, url=f'https://nz.ua/journal/index?journal=7001&page={page}',
+                               text=self.pagination_page(page, last_page=2 if page == 1 else 3))
+                     for page in range(1, 4)]
+        with patch.object(service.session, 'get', side_effect=responses) as get:
+            data = service.fetch_journal_data('7001')
+        self.assertEqual(get.call_count, 3)
+        self.assertEqual([lesson['nz_schedule_id'] for lesson in data['lessons']], ['2001', '2002', '2003'])
+        self.assertEqual(len(data['students']), 1)
+        self.assertEqual(len(data['marks']), 3)
+
+    def test_active_last_page_preserves_subgroup_and_semester_filters(self):
+        for active_markup in ('<span>2</span>', '<a data-page="1">Поточна</a>', '<a>Поточна</a>', '2'):
+            with self.subTest(active_markup=active_markup):
+                service = NZService()
+                last = MagicMock(status_code=200, url='https://nz.ua/journal/index?journal=7001&subgroup=8&semester=12&page=2',
+                                 text=self.pagination_page(2, active_markup=active_markup))
+                first = MagicMock(status_code=200, url='https://nz.ua/journal/index?journal=7001&subgroup=8&semester=12&page=1',
+                                  text=self.pagination_page(1))
+                with patch.object(service.session, 'get', side_effect=[last, first]) as get:
+                    data = service.fetch_journal_data('7001', '8')
+                self.assertEqual([lesson['nz_schedule_id'] for lesson in data['lessons']], ['2001', '2002'])
+                self.assertEqual(get.call_count, 2)
+                page_url = get.call_args_list[1].args[0]
+                self.assertIn('subgroup=8', page_url)
+                self.assertIn('semester=12', page_url)
+                self.assertIn('page=1', page_url)
+
+    def test_repeated_records_across_pages_are_not_duplicated(self):
+        service = NZService()
+        first_html = self.pagination_page(1)
+        second_html = first_html.replace('<span>1</span>', '<span>2</span>')
+        responses = [MagicMock(status_code=200, url=f'https://nz.ua/journal/index?journal=7001&page={page}', text=html)
+                     for page, html in ((1, first_html), (2, second_html))]
+        with patch.object(service.session, 'get', side_effect=responses):
+            data = service.fetch_journal_data('7001')
+        self.assertEqual((len(data['students']), len(data['lessons']), len(data['marks'])), (1, 1, 1))
+
+    def test_offline_fixture_remains_offline_with_saved_session(self):
+        service = NZService()
+        service.session.cookies.set('PHPSESSID', 'synthetic-session')
+        html = (Path(__file__).parent / 'fixtures/nz_journal_synthetic.html').read_text(encoding='utf-8')
+        with patch.object(service.session, 'get', side_effect=AssertionError('Offline fixture must not contact nz.ua')) as get:
+            data = service.fetch_journal_data('7001', html_content=html)
+        get.assert_not_called()
+        self.assertEqual(len(data['lessons']), 2)
+        self.assertEqual(data['lessons'][0]['homework'], 'Вигадане ДЗ')
 

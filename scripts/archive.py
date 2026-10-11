@@ -10,7 +10,7 @@ import tempfile
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 
-DIRECTORIES = ('apps', 'config', 'templates', 'static', 'scripts', 'tests', 'nginx', '.github')
+DIRECTORIES = ('apps', 'config', 'templates', 'static', 'scripts', 'tests', 'nginx', '.github', 'school_sync')
 FILES = ('manage.py', 'requirements.txt', 'Dockerfile', 'compose.yaml', 'compose.dev.yaml',
          '.env.example', '.gitignore', '.dockerignore', 'VERSION', 'RELEASES.json', 'LICENSE',
          'setup.sh', 'update.sh', 'backup.sh', 'restore.sh', 'service.sh', 'README.md', 'EXTERNAL_API.md',
@@ -114,6 +114,10 @@ def install_source(archive_path, root):
         if 'VERSION' not in {m.name for m in members}:
             raise ValueError('Source missing VERSION')
         for directory in DIRECTORIES:
+            # Older snapshots omitted school_sync; Git recovery may already
+            # have restored it. Do not erase that package for those archives.
+            if directory == 'school_sync' and not any(m.name.startswith('school_sync/') for m in members):
+                continue
             target = root / directory
             if target.is_symlink():
                 raise ValueError('Source directory must not be a symlink')

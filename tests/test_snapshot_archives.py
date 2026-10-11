@@ -85,7 +85,30 @@ class SnapshotSafetyTests(unittest.TestCase):
         (destination / '.env').write_text('synthetic-retained-secret')
         (destination / 'apps').mkdir()
         (destination / 'apps' / 'obsolete.py').write_text('# obsolete')
+        (destination / 'school_sync').mkdir()
+        (destination / 'school_sync' / 'core.py').write_text('# package recovered from Git for a legacy snapshot')
         snapshot.install_source(self.work / 'source.tar.gz', destination)
         self.assertEqual((destination / '.env').read_text(), 'synthetic-retained-secret')
         self.assertEqual((destination / 'VERSION').read_text(), '1.0.0\n')
         self.assertFalse((destination / 'apps' / 'obsolete.py').exists())
+        self.assertTrue((destination / 'school_sync' / 'core.py').exists())
+
+    def test_sync_package_is_archived_verified_and_restored(self):
+        package = self.root / 'school_sync'
+        package.mkdir()
+        (package / '__init__.py').write_text('# synthetic package')
+        (package / 'core.py').write_text('# synthetic sync implementation')
+        (package / '__pycache__').mkdir()
+        (package / '__pycache__' / 'core.pyc').write_bytes(b'private-cache')
+        snapshot.create(self.work, self.root, 'sha256:' + 'a' * 64)
+        verified = Path(self.tmp.name) / 'verified-sync'
+        verified.mkdir()
+        snapshot.extract(self.pack(), verified)
+        destination = Path(self.tmp.name) / 'installed-sync'
+        (destination / 'school_sync').mkdir(parents=True)
+        (destination / 'school_sync' / 'obsolete.py').write_text('# obsolete')
+        snapshot.install_source(verified / 'source.tar.gz', destination)
+        self.assertEqual((destination / 'school_sync' / 'core.py').read_text(), '# synthetic sync implementation')
+        self.assertTrue((destination / 'school_sync' / '__init__.py').exists())
+        self.assertFalse((destination / 'school_sync' / '__pycache__').exists())
+        self.assertFalse((destination / 'school_sync' / 'obsolete.py').exists())

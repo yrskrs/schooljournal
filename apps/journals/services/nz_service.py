@@ -6,6 +6,7 @@ import time
 import hashlib
 from collections import defaultdict
 from datetime import datetime, date, timedelta
+from urllib.parse import parse_qsl, urlencode, urlsplit
 from bs4 import BeautifulSoup
 import requests
 from django.utils import timezone
@@ -787,90 +788,68 @@ class NZService:
         if nz_subgroup_id:
             url += f"&subgroup={nz_subgroup_id}"
 
-        resp = self.session.get(url, timeout=20)
-        if resp.status_code != 200 or "/login" in resp.url or 'LoginForm' in resp.text:
-            raise NZAuthError("Сесія nz.ua недійсна.")
+        def get_page(page_url):
+            try:
+                response = self.session.get(page_url, timeout=20)
+            except requests.RequestException as exc:
+                raise NZServiceError('Не вдалося завантажити всі сторінки nz.ua. Локальні дані не змінено.') from exc
+            if '/login' in str(response.url) or 'LoginForm' in response.text:
+                raise NZAuthError('Сесія nz.ua недійсна. Локальні дані не змінено.')
+            if response.status_code != 200:
+                raise NZServiceError(f'Не вдалося завантажити сторінку nz.ua (HTTP {response.status_code}). Локальні дані не змінено.')
+            return response
 
-        self.extract_csrf(resp.text)
-        initial_soup = BeautifulSoup(resp.text, 'html.parser')
+        resp = get_page(url)
+        active_page, last_page = self._journal_pagination(resp.text, str(resp.url))
+        # Preserve the semester and other filters selected by the online journal.
+        page_query = dict(parse_qsl(urlsplit(str(resp.url)).query))
+        page_query['journal'] = nz_journal_id
+        if nz_subgroup_id:
+            page_query['subgroup'] = nz_subgroup_id
 
-        # Визначаємо наявність пагінації сторінок на nz.ua
-        page_links = initial_soup.find_all('a', href=re.compile(r'[?&]page=(\d+)'))
-        pages = set()
-        for a in page_links:
-            m = re.search(r'[?&]page=(\d+)', a['href'])
-            if m:
-                pages.add(int(m.group(1)))
+        students_data, lessons_data, marks_data = [], [], []
+        seen_students, seen_lessons, seen_marks = set(), set(), set()
+        buzzers = {}
+        base_year = None
+        page = 1
+        while page <= last_page:
+            if page == active_page:
+                page_response = resp
+            else:
+                page_query['page'] = page
+                page_response = get_page(f'{self.BASE_URL}/journal/index?{urlencode(page_query)}')
+            returned_page, discovered_last = self._journal_pagination(page_response.text, str(page_response.url))
+            if returned_page != page:
+                raise NZServiceError('nz.ua повернув іншу сторінку журналу. Локальні дані не змінено.')
+            # A sliding pager may reveal further pages only after moving forward.
+            last_page = max(last_page, discovered_last)
+            self.extract_csrf(page_response.text)
+            data = self._parse_single_journal_page(page_response.text, nz_journal_id)
+            if last_page > 1 and not data['lessons']:
+                raise NZServiceError('Сторінка nz.ua не містить розпізнаних уроків. Локальні дані не змінено.')
+            if base_year is None:
+                base_year = data['base_year']
+            buzzers.update(data['buzzers'])
+            for student in data['students']:
+                key = student.get('nz_student_id') or student.get('name')
+                if key and key not in seen_students:
+                    seen_students.add(key)
+                    students_data.append(student)
+            for lesson in data['lessons']:
+                key = lesson.get('nz_schedule_id') or (lesson.get('date'), lesson.get('lesson_number'))
+                if key not in seen_lessons:
+                    seen_lessons.add(key)
+                    lessons_data.append(lesson)
+            for mark in data['marks']:
+                key = (mark.get('nz_student_id') or mark.get('student_name'), mark.get('nz_schedule_id'),
+                       mark.get('date'), mark.get('lesson_number'))
+                if key not in seen_marks:
+                    seen_marks.add(key)
+                    marks_data.append(mark)
+            page += 1
 
-        active_page = 1
-        act = initial_soup.select_one('ul.pagination li.active a, .pagination .active a')
-        if act:
-            m = re.search(r'[?&]page=(\d+)', act.get('href', ''))
-            if m:
-                active_page = int(m.group(1))
-            elif act.get('data-page') and act['data-page'].isdigit():
-                active_page = int(act['data-page']) + 1
-
-        all_page_numbers = list(range(1, max(pages) + 1)) if pages else [1]
-
-        if len(all_page_numbers) == 1:
-            data = self._parse_single_journal_page(resp.text, nz_journal_id)
-            students_data = data['students']
-            lessons_data = data['lessons']
-            marks_data = data['marks']
-            buzzers = data['buzzers']
-            base_year = data['base_year']
-        else:
-            students_data = []
-            seen_students = set()
-            lessons_data = []
-            seen_lessons = set()
-            marks_data = []
-            seen_marks = set()
-            buzzers = {}
-            base_year = None
-
-            for p in all_page_numbers:
-                if p == active_page:
-                    p_html = resp.text
-                else:
-                    p_url = f"{self.BASE_URL}/journal/index?journal={nz_journal_id}&page={p}"
-                    if nz_subgroup_id:
-                        p_url += f"&subgroup={nz_subgroup_id}"
-                    p_resp = self.session.get(p_url, timeout=20)
-                    if p_resp.status_code != 200 or '/login' in str(p_resp.url):
-                        continue
-                    p_html = p_resp.text
-
-                try:
-                    p_data = self._parse_single_journal_page(p_html, nz_journal_id)
-                except Exception:
-                    continue
-
-                if base_year is None:
-                    base_year = p_data.get('base_year')
-                buzzers.update(p_data.get('buzzers', {}))
-
-                for st in p_data.get('students', []):
-                    st_key = st.get('nz_student_id') or st.get('name')
-                    if st_key and st_key not in seen_students:
-                        seen_students.add(st_key)
-                        students_data.append(st)
-
-                for les in p_data.get('lessons', []):
-                    les_key = les.get('nz_schedule_id') or (les.get('date'), les.get('lesson_number'))
-                    if les_key and les_key not in seen_lessons:
-                        seen_lessons.add(les_key)
-                        lessons_data.append(les)
-
-                for m in p_data.get('marks', []):
-                    m_key = (m.get('nz_student_id'), m.get('nz_schedule_id'), m.get('date'), m.get('lesson_number'))
-                    if m_key not in seen_marks:
-                        seen_marks.add(m_key)
-                        marks_data.append(m)
-
-            for idx, l in enumerate(lessons_data, 1):
-                l['col_index'] = idx
+        for index, lesson in enumerate(lessons_data, 1):
+            lesson['col_index'] = index
 
         # 0.5. Парсимо дзвінки (buzzers), якщо ще не визначено
         if not buzzers and self.session and self.session.cookies.get('PHPSESSID'):
@@ -918,6 +897,30 @@ class NZService:
             'base_year': base_year or timezone.now().year,
             'buzzers': buzzers,
         }
+
+    @staticmethod
+    def _journal_pagination(html, response_url):
+        soup = BeautifulSoup(html, 'html.parser')
+        match = re.search(r'[?&]page=(\d+)', response_url)
+        current = int(match.group(1)) if match else 1
+        active = soup.select_one('.pagination .active')
+        if active:
+            indicator = active.select_one('a, span') or active
+            match = re.search(r'[?&]page=(\d+)', indicator.get('href', ''))
+            if match:
+                current = int(match.group(1))
+            elif indicator.get('data-page', '').isdigit():
+                current = int(indicator['data-page']) + 1
+            elif indicator.get_text(strip=True).isdigit():
+                current = int(indicator.get_text(strip=True))
+        pages = [current]
+        for link in soup.select('.pagination a[href]'):
+            match = re.search(r'[?&]page=(\d+)', link['href'])
+            if match:
+                pages.append(int(match.group(1)))
+        if current < 1:
+            raise NZServiceError('Некоректний номер сторінки nz.ua. Локальні дані не змінено.')
+        return current, max(pages)
 
     @staticmethod
     def _column_type(cell, lesson_date=None):
