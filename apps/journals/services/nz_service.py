@@ -556,14 +556,34 @@ class NZService:
                     lesson_num = int(m_num.group(0))
 
             topic_txt = items[c_topic] if c_topic is not None and c_topic < len(items) else ''
-            hw_txt = items[c_hw] if c_hw is not None and c_hw < len(items) else ''
+            raw_hw = items[c_hw] if c_hw is not None and c_hw < len(items) else ''
+            next_cell = items[c_hw + 1] if c_hw is not None and (c_hw + 1) < len(items) else ''
 
             due_date = None
-            due_match = re.match(r'^на\s+(?:(\d{1,2})\s+([а-яіїєґ]+)(?:\s+(\d{4}))?|(\d{1,2})\.(\d{1,2})(?:\.(\d{2,4}))?)(?:\s*[:—-])?\s*', hw_txt, re.I)
+            hw_txt = ''
+            due_match = re.match(r'^на\s+(?:(\d{1,2})\s+([а-яіїєґ]+)(?:\s+(\d{4}))?|(\d{1,2})\.(\d{1,2})(?:\.(\d{2,4}))?)(?:\s*[:—-])?\s*', raw_hw, re.I)
             if due_match:
                 due_date = self._parse_lesson_date(due_match.group(0), base_year)
-                if due_date:
-                    hw_txt = hw_txt[due_match.end():]
+                rem = raw_hw[due_match.end():].strip()
+                if rem:
+                    hw_txt = rem
+                elif c_hw is not None and len(items) > (c_hw + 1) and (len(items) >= (c_hw + 3) or len(items) > 7):
+                    hw_txt = next_cell
+                elif c_hw is not None and len(items) == (c_hw + 2) and next_cell and not re.search(r'\bзаміна\b', next_cell, re.I):
+                    hw_txt = next_cell
+            else:
+                if raw_hw:
+                    hw_txt = raw_hw
+                elif c_hw is not None and len(items) > (c_hw + 1) and (len(items) >= (c_hw + 3) or len(items) > 7):
+                    hw_txt = next_cell
+
+            if hw_txt and not due_date:
+                m_next_due = re.match(r'^на\s+(?:(\d{1,2})\s+([а-яіїєґ]+)(?:\s+(\d{4}))?|(\d{1,2})\.(\d{1,2})(?:\.(\d{2,4}))?)(?:\s*[:—-])?\s*', hw_txt, re.I)
+                if m_next_due:
+                    due_date = self._parse_lesson_date(m_next_due.group(0), base_year)
+                    hw_txt = hw_txt[m_next_due.end():].strip()
+
+            hw_txt = hw_txt.strip()
 
             entry = {
                 'date': d_obj,
@@ -1073,7 +1093,7 @@ class NZService:
                     lesson.homework_for_next_lesson = False
                     lesson.lesson_type = l_info.get('lesson_type', lesson.lesson_type)
                 else:
-                    if not lesson.homework and hw:
+                    if (not lesson.homework or lesson.homework == lesson.nz_last_synced_homework) and hw:
                         lesson.homework = hw
                         lesson.homework_due_date = l_info.get('homework_due_date')
                     if not lesson.topic and topic:

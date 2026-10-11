@@ -442,6 +442,83 @@ class NZOfflineContractTests(TestCase):
         self.assertEqual(data['buzzers']['9788299']['start_time'], dt.time(15, 20))
         self.assertEqual(len(data['lessons']), 9)
 
+    def test_real_journal_7b_html_homework_parsing(self):
+        real_file = Path('/home/flinux/Документи/allWork/schooljournal/nz.uz/Журнал 7-Б _ Нові знання.html')
+        if not real_file.exists():
+            return
+        service = NZService()
+        html = real_file.read_text(encoding='utf-8')
+        data = service.fetch_journal_data('14896699', html_content=html)
+        self.assertEqual(len(data['lessons']), 20)
+        l6 = next(l for l in data['lessons'] if l['nz_schedule_id'] == '4730185')
+        self.assertEqual(l6['homework'], 'Опрацювати ст 11-13.  Виконати Вправу 62 ст 12')
+        self.assertEqual(l6['homework_due_date'], dt.date(2026, 9, 16))
+        l15 = next(l for l in data['lessons'] if l['nz_schedule_id'] == '5079314')
+        self.assertEqual(l15['homework'], 'Виконати вправи 123, 125 Матеріали знаходяться в класрумі')
+        self.assertEqual(l15['homework_due_date'], dt.date(2026, 10, 3))
+
+    def test_split_cells_homework_and_due_date_parsing(self):
+        html = """<!doctype html><html><head><meta name="csrf-token" content="token"></head><body>
+        <select id="semester"><option selected>I семестр 2026/2027</option></select>
+        <table class="point-table" id="journalList">
+            <thead>
+                <tr>
+                    <td></td><td class="pt-theme"></td>
+                    <td class="pt-point"><a href="/journal/add-edit-lesson?schedule=201&amp;journal=7001">14</a><span class="pt-month">Вер.</span></td>
+                    <td class="pt-point"><a href="/journal/add-edit-lesson?schedule=202&amp;journal=7001">16</a></td>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td>1</td><td class="pt-theme" data-student-id="101">Учень Тестовий</td>
+                    <td class="pt-point"><input class="mark-cell" data-mark-id="1" value="10"></td>
+                    <td class="pt-point"><input class="mark-cell" data-mark-id="2" value="11"></td>
+                </tr>
+            </tbody>
+        </table>
+        <div class="homework-row homework-row--header">
+            <div class="homework__item"></div>
+            <div class="homework__item">Дата</div>
+            <div class="homework__item">№ уроку</div>
+            <div class="homework__item">Дистанційне завдання</div>
+            <div class="homework__item">Тема уроку</div>
+            <div class="homework__item">Домашнє завдання</div>
+            <div class="homework__item">Заміна</div>
+        </div>
+        <div class="homework-row">
+            <div class="homework__item"><a href="/journal/add-edit-home-task?schedule=201&amp;journal=7001">Редагувати</a></div>
+            <div class="homework__item">14 вересня</div>
+            <div class="homework__item">6</div>
+            <div class="homework__item"></div>
+            <div class="homework__item">Тема з розділеними клітинками</div>
+            <div class="homework__item">на 16 вересня</div>
+            <div class="homework__item">Виконати вправу 10 на сторінці 25</div>
+            <div class="homework__item"></div>
+        </div>
+        <div class="homework-row">
+            <div class="homework__item"><a href="/journal/add-edit-home-task?schedule=202&amp;journal=7001">Редагувати</a></div>
+            <div class="homework__item">16 вересня</div>
+            <div class="homework__item">7</div>
+            <div class="homework__item"></div>
+            <div class="homework__item">Тема без ДЗ</div>
+            <div class="homework__item">на 16 вересня</div>
+            <div class="homework__item"></div>
+            <div class="homework__item"></div>
+        </div>
+        </body></html>"""
+        service = NZService()
+        data = service.fetch_journal_data('7001', html_content=html)
+        self.assertEqual(len(data['lessons']), 2)
+        l1, l2 = data['lessons']
+        self.assertEqual(l1['homework'], 'Виконати вправу 10 на сторінці 25')
+        self.assertEqual(l1['homework_due_date'], dt.date(2026, 9, 16))
+        self.assertEqual(l2['homework'], '')
+        self.assertEqual(l2['homework_due_date'], dt.date(2026, 9, 16))
+        service.import_journal_to_local('7001', self.journal, html_content=html, user=self.teacher)
+        db_l1 = self.journal.lessons.get(nz_schedule_id='201')
+        self.assertEqual(db_l1.homework, 'Виконати вправу 10 на сторінці 25')
+        self.assertEqual(db_l1.homework_due_date, dt.date(2026, 9, 16))
+
     def test_online_journal_5_column_layout_homework_and_topic_parsing(self):
         html = """<!doctype html><html><head><meta name="csrf-token" content="token"></head><body>
         <select id="semester"><option selected>I семестр 2026/2027</option></select>

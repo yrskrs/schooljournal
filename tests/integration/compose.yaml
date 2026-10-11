@@ -73,7 +73,7 @@ services:
     networks:
       default:
         ipv4_address: ${CHECK_JOURNAL_IP:-10.253.141.12}
-    image: ${CHECK_JOURNAL_IMAGE:-schooljournal-web:1.3.7}
+    image: ${CHECK_JOURNAL_IMAGE:-schooljournal-web:1.3.8}
     environment:
       SECRET_KEY: synthetic-journal-integration-secret
       ALLOWED_HOSTS: 'journal,localhost,127.0.0.1'
