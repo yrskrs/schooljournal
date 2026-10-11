@@ -90,7 +90,7 @@ for s in rows:
             response=get('journal',f'/journal/{journal_id}/api-inbox/')
             assert 'Коваленк І.' in response.text and 'Коваленко Ірина' in response.text
             soup=BeautifulSoup(response.text,'html.parser')
-            form=next(f for f in soup.select('form') if f.select_one('button[value=match]') and 'Коваленк І.' in f.get_text())
+            form=next(f for f in soup.select('form') if f.select_one('button[value=match]') and f.find_parent('article').find('h3').get_text(strip=True)=='Коваленк І.')
             data={field['name']:field.get('value','') for field in form.select('input[name]')}
             data.update(action='match',student=next(o['value'] for o in form.select('option') if o.get_text()=='Коваленко Ірина'))
             assert post('journal',f'/journal/{journal_id}/api-inbox/',data).status_code==200
