@@ -1013,6 +1013,52 @@ function pullNzJournal(journalId) {
     });
 }
 
+function pullNzJournalFromFile(journalId, input) {
+  if (!input.files || !input.files[0]) return;
+  const file = input.files[0];
+  const modalPullBtn = document.getElementById('nzModalPullBtn');
+  if (modalPullBtn) {
+    modalPullBtn.disabled = true;
+    modalPullBtn.innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true" style="width: 0.85rem; height: 0.85rem; margin-right: 0.25rem;"></span> Імпорт з файлу...';
+  }
+  showToast('Імпорт розкладу дзвінків та уроків з файлу...', 'info');
+
+  const formData = new FormData();
+  formData.append('format', 'json');
+  formData.append('html_file', file);
+
+  fetch(`/journal/${journalId}/nz/import/`, {
+    method: 'POST',
+    headers: {
+      'X-CSRFToken': getCookie('schooljournal_csrftoken'),
+      'X-Requested-With': 'XMLHttpRequest'
+    },
+    body: formData
+  })
+    .then(function (res) {
+      return res.json().then(function (data) {
+        return { ok: res.ok, data: data };
+      });
+    })
+    .then(function (resObj) {
+      if (resObj.ok && resObj.data.success) {
+        showToast(resObj.data.message || 'Журнал успішно завантажено з файлу!', 'success');
+        setTimeout(function () {
+          location.reload();
+        }, 700);
+      } else {
+        throw new Error(resObj.data.error || resObj.data.message || 'Помилка при імпорті з файлу');
+      }
+    })
+    .catch(function (err) {
+      if (modalPullBtn) {
+        modalPullBtn.disabled = false;
+        modalPullBtn.innerHTML = '⤓ Завантажити з nz.ua';
+      }
+      showToast('Не вдалося імпортувати файл: ' + err.message, 'danger');
+    });
+}
+
 function submitNzSync(journalId) {
   const submitBtn = document.getElementById('nzSyncSubmitBtn');
   const dryRunCheckbox = document.getElementById('nzDryRunCheckbox');

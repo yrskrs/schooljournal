@@ -151,6 +151,14 @@ def weekly_schedule(request):
                 School.objects.select_for_update().get(pk=school.pk)
                 if form.is_valid():
                     entry = form.save()
+                    for lesson in entry.journal.lessons.all():
+                        if lesson.date.weekday() == entry.weekday and (lesson.lesson_time is None or lesson.lesson_number != entry.lesson_time.number):
+                            occupied = entry.journal.lessons.filter(date=lesson.date).exclude(pk=lesson.pk)
+                            target_num = entry.lesson_time.number
+                            if not occupied.filter(lesson_number=target_num).exists():
+                                lesson.lesson_number = target_num
+                            lesson.lesson_time = entry.lesson_time.start_time
+                            lesson.save(update_fields=['lesson_number', 'lesson_time'])
                     AuditLog.objects.create(school=school, user=request.user,
                         action=AuditLog.Action.UPDATE if instance else AuditLog.Action.CREATE,
                         target_model='WeeklyScheduleEntry', target_id=str(entry.pk), description='Збережено урок у тижневому розкладі.')

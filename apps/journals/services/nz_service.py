@@ -4,14 +4,17 @@ import re
 import json
 import time
 import hashlib
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 from bs4 import BeautifulSoup
 import requests
 from django.utils import timezone
 from django.db import transaction
 from django.db.models import Max
 
-from apps.curriculum.models import AcademicYear, Semester, Student, StudentClass, Subject, ClassEnrollment
+from apps.curriculum.models import (
+    AcademicYear, Semester, Student, StudentClass, Subject, ClassEnrollment,
+    LessonTime, WeeklyScheduleEntry
+)
 from apps.journals.models import Journal, Lesson, Grade, Attendance, NZAccount, NZSyncLog, LessonType
 
 logger = logging.getLogger(__name__)
@@ -277,27 +280,143 @@ class NZService:
 
         return journals
 
-    def fetch_journal_data(self, nz_journal_id: str, nz_subgroup_id: str = "") -> dict:
+    @staticmethod
+    def _parse_buzzers(html_or_soup) -> dict:
+        """
+        Розпарсити час дзвінків / розклад уроків школи з селектора OsvitaScheduleReal[buzzer_id].
+        Повертає словник:
+        {
+            buzzer_id: {
+                'buzzer_id': str,
+                'number': int,
+                'start_time': datetime.time,
+                'end_time': datetime.time,
+                'label': str,
+                'is_selected': bool
+            }
+        }
+        """
+        if not html_or_soup:
+            return {}
+        if isinstance(html_or_soup, str):
+            soup = BeautifulSoup(html_or_soup, 'html.parser')
+        else:
+            soup = html_or_soup
+
+        buzzers = {}
+        selects = soup.select('select[id*="buzzer_id"], select[name*="buzzer_id"]')
+        default_num = 1
+        for sel in selects:
+            for opt in sel.find_all('option'):
+                val = (opt.get('value') or '').strip()
+                if not val or not val.isdigit():
+                    continue
+                txt = opt.get_text(' ', strip=True)
+                m = re.search(r'(?:(\d+)\s*(?:урок|[.)])\s*)?[^(]*\(\s*(\d{1,2}:\d{2})(?:\s*[-–—]\s*(\d{1,2}:\d{2}))?\s*\)', txt, re.I)
+                if m:
+                    num = int(m.group(1)) if m.group(1) else default_num
+                    default_num = max(default_num, num) + 1
+                    try:
+                        s_time = datetime.strptime(m.group(2), '%H:%M').time()
+                        if m.group(3):
+                            e_time = datetime.strptime(m.group(3), '%H:%M').time()
+                        else:
+                            s_dt = datetime.combine(datetime.today(), s_time)
+                            e_time = (s_dt + timedelta(minutes=45)).time()
+                    except ValueError:
+                        continue
+                    is_sel = opt.has_attr('selected') or ('selected' in opt.attrs)
+                    buzzers[val] = {
+                        'buzzer_id': val,
+                        'number': num,
+                        'start_time': s_time,
+                        'end_time': e_time,
+                        'label': txt,
+                        'is_selected': is_sel,
+                    }
+        return buzzers
+
+    def fetch_lesson_schedule_details(self, nz_journal_id: str, nz_schedule_id: str) -> dict:
+        """
+        Завантажити деталі уроку з форми редагування nz.ua:
+        - buzzer_id (час уроку)
+        - room_id / назва кабінету
+        - lesson_type_id
+        """
+        url = f"{self.BASE_URL}/journal/add-edit-lesson?journal={nz_journal_id}&schedule={nz_schedule_id}"
+        try:
+            resp = self.session.get(url, timeout=10)
+            if resp.status_code != 200 or '/login' in str(resp.url) or 'LoginForm' in resp.text:
+                return {}
+            soup = BeautifulSoup(resp.text, 'html.parser')
+            buzzers = self._parse_buzzers(soup)
+            selected_buzzer = None
+            for b_id, b_info in buzzers.items():
+                if b_info.get('is_selected'):
+                    selected_buzzer = b_info
+                    break
+
+            if not selected_buzzer:
+                sel = soup.select_one('select[id*="buzzer_id"], select[name*="buzzer_id"]')
+                if sel:
+                    opt = sel.select_one('option[selected]')
+                    if opt and opt.get('value') in buzzers:
+                        selected_buzzer = buzzers[opt['value']]
+
+            room_name = ""
+            room_sel = soup.select_one('select[id*="room_id"], select[name*="room_id"]')
+            if room_sel:
+                r_opt = room_sel.select_one('option[selected]')
+                if r_opt:
+                    room_name = r_opt.get_text(strip=True)
+
+            return {
+                'buzzer': selected_buzzer,
+                'buzzers': buzzers,
+                'room': room_name,
+            }
+        except Exception as e:
+            logger.debug(f"fetch_lesson_schedule_details error for schedule {nz_schedule_id}: {e}")
+            return {}
+
+    def fetch_journal_data(self, nz_journal_id: str, nz_subgroup_id: str = "", html_content: str = None) -> dict:
         """
         Завантажити та розпарсити повний вміст журналу з nz.ua:
         - Список учнів (nz_student_id, ПІБ)
         - Список проведених уроків/колонок (nz_schedule_id, date, lesson_number, topic, homework)
         - Оцінки та відвідування (schedule_id, student_id -> mark_value / symbol)
+        - Розклад дзвінків (buzzers)
         """
-        url = f"{self.BASE_URL}/journal/index?journal={nz_journal_id}"
-        if nz_subgroup_id:
-            url += f"&subgroup={nz_subgroup_id}"
+        if html_content:
+            raw_html = html_content
+            self.extract_csrf(raw_html)
+        else:
+            url = f"{self.BASE_URL}/journal/index?journal={nz_journal_id}"
+            if nz_subgroup_id:
+                url += f"&subgroup={nz_subgroup_id}"
 
-        resp = self.session.get(url, timeout=20)
-        if resp.status_code != 200 or "/login" in resp.url or 'LoginForm' in resp.text:
-            raise NZAuthError("Сесія nz.ua недійсна.")
+            resp = self.session.get(url, timeout=20)
+            if resp.status_code != 200 or "/login" in resp.url or 'LoginForm' in resp.text:
+                raise NZAuthError("Сесія nz.ua недійсна.")
 
-        self.extract_csrf(resp.text)
-        soup = BeautifulSoup(resp.text, 'html.parser')
+            self.extract_csrf(resp.text)
+            raw_html = resp.text
+
+        soup = BeautifulSoup(raw_html, 'html.parser')
 
         table = soup.select_one('table.point-table')
         if not table:
             raise NZServiceError('Структуру журналу nz.ua не розпізнано. Локальні дані не змінено.')
+
+        # 0.5. Парсимо дзвінки (buzzers)
+        buzzers = self._parse_buzzers(soup)
+        if not buzzers and not html_content and self.session and self.session.cookies.get('PHPSESSID'):
+            try:
+                resp_add = self.session.get(f"{self.BASE_URL}/journal/add-edit-lesson?journal={nz_journal_id}", timeout=10)
+                if resp_add.status_code == 200 and '/login' not in str(resp_add.url):
+                    buzzers = self._parse_buzzers(resp_add.text)
+            except Exception:
+                pass
 
         # 0. Визначаємо базовий навчальний рік із селектора семестрів або поточної дати
         base_year = timezone.now().year
@@ -458,12 +577,66 @@ class NZService:
                 'nz_schedule_id': sch_id,
                 'date': parsed_date,
                 'lesson_number': parsed_num,
+                'lesson_time': None,
+                'buzzer_id': '',
+                'room': '',
                 'topic': hw_info.get('topic', ''),
                 'homework': hw_info.get('homework', ''),
                 'homework_due_date': hw_info.get('homework_due_date'),
                 'lesson_type': column_type,
             }
             lessons_data.append(lesson_obj)
+
+        # Перевіряємо форми уроків, якщо вони вже присутні в HTML сторінки
+        forms_by_sch = {}
+        for f in soup.find_all('form'):
+            action = f.get('action') or ''
+            m_sch = re.search(r'schedule=(\d+)', action)
+            if m_sch:
+                forms_by_sch[m_sch.group(1)] = f
+
+        for les in lessons_data:
+            s_id = les.get('nz_schedule_id')
+            if not s_id:
+                continue
+            f = forms_by_sch.get(s_id)
+            if f:
+                f_buzzers = self._parse_buzzers(f)
+                for b_val, b_info in f_buzzers.items():
+                    if b_info.get('is_selected'):
+                        les['buzzer_id'] = b_val
+                        les['lesson_number'] = b_info['number']
+                        les['lesson_time'] = b_info['start_time']
+                        break
+
+        # Якщо сесія активна онлайн — завантажуємо розклад уроків
+        if not html_content and self.session and self.session.cookies.get('PHPSESSID'):
+            schedule_cache = {}
+            for les in lessons_data:
+                s_id = les.get('nz_schedule_id')
+                if not s_id or les.get('lesson_time'):
+                    continue
+                wday = les['date'].weekday() if les.get('date') else None
+                if wday in schedule_cache:
+                    cached = schedule_cache[wday]
+                    les['buzzer_id'] = cached.get('buzzer_id', '')
+                    les['lesson_number'] = cached.get('lesson_number', les['lesson_number'])
+                    les['lesson_time'] = cached.get('lesson_time')
+                    continue
+                dtl = self.fetch_lesson_schedule_details(nz_journal_id, s_id)
+                if dtl and dtl.get('buzzer'):
+                    b = dtl['buzzer']
+                    les['buzzer_id'] = b['buzzer_id']
+                    les['lesson_number'] = b['number']
+                    les['lesson_time'] = b['start_time']
+                    if wday is not None:
+                        schedule_cache[wday] = {
+                            'buzzer_id': b['buzzer_id'],
+                            'lesson_number': b['number'],
+                            'lesson_time': b['start_time'],
+                        }
+                    if dtl.get('buzzers') and not buzzers:
+                        buzzers = dtl['buzzers']
 
         # 3. Список учнів та оцінки
         students_data = []
@@ -525,6 +698,7 @@ class NZService:
             'lessons': lessons_data,
             'marks': marks_data,
             'base_year': base_year,
+            'buzzers': buzzers,
         }
 
     @staticmethod
@@ -551,17 +725,19 @@ class NZService:
         nz_journal_id: str,
         local_journal: Journal,
         nz_subgroup_id: str = "",
-        user=None
+        user=None,
+        html_content: str = None
     ) -> dict:
         """
         Імпортувати дані з журналу nz.ua у локальний Journal:
         - Прив'язує nz_journal_id до локального журналу.
+        - Синхронізує розклад дзвінків школи (LessonTime).
         - Синхронізує навчальний рік та семестр.
         - Синхронізує учнів (зв'язує за ПІБ або створює).
-        - Синхронізує проведені уроки (nz_schedule_id, дата, тема, ДЗ).
+        - Синхронізує проведені уроки (nz_schedule_id, дата, час, номер, тема, ДЗ).
         - Завантажує оцінки та відвідування і позначає їх `is_synced_to_nz = True`.
         """
-        data = self.fetch_journal_data(nz_journal_id, nz_subgroup_id)
+        data = self.fetch_journal_data(nz_journal_id, nz_subgroup_id, html_content=html_content)
         Journal.objects.select_for_update().get(pk=local_journal.pk)
 
         local_journal.nz_journal_id = nz_journal_id
@@ -577,7 +753,37 @@ class NZService:
             'grades_synced': 0,
             'attendances_synced': 0,
             'local_changes_preserved': 0,
+            'lesson_times_synced': 0,
         }
+
+        # 0.1. Синхронізація часу дзвінків (LessonTime) школи
+        buzzers = data.get('buzzers', {})
+        lesson_times_synced = 0
+        if buzzers and local_journal.school:
+            school = local_journal.school
+            for b_val, b_data in buzzers.items():
+                b_num = b_data['number']
+                b_start = b_data['start_time']
+                b_end = b_data['end_time']
+                lt = LessonTime.objects.filter(school=school, number=b_num).first()
+                if not lt:
+                    lt = LessonTime.objects.filter(school=school, start_time=b_start).first()
+                if lt:
+                    lt.number = b_num
+                    lt.start_time = b_start
+                    lt.end_time = b_end
+                    lt.is_active = True
+                    lt.save()
+                else:
+                    LessonTime.objects.create(
+                        school=school,
+                        number=b_num,
+                        start_time=b_start,
+                        end_time=b_end,
+                        is_active=True
+                    )
+                lesson_times_synced += 1
+        stats['lesson_times_synced'] = lesson_times_synced
 
         # 0. Перевірка та оновлення навчального року і семестрів локального журналу
         lesson_dates = [l['date'] for l in data['lessons'] if l.get('date')]
@@ -682,10 +888,38 @@ class NZService:
                 continue
 
             sch_id = l_info.get('nz_schedule_id', '')
-            l_num = l_info.get('lesson_number', 1)
+            l_num = l_info.get('lesson_number')
+            l_time = l_info.get('lesson_time')
             lesson_type = l_info.get('lesson_type', LessonType.ORDINARY)
             topic = l_info.get('topic') or (dict(LessonType.choices)[lesson_type] if lesson_type != LessonType.ORDINARY else f"Урок {l_idx}")
             hw = l_info.get('homework') or ""
+
+            # 1) Якщо час не отримано напряму з nz.ua, шукаємо у тижневому розкладі журналу
+            if l_time is None:
+                sched_entry = local_journal.weekly_schedule.filter(
+                    weekday=l_date.weekday(),
+                    start_date__lte=l_date,
+                    end_date__gte=l_date
+                ).first()
+                if not sched_entry:
+                    sched_entry = local_journal.weekly_schedule.filter(weekday=l_date.weekday()).first()
+                if sched_entry:
+                    l_time = sched_entry.lesson_time.start_time
+                    l_num = sched_entry.lesson_time.number
+
+            # 2) Якщо час ще не визначено, але є номер уроку
+            if l_time is None and l_num:
+                matching_lt = LessonTime.objects.filter(school=local_journal.school, number=l_num).first()
+                if matching_lt:
+                    l_time = matching_lt.start_time
+
+            # 3) Якщо і номер уроку не визначено
+            if not l_num:
+                l_num = 1
+                if l_time is None:
+                    first_lt = LessonTime.objects.filter(school=local_journal.school, number=1).first()
+                    if first_lt:
+                        l_time = first_lt.start_time
 
             # Визначаємо семестр для уроку
             sem = None
@@ -713,6 +947,8 @@ class NZService:
                     lesson.lesson_number = l_num if not occupied.filter(lesson_number=l_num).exists() else (occupied.aggregate(last=Max('lesson_number'))['last'] or 0) + 1
                 elif lesson.lesson_number != l_num and not occupied.filter(lesson_number=l_num).exists():
                     lesson.lesson_number = l_num
+                if l_time is not None:
+                    lesson.lesson_time = l_time
                 if lesson.is_synced_to_nz:
                     lesson.topic = topic
                     lesson.homework = hw
@@ -735,6 +971,7 @@ class NZService:
                     journal=local_journal,
                     date=l_date,
                     lesson_number=l_num,
+                    lesson_time=l_time,
                     semester=sem,
                     topic=topic,
                     homework=hw,
@@ -752,6 +989,24 @@ class NZService:
                 lesson_map[sch_id] = lesson
             lesson_map[l_date] = lesson
             lesson_map[(l_date, l_num)] = lesson
+
+        # Автоматично формуємо записи тижневого розкладу, якщо для журналу розклад ще не налаштовано
+        if local_journal.weekly_schedule.count() == 0 and local_journal.academic_year:
+            seen_slots = set()
+            for les in local_journal.lessons.filter(lesson_time__isnull=False):
+                wday = les.date.weekday()
+                t = les.lesson_time
+                if (wday, t) not in seen_slots:
+                    seen_slots.add((wday, t))
+                    slot_lt = LessonTime.objects.filter(school=local_journal.school, start_time=t).first()
+                    if slot_lt:
+                        WeeklyScheduleEntry.objects.create(
+                            journal=local_journal,
+                            weekday=wday,
+                            lesson_time=slot_lt,
+                            start_date=local_journal.academic_year.start_date,
+                            end_date=local_journal.academic_year.end_date,
+                        )
 
         # 3. Оцінки та відвідування
         for m in data['marks']:
@@ -929,8 +1184,6 @@ class NZService:
 
     @staticmethod
     def _homework_sync_warning(lesson):
-        if lesson.lesson_time:
-            return 'Синхронізацію часу ще не підтверджено. Встановіть час у nz.ua.'
         if lesson.homework and (lesson.homework_for_next_lesson or lesson.homework_due_lesson_id or lesson.homework_due_plan_topic_id):
             due = NZService._due_lesson(lesson)
             if not due or not due.nz_schedule_id:
@@ -1027,6 +1280,15 @@ class NZService:
             lower = field_name.lower()
             if any(k in lower for k in ['lesson_num', 'lesson_number', 'lesson_order', 'num_lesson', 'lessonnum']):
                 payload[field_name] = str(lesson.lesson_number)
+            if 'buzzer_id' in lower:
+                buzzers = self._parse_buzzers(form)
+                for b_id, b_info in buzzers.items():
+                    if lesson.lesson_time and b_info['start_time'] == lesson.lesson_time:
+                        payload[field_name] = b_id
+                        break
+                    elif lesson.lesson_number and b_info['number'] == lesson.lesson_number:
+                        payload[field_name] = b_id
+                        break
         payload.update(self._homework_target_fields(lesson, post_url, soup=form))
         return payload
 

@@ -285,13 +285,22 @@ def nz_journal_import_view(request, journal_id=None):
         messages.error(request, err_msg)
         return redirect('portal:journal_detail', journal_id=local_journal.id)
 
-    service = NZService.from_account(account)
+    html_file = request.FILES.get('html_file')
+    html_content = None
+    if html_file:
+        try:
+            html_content = html_file.read().decode('utf-8', errors='replace')
+        except Exception:
+            pass
+
+    service = NZService.from_account(account) if account else NZService()
     try:
         stats = service.import_journal_to_local(
             nz_journal_id=nz_journal_id,
             local_journal=local_journal,
             nz_subgroup_id=nz_subgroup_id,
-            user=request.user
+            user=request.user,
+            html_content=html_content
         )
         msg = (
             f"Журнал «{local_journal.student_class.name} — {local_journal.subject.name}» успішно завантажено з nz.ua! "
@@ -300,6 +309,8 @@ def nz_journal_import_view(request, journal_id=None):
             f"оцінок: {stats['grades_synced']}, "
             f"відвідувань: {stats['attendances_synced']}."
         )
+        if stats.get('lesson_times_synced'):
+            msg += f" Розклад дзвінків: {stats['lesson_times_synced']}."
         if stats.get('local_changes_preserved'):
             msg += f" Локальні зміни збережено без перезапису: {stats['local_changes_preserved']}."
         if is_ajax:

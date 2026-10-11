@@ -71,19 +71,28 @@
           </div>
         {% else %}
           <!-- Блок швидких дій завантаження з nz.ua -->
-          <div style="display: flex; gap: 0.75rem; align-items: center; justify-content: space-between; padding: 0.75rem 1rem; border-radius: 8px; background: #f0fdf4; border: 1px solid #bbf7d0; margin-bottom: 1.25rem;">
-            <div>
-              <div style="font-weight: 600; font-size: 0.92rem; color: #166534;">
-                Оновлення журналу з nz.ua
+          <div style="display: flex; flex-direction: column; gap: 0.65rem; padding: 0.85rem 1rem; border-radius: 8px; background: #f0fdf4; border: 1px solid #bbf7d0; margin-bottom: 1.25rem;">
+            <div style="display: flex; gap: 0.75rem; align-items: center; justify-content: space-between;">
+              <div>
+                <div style="font-weight: 600; font-size: 0.92rem; color: #166534;">
+                  Оновлення журналу з nz.ua
+                </div>
+                <div style="font-size: 0.8rem; color: #15803d;">
+                  Завантажити свіжі оцінки, розклад дзвінків, теми уроків і список учнів із сайту nz.ua.
+                </div>
               </div>
-              <div style="font-size: 0.8rem; color: #15803d;">
-                Завантажити свіжі оцінки, теми уроків і список учнів із сайту nz.ua у цей журнал.
+              <div style="display: flex; gap: 0.5rem; align-items: center;">
+                <button type="button" id="nzModalPullBtn" class="btn btn-sm btn-success" onclick="pullNzJournal({{ journal.id }})" style="font-weight: 600; white-space: nowrap;">
+                  ⤓ Завантажити з nz.ua
+                </button>
               </div>
             </div>
-            <div>
-              <button type="button" id="nzModalPullBtn" class="btn btn-sm btn-success" onclick="pullNzJournal({{ journal.id }})" style="font-weight: 600; white-space: nowrap;">
-                ⤓ Завантажити оцінки з nz.ua
-              </button>
+            <div style="border-top: 1px dashed #bbf7d0; padding-top: 0.5rem; display: flex; align-items: center; justify-content: space-between; gap: 0.75rem;">
+              <span style="font-size: 0.8rem; color: #15803d;">Або імпортувати зі збереженої HTML-сторінки nz.ua:</span>
+              <label class="btn btn-sm btn-outline-success" style="margin: 0; cursor: pointer; font-size: 0.8rem; white-space: nowrap;">
+                📁 Обрати HTML-файл
+                <input type="file" id="nzHtmlFileInput" accept=".html,.htm" style="display: none;" onchange="pullNzJournalFromFile({{ journal.id }}, this)">
+              </label>
             </div>
           </div>
         {% endif %}

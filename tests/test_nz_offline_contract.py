@@ -10,6 +10,7 @@ from django.urls import reverse
 
 from apps.accounts.models import User
 from apps.accounts.nz_trust import COOKIE
+from apps.curriculum.models import LessonTime, WeeklyScheduleEntry
 from apps.journals.models import Lesson, Grade, Attendance, NZAccount, LessonPlanTopic
 from apps.journals.services.nz_service import NZService, NZServiceError, NZAuthError
 from tests import test_journal_workflows as fixtures
@@ -296,3 +297,120 @@ class NZOfflineContractTests(TestCase):
         login.assert_called_once_with(account.login, ' synthetic-password ')
         account.refresh_from_db()
         self.assertNotIn('synthetic-password', str(account.cookies))
+
+    def test_parse_buzzers_from_html_and_sync_lesson_times(self):
+        service = NZService()
+        sample_html = """
+        <select id="osvitaschedulereal-buzzer_id" name="OsvitaScheduleReal[buzzer_id]">
+            <option value=""></option>
+            <option value="101">1 урок (08:35 - 09:20)</option>
+            <option value="102">2 урок (09:30 - 10:15)</option>
+            <option value="103">3 урок (10:30 — 11:15)</option>
+        </select>
+        <table class="point-table">
+            <thead>
+                <tr>
+                    <td class="pt-point">
+                        <a href="/journal/add-edit-lesson?journal=7001&schedule=501">1</a>
+                        <span class="pt-month">Вер.</span>
+                    </td>
+                    <td class="pt-point">
+                        <a href="/journal/add-edit-lesson?journal=7001&schedule=502">4</a>
+                    </td>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td class="pt-theme" data-student-id="9001">Тестовий Учень</td>
+                    <td class="pt-point"><input value="10" data-mark-id="1"></td>
+                    <td class="pt-point"><input value="11" data-mark-id="2"></td>
+                </tr>
+            </tbody>
+        </table>
+        <form action="/journal/add-edit-lesson?journal=7001&schedule=501">
+            <select name="OsvitaScheduleReal[buzzer_id]">
+                <option value="102" selected>2 урок (09:30 - 10:15)</option>
+            </select>
+        </form>
+        """
+        parsed_buzzers = service._parse_buzzers(sample_html)
+        self.assertEqual(len(parsed_buzzers), 3)
+        self.assertEqual(parsed_buzzers['101']['number'], 1)
+        self.assertEqual(parsed_buzzers['101']['start_time'], dt.time(8, 35))
+        self.assertEqual(parsed_buzzers['101']['end_time'], dt.time(9, 20))
+        self.assertEqual(parsed_buzzers['103']['number'], 3)
+        self.assertEqual(parsed_buzzers['103']['start_time'], dt.time(10, 30))
+
+        # Import to local journal
+        stats = service.import_journal_to_local('7001', self.journal, html_content=sample_html, user=self.teacher)
+        self.assertEqual(stats['lesson_times_synced'], 3)
+        self.assertEqual(LessonTime.objects.filter(school=self.school).count(), 3)
+        lt1 = LessonTime.objects.get(school=self.school, number=1)
+        self.assertEqual(lt1.start_time, dt.time(8, 35))
+        self.assertEqual(lt1.end_time, dt.time(9, 20))
+
+        # Lesson 501 had the embedded form with selected buzzer 102 (number 2, 09:30)
+        l501 = self.journal.lessons.get(nz_schedule_id='501')
+        self.assertEqual(l501.lesson_number, 2)
+        self.assertEqual(l501.lesson_time, dt.time(9, 30))
+
+        # Timetable check
+        from apps.curriculum.timetable import build_week_schedule
+        days, rows = build_week_schedule(self.school, [self.journal], dt.date(2026, 8, 31))
+        # The lesson should be in row with 09:30, NOT in "Без часу"
+        time_rows = [r for r in rows if r['time'] == dt.time(9, 30)]
+        self.assertEqual(len(time_rows), 1)
+        t_cell_items = [it for c in time_rows[0]['cells'] for it in c['items']]
+        self.assertTrue(any(it['kind'] == 'recorded' for it in t_cell_items))
+
+    def test_weekly_schedule_fallback_and_auto_alignment(self):
+        # Configure weekly schedule for Tuesday (weekday 1) -> 3rd lesson
+        lt3 = LessonTime.objects.create(school=self.school, number=3, start_time=dt.time(10, 30), end_time=dt.time(11, 15))
+        WeeklyScheduleEntry.objects.create(
+            journal=self.journal,
+            weekday=1,  # Tuesday
+            lesson_time=lt3,
+            start_date=dt.date(2026, 9, 1),
+            end_date=dt.date(2027, 6, 30)
+        )
+        service = NZService()
+        html = """
+        <table class="point-table">
+            <thead>
+                <tr>
+                    <td class="pt-point">
+                        <a href="/journal/add-edit-lesson?journal=7001&schedule=601">1</a>
+                        <span class="pt-month">Вер.</span>
+                    </td>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td class="pt-theme" data-student-id="9001">Тестовий Учень</td>
+                    <td class="pt-point"><input value="12" data-mark-id="3"></td>
+                </tr>
+            </tbody>
+        </table>
+        """
+        # 1 Sep 2026 is Tuesday (weekday 1)
+        service.import_journal_to_local('7001', self.journal, html_content=html, user=self.teacher)
+        l601 = self.journal.lessons.get(nz_schedule_id='601')
+        self.assertEqual(l601.date, dt.date(2026, 9, 1))
+        self.assertEqual(l601.lesson_number, 3)
+        self.assertEqual(l601.lesson_time, dt.time(10, 30))
+
+    def test_real_journal_9g_html_parsing(self):
+        real_file = Path('/home/flinux/Документи/allWork/schooljournal/nz.uz/Журнал 9-Г _ Нові знання.html')
+        if not real_file.exists():
+            return
+        service = NZService()
+        html = real_file.read_text(encoding='utf-8')
+        data = service.fetch_journal_data('14904615', html_content=html)
+        self.assertIn('buzzers', data)
+        self.assertEqual(len(data['buzzers']), 8)
+        self.assertEqual(data['buzzers']['9788288']['number'], 1)
+        self.assertEqual(data['buzzers']['9788288']['start_time'], dt.time(8, 35))
+        self.assertEqual(data['buzzers']['9788299']['number'], 8)
+        self.assertEqual(data['buzzers']['9788299']['start_time'], dt.time(15, 20))
+        self.assertEqual(len(data['lessons']), 9)
+
