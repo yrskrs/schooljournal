@@ -37,6 +37,11 @@ print(j.pk)""")
                 connections[service]=connection
                 assert code(service, "from app.config import settings;print(settings.ROSTER_PEERS)" if service=='test' else "from django.conf import settings;print(settings.ROSTER_PEERS)")=='[]'
             assert code('journal',f'from apps.journals.models import Grade;print(Grade.objects.filter(lesson__journal_id={journal_id}).count())')=='0'
+            key=code('journal',f"from apps.journals.models import GradeAPIConnection;print(GradeAPIConnection.objects.get(pk={connections['work']['id']}).api_key)")
+            response=h['SESSIONS']['work'].post(h['BASE']['work']+'/api/v1/journal/roster/',
+                headers={'Authorization':'Bearer '+key},json={'classes':[{'name':'10-В','students':[]}]},timeout=25)
+            assert response.status_code==409,(response.status_code,response.text[:150])
+            log('legacy name-only API rejects roster writes after the simple one-key copy, without peers; stable pupil mappings stay protected')
             log('one existing teacher key per source copies a new journal class and names into both native DBs; no peers, numeric input or grades during setup')
             code('test', """from app.database import SessionLocal
 from app.models import Test,TestSession
