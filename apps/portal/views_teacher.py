@@ -59,9 +59,19 @@ def teacher_dashboard(request):
             Lesson.objects.filter(journal=j, is_synced_to_nz=False, is_ignored_for_nz=False).count()
         )
 
-    # Групування журналів за блоками класів із можливістю впорядкування
+    # Впорядкування журналів-плиток за збереженим порядком вчителя
     profile, _ = TeacherProfile.objects.get_or_create(user=request.user)
-    saved_order = profile.class_order or []
+    saved_journal_order = profile.journal_order or []
+    saved_class_order = profile.class_order or []
+
+    def journal_sort_key(j):
+        if saved_journal_order and j.id in saved_journal_order:
+            return (0, saved_journal_order.index(j.id))
+        if saved_class_order and j.student_class_id in saved_class_order:
+            return (1, saved_class_order.index(j.student_class_id), j.subject.name)
+        return (2, j.student_class.grade_level, j.student_class.name, j.subject.name)
+
+    my_journals = sorted(my_journals, key=journal_sort_key)
 
     class_groups = OrderedDict()
     for j in my_journals:
@@ -73,13 +83,7 @@ def teacher_dashboard(request):
             }
         class_groups[sc.id]['journals'].append(j)
 
-    def class_sort_key(item):
-        cid, data = item
-        if cid in saved_order:
-            return (0, saved_order.index(cid))
-        return (1, data['student_class'].grade_level, data['student_class'].name)
-
-    class_blocks = [data for _, data in sorted(class_groups.items(), key=class_sort_key)]
+    class_blocks = list(class_groups.values())
 
     context = {
         'my_journals': my_journals,
@@ -108,8 +112,53 @@ def update_class_order(request):
 
     valid_ids = [int(cid) for cid in class_ids if str(cid).isdigit()]
     profile.class_order = valid_ids
-    profile.save(update_fields=['class_order'])
+    profile.journal_order = []
+    profile.save(update_fields=['class_order', 'journal_order'])
     return JsonResponse({'status': 'ok', 'class_order': valid_ids})
+
+
+@login_required
+def update_journal_order(request):
+    """Оновлення послідовності розміщення журналів (плиток) за допомогою перенесення (drag & drop)."""
+    if request.method != 'POST':
+        return JsonResponse({'status': 'error', 'message': 'Метод не підтримується'}, status=405)
+
+    profile, _ = TeacherProfile.objects.get_or_create(user=request.user)
+    try:
+        data = json.loads(request.body.decode('utf-8'))
+        journal_ids = data.get('journal_ids', [])
+        class_ids = data.get('class_ids', [])
+    except Exception:
+        journal_ids = request.POST.getlist('journal_ids[]') or request.POST.getlist('journal_ids')
+        class_ids = request.POST.getlist('class_ids[]') or request.POST.getlist('class_ids')
+
+    valid_journal_ids = [int(jid) for jid in journal_ids if str(jid).isdigit()]
+    profile.journal_order = valid_journal_ids
+
+    if class_ids:
+        valid_class_ids = [int(cid) for cid in class_ids if str(cid).isdigit()]
+        profile.class_order = valid_class_ids
+    else:
+        teacher_journals = Journal.objects.filter(
+            school=request.user.school,
+            teacher=request.user,
+            id__in=valid_journal_ids
+        ).select_related('student_class')
+        journal_map = {j.id: j.student_class_id for j in teacher_journals}
+        derived_class_ids = []
+        for jid in valid_journal_ids:
+            cid = journal_map.get(jid)
+            if cid and cid not in derived_class_ids:
+                derived_class_ids.append(cid)
+        if derived_class_ids:
+            profile.class_order = derived_class_ids
+
+    profile.save(update_fields=['journal_order', 'class_order'])
+    return JsonResponse({
+        'status': 'ok',
+        'journal_order': valid_journal_ids,
+        'class_order': profile.class_order
+    })
 
 
 @login_required

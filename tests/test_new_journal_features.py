@@ -213,6 +213,48 @@ class NewJournalFeaturesTests(TestCase):
         self.assertEqual(blocks_after[0]['student_class'].name, '9-А')
         self.assertEqual(blocks_after[1]['student_class'].name, '8-Б')
 
+    def test_drag_and_drop_journal_tiles_reordering(self):
+        """Тест: перенесення (drag & drop) журналів-плиток на дашборді."""
+        class_8 = StudentClass.objects.create(
+            school=self.school, academic_year=self.year, name='8-Б', grade_level=8, letter='Б'
+        )
+        journal_8 = Journal.objects.create(
+            school=self.school, academic_year=self.year, student_class=class_8,
+            subject=self.subject, teacher=self.teacher
+        )
+        TeacherAssignment.objects.create(
+            school=self.school, teacher=self.teacher, student_class=self.student_class,
+            subject=self.subject, academic_year=self.year
+        )
+        TeacherAssignment.objects.create(
+            school=self.school, teacher=self.teacher, student_class=class_8,
+            subject=self.subject, academic_year=self.year
+        )
+
+        dash_url = reverse('portal:teacher_dashboard')
+        resp = self.client.get(dash_url)
+        self.assertEqual(resp.status_code, 200)
+        # Перевіряємо розмітку плитками та підтримку drag & drop
+        self.assertContains(resp, 'id="journalsGrid"')
+        self.assertContains(resp, 'journal-tile-card')
+        self.assertContains(resp, 'draggable="true"')
+
+        # Змінюємо порядок перетягуванням (journal_8 першим, self.journal другим)
+        reorder_url = reverse('portal:update_journal_order')
+        resp_post = self.client.post(reorder_url, json.dumps({
+            'journal_ids': [journal_8.id, self.journal.id]
+        }), content_type='application/json')
+        self.assertEqual(resp_post.status_code, 200)
+
+        profile = TeacherProfile.objects.get(user=self.teacher)
+        self.assertEqual(profile.journal_order, [journal_8.id, self.journal.id])
+
+        # Перевіряємо що в контексті дашборду журнали розташовані у новому порядку
+        resp_after = self.client.get(dash_url)
+        journals_after = resp_after.context['my_journals']
+        self.assertEqual(journals_after[0].id, journal_8.id)
+        self.assertEqual(journals_after[1].id, self.journal.id)
+
     def test_student_number_action_menu_in_journal_detail(self):
         """5. Тест: пункт 🚫 Ігнорувати перенесено до номерації учня."""
         detail_url = reverse('portal:journal_detail', args=[self.journal.pk])

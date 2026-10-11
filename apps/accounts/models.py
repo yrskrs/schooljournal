@@ -100,6 +100,11 @@ class TeacherProfile(models.Model):
         blank=True,
         verbose_name="Порядок класів на дашборді"
     )
+    journal_order = models.JSONField(
+        default=list,
+        blank=True,
+        verbose_name="Порядок журналів на дашборді"
+    )
 
     class Meta:
         verbose_name = "Профіль вчителя"

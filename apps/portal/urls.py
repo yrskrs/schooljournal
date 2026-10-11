@@ -44,6 +44,7 @@ urlpatterns = [
     # Кабінет вчителя
     path('teacher-portal/', views_teacher.teacher_dashboard, name='teacher_dashboard'),
     path('teacher-portal/update-class-order/', views_teacher.update_class_order, name='update_class_order'),
+    path('teacher-portal/update-journal-order/', views_teacher.update_journal_order, name='update_journal_order'),
     path('teacher-portal/schedule/', views_schedule.weekly_schedule, name='weekly_schedule'),
     path('teacher-portal/lesson-times/', views_schedule.lesson_times, name='lesson_times'),
     path('teacher-portal/api-keys/', views_connection_setup.teacher_api_keys, name='teacher_api_keys'),

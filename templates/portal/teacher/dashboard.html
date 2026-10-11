@@ -73,100 +73,81 @@
       Мої навчальні журнали
     </h2>
     <span style="font-size: 0.85rem; color: var(--text-muted);">
-      Ви можете змінювати послідовність блоків класів кнопками «▲ Вгору» та «▼ Вниз»
+      Ви можете змінювати послідовність журналів перетягуванням плиток
     </span>
   </div>
 
-  <div id="classBlocksList" style="display: flex; flex-direction: column; gap: 1.5rem;">
-    {% for block in class_blocks %}
-      <div class="class-block-section card" data-class-id="{{ block.student_class.id }}" style="margin-bottom: 0; padding: 1.25rem; border: 1px solid var(--border); border-radius: var(--radius-md); background: #ffffff; box-shadow: var(--shadow-sm);">
-        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; padding-bottom: 0.65rem; border-bottom: 2px solid #e2e8f0; flex-wrap: wrap; gap: 0.5rem;">
-          <div style="display: flex; align-items: center; gap: 0.65rem;">
-            <span style="display: inline-block; width: 10px; height: 10px; border-radius: 50%; background: var(--primary);"></span>
-            <h3 style="margin: 0; font-size: 1.2rem; font-weight: 700; color: var(--primary-dark);">
-              {{ block.student_class.name }} клас
-            </h3>
-            <span class="user-role-pill" style="font-size: 0.8rem; background: var(--primary-light); color: var(--primary-dark);">
-              {{ block.journals|length }} {% if block.journals|length == 1 %}журнал{% elif block.journals|length < 5 %}журнали{% else %}журналів{% endif %}
-            </span>
+  <div id="journalsGrid" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 1.25rem;">
+    {% for j in my_journals %}
+      <div class="card journal-tile-card"
+           data-journal-id="{{ j.id }}"
+           data-class-id="{{ j.student_class.id }}"
+           draggable="true"
+           style="margin-bottom: 0; display: flex; flex-direction: column; justify-content: space-between; cursor: grab; user-select: none; transition: transform 0.15s ease, box-shadow 0.15s ease, opacity 0.15s ease;">
+        <div>
+          <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 0.75rem;">
+            <div style="display: flex; gap: 0.35rem; align-items: center; flex-wrap: wrap;">
+              <span class="user-role-pill" style="font-size: 0.85rem; font-weight: 700; padding: 0.2rem 0.6rem; background: var(--primary-light); color: var(--primary-dark);">
+                {{ j.student_class.name }}
+              </span>
+              {% if j.nz_journal_id %}
+                <span class="user-role-pill" style="font-size: 0.75rem; font-weight: 600; background: #e0f2fe; color: #0369a1;" title="Прив'язано до nz.ua (ID: {{ j.nz_journal_id }})">
+                  nz.ua
+                </span>
+              {% endif %}
+              <span class="drag-handle-hint" title="Перетягніть плитку для зміни послідовності" style="color: var(--text-muted); cursor: grab; font-size: 0.9rem; padding: 0 4px; display: inline-flex; align-items: center;">
+                ⠿
+              </span>
+            </div>
+            <div style="display: flex; gap: 0.35rem; align-items: center;">
+              {% if j.nz_journal_id and j.unsynced_count > 0 %}
+                <span class="badge" style="background-color: #f59e0b; color: white; font-size: 0.75rem; padding: 0.2rem 0.5rem; border-radius: 4px;" title="Незбережені зміни для nz.ua">
+                  {{ j.unsynced_count }} незб.
+                </span>
+              {% endif %}
+              {% if j.is_archived %}
+                <span class="user-role-pill" style="background-color: var(--danger-bg); color: var(--danger);">
+                  Архівний
+                </span>
+              {% else %}
+                <span class="user-role-pill" style="background-color: var(--success-bg); color: var(--success);">
+                  Активний
+                </span>
+              {% endif %}
+            </div>
           </div>
-          <div style="display: flex; gap: 0.35rem; align-items: center;">
-            <button type="button" class="btn btn-outline-secondary btn-sm" onclick="moveClassBlock(this, -1)" title="Перемістити блок класу вище" style="font-size: 0.78rem; padding: 2px 8px; font-weight: 600;">
-              ▲ Вгору
-            </button>
-            <button type="button" class="btn btn-outline-secondary btn-sm" onclick="moveClassBlock(this, 1)" title="Перемістити блок класу нижче" style="font-size: 0.78rem; padding: 2px 8px; font-weight: 600;">
-              ▼ Вниз
-            </button>
+
+          <h3 style="font-size: 1.18rem; font-weight: 700; color: var(--primary-dark); margin-bottom: 0.35rem;">
+            {{ j.subject.name }}
+          </h3>
+          <p style="font-size: 0.83rem; color: var(--text-muted); margin-bottom: 0.75rem;">
+            Навчальний рік: {{ j.academic_year.name }}
+          </p>
+
+          <div style="display: flex; gap: 1rem; font-size: 0.85rem; color: var(--text-main); padding: 0.5rem 0; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); margin-bottom: 0.85rem;">
+            <div>
+              <strong>{{ j.lessons.count }}</strong> <span style="color: var(--text-muted);">уроків</span>
+            </div>
+            <div>
+              <strong>{{ j.student_class.enrollments.count }}</strong> <span style="color: var(--text-muted);">учнів</span>
+            </div>
           </div>
         </div>
 
-        <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 1.25rem;">
-          {% for j in block.journals %}
-            <div class="card" style="margin-bottom: 0; border: 1px solid #e2e8f0; display: flex; flex-direction: column; justify-content: space-between; transition: transform 0.15s ease, box-shadow 0.15s ease;">
-              <div>
-                <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 0.75rem;">
-                  <div style="display: flex; gap: 0.35rem; align-items: center; flex-wrap: wrap;">
-                    <span class="user-role-pill" style="font-size: 0.85rem; font-weight: 700; padding: 0.2rem 0.6rem; background: var(--primary-light); color: var(--primary-dark);">
-                      {{ j.student_class.name }}
-                    </span>
-                    {% if j.nz_journal_id %}
-                      <span class="user-role-pill" style="font-size: 0.75rem; font-weight: 600; background: #e0f2fe; color: #0369a1;" title="Прив'язано до nz.ua (ID: {{ j.nz_journal_id }})">
-                        nz.ua
-                      </span>
-                    {% endif %}
-                  </div>
-                  <div style="display: flex; gap: 0.35rem; align-items: center;">
-                    {% if j.nz_journal_id and j.unsynced_count > 0 %}
-                      <span class="badge" style="background-color: #f59e0b; color: white; font-size: 0.75rem; padding: 0.2rem 0.5rem; border-radius: 4px;" title="Незбережені зміни для nz.ua">
-                        {{ j.unsynced_count }} незб.
-                      </span>
-                    {% endif %}
-                    {% if j.is_archived %}
-                      <span class="user-role-pill" style="background-color: var(--danger-bg); color: var(--danger);">
-                        Архівний
-                      </span>
-                    {% else %}
-                      <span class="user-role-pill" style="background-color: var(--success-bg); color: var(--success);">
-                        Активний
-                      </span>
-                    {% endif %}
-                  </div>
-                </div>
-
-                <h3 style="font-size: 1.18rem; font-weight: 700; color: var(--primary-dark); margin-bottom: 0.35rem;">
-                  {{ j.subject.name }}
-                </h3>
-                <p style="font-size: 0.83rem; color: var(--text-muted); margin-bottom: 0.75rem;">
-                  Навчальний рік: {{ j.academic_year.name }}
-                </p>
-
-                <div style="display: flex; gap: 1rem; font-size: 0.85rem; color: var(--text-main); padding: 0.5rem 0; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); margin-bottom: 0.85rem;">
-                  <div>
-                    <strong>{{ j.lessons.count }}</strong> <span style="color: var(--text-muted);">уроків</span>
-                  </div>
-                  <div>
-                    <strong>{{ j.student_class.enrollments.count }}</strong> <span style="color: var(--text-muted);">учнів</span>
-                  </div>
-                </div>
-              </div>
-
-              <div style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
-                <a href="{% url 'portal:journal_detail' journal_id=j.id %}" class="btn btn-primary" style="flex: 1;">
-                  Відкрити журнал &rarr;
-                </a>
-                <a href="{% url 'portal:export_journal_xlsx' journal_id=j.id %}" class="btn btn-secondary btn-sm" title="Експорт в Excel">
-                  XLSX
-                </a>
-                <a href="{% url 'portal:export_journal_pdf' journal_id=j.id %}" class="btn btn-secondary btn-sm" title="Друкований PDF">
-                  PDF
-                </a>
-              </div>
-            </div>
-          {% endfor %}
+        <div style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
+          <a href="{% url 'portal:journal_detail' journal_id=j.id %}" class="btn btn-primary" style="flex: 1;" draggable="false">
+            Відкрити журнал &rarr;
+          </a>
+          <a href="{% url 'portal:export_journal_xlsx' journal_id=j.id %}" class="btn btn-secondary btn-sm" title="Експорт в Excel" draggable="false">
+            XLSX
+          </a>
+          <a href="{% url 'portal:export_journal_pdf' journal_id=j.id %}" class="btn btn-secondary btn-sm" title="Друкований PDF" draggable="false">
+            PDF
+          </a>
         </div>
       </div>
     {% empty %}
-      <div class="card" style="padding: 2.5rem; text-align: center;">
+      <div class="card" style="grid-column: 1 / -1; padding: 2.5rem; text-align: center;">
         <h3 style="color: var(--primary-dark); margin-bottom: 0.5rem;">У вас ще немає створених журналів</h3>
         <p style="color: var(--text-muted); margin-bottom: 1.25rem;">
           Створіть свій перший журнал для призначеного класу та предмета.
@@ -286,57 +267,107 @@ function toggleAuthFields(val) {
   }
 }
 
-function moveClassBlock(btn, direction) {
-  const block = btn.closest('.class-block-section');
-  if (!block) return;
-  const container = document.getElementById('classBlocksList');
-  if (!container) return;
+// Перетягування (Drag & Drop) плиток навчальних журналів
+(function initJournalDragAndDrop() {
+  const grid = document.getElementById('journalsGrid');
+  if (!grid) return;
 
-  if (direction === -1) {
-    const prev = block.previousElementSibling;
-    if (prev && prev.classList.contains('class-block-section')) {
-      container.insertBefore(block, prev);
-      saveClassOrder();
-    }
-  } else if (direction === 1) {
-    const next = block.nextElementSibling;
-    if (next && next.classList.contains('class-block-section')) {
-      container.insertBefore(next, block);
-      saveClassOrder();
-    }
-  }
-}
+  let draggedCard = null;
 
-function saveClassOrder() {
-  const container = document.getElementById('classBlocksList');
-  if (!container) return;
-  const blocks = container.querySelectorAll('.class-block-section');
-  const classIds = [];
-  blocks.forEach(function(b) {
-    const cid = b.getAttribute('data-class-id');
-    if (cid) classIds.push(cid);
+  grid.addEventListener('dragstart', function(e) {
+    if (e.target.closest('a, button, input')) {
+      e.preventDefault();
+      return;
+    }
+    const card = e.target.closest('.journal-tile-card');
+    if (!card) return;
+    draggedCard = card;
+    card.classList.add('is-dragging');
+    card.style.opacity = '0.45';
+    card.style.transform = 'scale(0.98)';
+    e.dataTransfer.effectAllowed = 'move';
+    try {
+      e.dataTransfer.setData('text/plain', card.getAttribute('data-journal-id') || '');
+    } catch(err) {}
   });
 
-  fetch("{% url 'portal:update_class_order' %}", {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'X-CSRFToken': '{{ csrf_token }}',
-      'X-Requested-With': 'XMLHttpRequest'
-    },
-    body: JSON.stringify({ class_ids: classIds })
-  })
-  .then(function(res) { return res.json(); })
-  .then(function(data) {
-    if (data.status === 'ok') {
-      if (typeof showToast === 'function') {
-        showToast('Порядок блоків класів збережено', 'success');
+  grid.addEventListener('dragend', function(e) {
+    if (draggedCard) {
+      draggedCard.classList.remove('is-dragging');
+      draggedCard.style.opacity = '';
+      draggedCard.style.transform = '';
+    }
+    grid.querySelectorAll('.journal-tile-card').forEach(function(c) {
+      c.style.outline = '';
+    });
+    draggedCard = null;
+  });
+
+  grid.addEventListener('dragover', function(e) {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    const target = e.target.closest('.journal-tile-card');
+    if (!target || target === draggedCard) return;
+
+    const rect = target.getBoundingClientRect();
+    const isAfter = (e.clientX - rect.left) > (rect.width / 2);
+
+    if (isAfter) {
+      if (target.nextSibling !== draggedCard) {
+        grid.insertBefore(draggedCard, target.nextSibling);
+      }
+    } else {
+      if (target !== draggedCard) {
+        grid.insertBefore(draggedCard, target);
       }
     }
-  })
-  .catch(function(err) {
-    console.error('Failed to save class order:', err);
   });
-}
+
+  grid.addEventListener('drop', function(e) {
+    e.preventDefault();
+    if (draggedCard) {
+      draggedCard.classList.remove('is-dragging');
+      draggedCard.style.opacity = '';
+      draggedCard.style.transform = '';
+    }
+    draggedCard = null;
+    saveJournalOrder();
+  });
+
+  function saveJournalOrder() {
+    const cards = grid.querySelectorAll('.journal-tile-card');
+    const journalIds = [];
+    const classIds = [];
+    cards.forEach(function(c) {
+      const jid = c.getAttribute('data-journal-id');
+      if (jid) journalIds.push(jid);
+      const cid = c.getAttribute('data-class-id');
+      if (cid && !classIds.includes(cid)) {
+        classIds.push(cid);
+      }
+    });
+
+    fetch("{% url 'portal:update_journal_order' %}", {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-CSRFToken': '{{ csrf_token }}',
+        'X-Requested-With': 'XMLHttpRequest'
+      },
+      body: JSON.stringify({ journal_ids: journalIds, class_ids: classIds })
+    })
+    .then(function(res) { return res.json(); })
+    .then(function(data) {
+      if (data.status === 'ok') {
+        if (typeof showToast === 'function') {
+          showToast('Порядок журналів збережено', 'success');
+        }
+      }
+    })
+    .catch(function(err) {
+      console.error('Failed to save journal order:', err);
+    });
+  }
+})();
 </script>
 {% endblock %}
