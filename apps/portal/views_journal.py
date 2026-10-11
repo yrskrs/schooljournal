@@ -6,12 +6,14 @@ from django.contrib.auth.decorators import login_required
 from django.core.exceptions import PermissionDenied
 from django.core import signing
 from django.db import transaction, IntegrityError
+from django.db.models.deletion import ProtectedError, RestrictedError
 from django.db.models import Q
 from django.views.decorators.http import require_POST, require_http_methods
 from django.http import HttpResponse, JsonResponse
 from django.urls import reverse
 from django.utils import timezone
-from apps.portal.permissions import has_journal_access
+from apps.portal.permissions import has_journal_access, can_manage_journal
+from apps.journals.services.journal_lifecycle import delete_local_journal, journal_content_counts
 from apps.accounts.personal import journal_nz_account
 from apps.curriculum.models import Student, StudentClass, ClassEnrollment, Semester, LessonTime
 from apps.journals.models import (
@@ -48,6 +50,30 @@ def _student_for_journal(journal, student_id):
 
 
 @login_required
+@require_http_methods(['GET', 'POST'])
+def journal_delete(request, journal_id):
+    journal = _get_journal_or_403(request.user, journal_id, write=True)
+    if not can_manage_journal(request.user, journal):
+        raise PermissionDenied('Локальний журнал може видалити лише власник або адміністратор.')
+    if request.method == 'POST':
+        if request.POST.get('confirm_delete') != 'on':
+            messages.error(request, 'Підтвердіть видалення локального журналу.')
+        else:
+            try:
+                delete_local_journal(journal, request.user)
+            except ValueError as error:
+                messages.error(request, str(error))
+            except (ProtectedError, RestrictedError):
+                messages.error(request, 'Журнал має залежні записи в іншому журналі. Видалення скасовано; перевірте позакласні записи та підключення.')
+            else:
+                messages.success(request, 'Локальний журнал видалено. Журнал у nz.ua збережено; його можна завантажити знову.')
+                return redirect('portal:nz_journals_list' if journal.nz_journal_id else 'portal:teacher_dashboard')
+    return render(request, 'portal/journal/confirm_cleanup.html', {
+        'journal': journal, 'counts': journal_content_counts(journal), 'cleanup_kind': 'delete',
+    })
+
+
+@login_required
 def journal_detail(request, journal_id):
     """
     Основний екран електронного журналу:
@@ -59,6 +85,7 @@ def journal_detail(request, journal_id):
     """
     journal = _get_journal_or_403(request.user, journal_id, write=False)
     can_edit = has_journal_access(request.user, journal, write=True)
+    can_manage = can_manage_journal(request.user, journal)
     show_withdrawn = request.GET.get('withdrawn') == '1'
 
     # 1. Семестри навчального року
@@ -262,6 +289,7 @@ def journal_detail(request, journal_id):
         'extra_journal': extra_journal,
         'extra_parent': extra_parent(journal),
         'can_edit': can_edit,
+        'can_manage': can_manage,
         'show_withdrawn': show_withdrawn,
         'semesters': semesters,
         'selected_semester': selected_semester,

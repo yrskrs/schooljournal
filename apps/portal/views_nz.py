@@ -12,13 +12,26 @@ from django.db.models import Q
 from django.urls import reverse
 from django.views.decorators.debug import sensitive_post_parameters
 
-from apps.portal.permissions import has_journal_access
+from apps.portal.permissions import has_journal_access, can_manage_journal
+from apps.journals.services.journal_lifecycle import journal_content_counts
 from apps.curriculum.models import AcademicYear, StudentClass, Subject, TeacherAssignment
 from apps.journals.models import Journal, Lesson, Grade, Attendance, NZAccount, NZSyncLog
 from apps.journals.services.nz_service import NZService, NZServiceError, NZAuthError
 from apps.accounts.personal import journal_nz_account
 
 logger = logging.getLogger(__name__)
+
+
+@login_required
+def nz_journal_reload_view(request, journal_id):
+    journal = get_object_or_404(Journal, pk=journal_id)
+    if not can_manage_journal(request.user, journal):
+        return HttpResponse('Замінити локальні дані може лише власник або адміністратор.', status=403)
+    if not journal.nz_journal_id:
+        return HttpResponse('Журнал не прив’язано до nz.ua.', status=400)
+    return render(request, 'portal/journal/confirm_cleanup.html', {
+        'journal': journal, 'counts': journal_content_counts(journal), 'cleanup_kind': 'replace',
+    })
 
 
 @login_required
@@ -174,6 +187,12 @@ def nz_journal_import_view(request, journal_id=None):
     Якщо ні — журнал створюється АВТОМАТИЧНО для вчителя (разом з класом та предметом)!
     """
     target_journal_id = journal_id or request.POST.get('local_journal_id')
+    import_mode = request.POST.get('import_mode', 'merge')
+    if import_mode not in ('merge', 'replace'):
+        return JsonResponse({'success': False, 'error': 'Невідомий режим завантаження.'}, status=400)
+    replace = import_mode == 'replace'
+    if replace and (not target_journal_id or request.POST.get('confirm_replace') != 'on'):
+        return JsonResponse({'success': False, 'error': 'Підтвердіть заміну локальних даних на сторінці повторного завантаження.'}, status=400)
     nz_journal_id = request.POST.get('nz_journal_id', '').strip()
     nz_subgroup_id = request.POST.get('nz_subgroup_id', '').strip()
     if not nz_journal_id and not target_journal_id:
@@ -192,6 +211,8 @@ def nz_journal_import_view(request, journal_id=None):
 
     if target_journal_id:
         local_journal = get_object_or_404(Journal, id=target_journal_id)
+        if replace and not can_manage_journal(request.user, local_journal):
+            return JsonResponse({'success': False, 'error': 'Замінити дані може лише власник або адміністратор.'}, status=403)
         if not has_journal_access(request.user, local_journal, write=True):
             if request.headers.get('x-requested-with') == 'XMLHttpRequest' or request.POST.get('format') == 'json':
                 return JsonResponse({'success': False, 'error': 'У вас немає прав для зміни цього журналу.'}, status=403)
@@ -206,6 +227,9 @@ def nz_journal_import_view(request, journal_id=None):
             nz_journal_id = local_journal.nz_journal_id
         if not nz_subgroup_id and local_journal.nz_subgroup_id:
             nz_subgroup_id = local_journal.nz_subgroup_id
+        if replace and (not local_journal.nz_journal_id or
+                        (nz_journal_id, nz_subgroup_id) != (local_journal.nz_journal_id, local_journal.nz_subgroup_id)):
+            return JsonResponse({'success': False, 'error': 'Повторне завантаження доступне лише з прив’язаного онлайн-журналу.'}, status=400)
     else:
         # Автоматичне створення класу, предмета та журналу без вибору зі списку
         school = request.user.school
@@ -294,14 +318,18 @@ def nz_journal_import_view(request, journal_id=None):
             pass
 
     service = NZService.from_account(account) if account else NZService()
+    imported = False
     try:
+        import_options = {'replace': True} if replace else {}
         stats = service.import_journal_to_local(
             nz_journal_id=nz_journal_id,
             local_journal=local_journal,
             nz_subgroup_id=nz_subgroup_id,
             user=request.user,
-            html_content=html_content
+            html_content=html_content,
+            **import_options,
         )
+        imported = True
         msg = (
             f"Журнал «{local_journal.student_class.name} — {local_journal.subject.name}» успішно завантажено з nz.ua! "
             f"Учнів: {stats['students_matched'] + stats['students_created']}, "
@@ -313,6 +341,8 @@ def nz_journal_import_view(request, journal_id=None):
             msg += f" Розклад дзвінків: {stats['lesson_times_synced']}."
         if stats.get('local_changes_preserved'):
             msg += f" Локальні зміни збережено без перезапису: {stats['local_changes_preserved']}."
+        if replace:
+            msg += ' Попередні локальні уроки, календарний план та оцінки замінено онлайн-даними.'
         if is_ajax:
             return JsonResponse({
                 'success': True,
@@ -332,6 +362,8 @@ def nz_journal_import_view(request, journal_id=None):
             return JsonResponse({'success': False, 'error': err_msg}, status=500)
         messages.error(request, err_msg)
 
+    if replace and not imported:
+        return redirect('portal:nz_journal_reload', journal_id=local_journal.id)
     return redirect('portal:journal_detail', journal_id=local_journal.id)
 
 

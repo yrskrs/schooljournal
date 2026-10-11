@@ -76,79 +76,38 @@ class ExportService:
 
     @staticmethod
     def export_topics(journal, semester=None, file_format='xlsx'):
-        """Експортує тематичний план або проведені уроки (сумісно з імпортом)."""
-        headers = ["№ уроку", "Тема уроку", "Дата уроку (РРРР-ММ-ДД або ДД.ММ.РРРР)", "Домашнє завдання", "Тип уроку (ORDINARY/QUIZ/TEST/THEMATIC)", "Примітки"]
+        """Export every lesson and unlinked plan topic with stable journal-scoped IDs."""
+        from .topic_service import TopicImportService
 
-        lessons = Lesson.objects.filter(journal=journal).order_by('date', 'lesson_number')
-        if semester:
-            lessons = lessons.filter(semester=semester)
-
+        plans = list(journal.plan_topics.order_by('topic_number', 'pk'))
+        reserved = {p.topic_number for p in plans}
+        lessons = journal.lessons.select_related('linked_plan_topic').order_by('date', 'lesson_number', 'pk')
+        linked_ids = set()
         rows = []
-        if lessons.exists():
-            for idx, l in enumerate(lessons, start=1):
-                rows.append([
-                    idx,
-                    l.topic,
-                    l.date.strftime('%Y-%m-%d'),
-                    l.homework,
-                    l.lesson_type,
-                    l.notes
-                ])
-        else:
-            # Fallback to plan topics
-            plan_topics = journal.plan_topics.all().order_by('topic_number')
-            for p in plan_topics:
-                rows.append([
-                    p.topic_number,
-                    p.title,
-                    p.planned_date.strftime('%Y-%m-%d') if p.planned_date else "",
-                    p.homework,
-                    p.lesson_type,
-                    p.notes
-                ])
-
-        if file_format == 'csv':
-            output = io.StringIO()
-            writer = csv.writer(output)
-            writer.writerow(headers)
-            for r in rows:
-                writer.writerow(r)
-            return output.getvalue().encode('utf-8-sig'), 'text/csv'
-        else:
-            wb = openpyxl.Workbook()
-            ws = wb.active
-            ws.title = "Тематичний план"
-
-            header_fill = PatternFill(start_color="1E3A8A", end_color="1E3A8A", fill_type="solid")
-            header_font = Font(name="Arial", size=11, bold=True, color="FFFFFF")
-            ws.append(headers)
-            for cell in ws[1]:
-                cell.fill = header_fill
-                cell.font = header_font
-                cell.alignment = Alignment(horizontal="center", vertical="center")
-
-            thin_border = Border(
-                left=Side(style='thin', color='CBD5E1'),
-                right=Side(style='thin', color='CBD5E1'),
-                top=Side(style='thin', color='CBD5E1'),
-                bottom=Side(style='thin', color='CBD5E1')
-            )
-
-            for r in rows:
-                ws.append(r)
-                row_idx = ws.max_row
-                for col_idx in range(1, len(headers) + 1):
-                    ws.cell(row=row_idx, column=col_idx).border = thin_border
-
-            for col in ws.columns:
-                max_len = max(len(str(cell.value or '')) for cell in col)
-                col_letter = get_column_letter(col[0].column)
-                ws.column_dimensions[col_letter].width = max(max_len + 4, 15)
-
-            output = io.BytesIO()
-            wb.save(output)
-            output.seek(0)
-            return output.getvalue(), 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        next_number = 1
+        for lesson in lessons:
+            if lesson.linked_plan_topic_id:
+                number = lesson.linked_plan_topic.topic_number
+                linked_ids.add(lesson.linked_plan_topic_id)
+            else:
+                while next_number in reserved:
+                    next_number += 1
+                number = next_number
+                reserved.add(number)
+                next_number += 1
+            if semester and lesson.semester_id != semester.pk:
+                continue
+            rows.append([number, lesson.topic, lesson.date.isoformat(), lesson.homework,
+                         lesson.lesson_type, lesson.notes, lesson.pk, lesson.lesson_number,
+                         lesson.linked_plan_topic_id or '', 'LESSON', journal.pk])
+        for plan in plans:
+            if plan.pk in linked_ids:
+                continue
+            if semester and plan.planned_date and not semester.start_date <= plan.planned_date <= semester.end_date:
+                continue
+            rows.append([plan.topic_number, plan.title, plan.planned_date.isoformat() if plan.planned_date else '',
+                         plan.homework, plan.lesson_type, plan.notes, '', '', plan.pk, 'PLAN', journal.pk])
+        return TopicImportService.render_file(rows, file_format)
 
     @staticmethod
     def export_journal_xlsx(journal, semester=None, start_date=None, end_date=None):

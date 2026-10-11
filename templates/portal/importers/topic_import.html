@@ -14,11 +14,12 @@
       </div>
       <div>
         <div style="display: inline-flex; gap: 0.5rem;">
+          <a href="{% url 'portal:download_template' template_type='topics' fmt='xlsx' %}?journal_id={{ journal.id }}" class="btn btn-primary btn-sm">Поточні уроки та план XLSX</a>
           <a href="{% url 'portal:download_template' template_type='topics' fmt='xlsx' %}" class="btn btn-secondary btn-sm">
-            Шаблон XLSX
+            Порожній шаблон XLSX
           </a>
           <a href="{% url 'portal:download_template' template_type='topics' fmt='csv' %}" class="btn btn-secondary btn-sm">
-            Шаблон CSV
+            Порожній шаблон CSV
           </a>
         </div>
       </div>
@@ -35,13 +36,26 @@
             Оберіть файл календарно-тематичного плану (XLSX або CSV)
           </div>
           <div style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 1.25rem;">
-            Теми з датами створять проведені уроки. Теми без дат будуть збережені як майбутній план.
+            Для зміни наявних тем завантажте «Поточні уроки та план XLSX», змініть тему чи ДЗ та імпортуйте файл.
           </div>
           <input type="file" name="file" accept=".xlsx,.csv" required style="display: inline-block;">
         </div>
 
+        <div class="form-group">
+          <label class="form-label" for="importTarget">Що імпортувати</label>
+          <select name="import_target" id="importTarget" class="form-select">
+            <option value="lessons_and_plan">Теми уроків та календарний план</option>
+            <option value="plan_only">Лише календарний план — дати залишаються запланованими</option>
+          </select>
+        </div>
+
         <div class="alert alert-info" style="font-size: 0.85rem; margin-top: 1.25rem;">
-          <strong>Важливо:</strong> Оновлення тем не видаляє та не змінює оцінки та відвідуваність уже проведених уроків!
+          Наявні уроки оновлюються за ID із файлу; у старому шаблоні — за датою та номером уроку на дату.
+          Якщо на дату є один урок, його буде оновлено незалежно від номера. Для кількох уроків потрібен ID або номер на дату.
+          Новий рядок із датою створить урок, без дати — тему плану. Вид запису PLAN зберігає лише план, навіть із датою.
+          «№ уроку» — номер теми в плані; «Номер уроку на дату» — окремий номер для розрізнення уроків одного дня.
+          У поточному файлі залишайте ID та дати без змін. Порожні ДЗ та примітки очищають відповідні поля.
+          Оцінки та відвідуваність зберігаються.
         </div>
 
         <div style="display: flex; justify-content: flex-end; gap: 0.75rem; margin-top: 1.5rem;">
@@ -51,6 +65,7 @@
       </form>
 
     {% elif step == 'preview' %}
+      <p><strong>{% if import_target == 'plan_only' %}Лише календарний план: уроки не створюються і не змінюються.{% else %}Теми уроків та календарний план.{% endif %}</strong></p>
       <div style="margin-bottom: 1.5rem;">
         <div style="display: flex; gap: 1rem; margin-bottom: 1.25rem;">
           <div class="user-role-pill" style="background-color: var(--primary-light); color: var(--primary);">
@@ -111,11 +126,10 @@
                   <td style="padding: 0.5rem;">
                     {% if not row.is_valid %}
                       <span style="color: var(--danger); font-weight: 700;">Помилка</span>
-                    {% elif row.exists_lesson %}
-                      <span style="color: #b45309; font-weight: 600;">Оновлення уроку</span>
                     {% else %}
-                      <span style="color: var(--success); font-weight: 600;">Новий</span>
+                      <span style="font-weight: 600;">{{ row.action_label }}</span>
                     {% endif %}
+                    {% for error in row.errors %}<div style="color:var(--danger)">{{ error }}</div>{% endfor %}
                   </td>
                 </tr>
               {% endfor %}
@@ -135,6 +149,10 @@
                 Додати нові та оновити наявні теми
               </label>
               <label style="display: flex; align-items: center; gap: 0.4rem; cursor: pointer;">
+                <input type="radio" name="import_mode" value="update_only">
+                Лише оновити наявні (нових уроків і тем не створювати)
+              </label>
+              <label style="display: flex; align-items: center; gap: 0.4rem; cursor: pointer;">
                 <input type="radio" name="import_mode" value="add_only">
                 Лише додати нові теми (пропустити збіги)
               </label>
@@ -142,12 +160,12 @@
           </div>
 
           <div class="alert alert-info" style="font-size: 0.85rem;">
-            Оцінки та журнал відвідуваності наявних уроків будуть повністю збережені.
+            Оцінки та відвідуваність зберігаються. Рядки з помилками буде пропущено.
           </div>
 
           <div style="display: flex; justify-content: flex-end; gap: 0.75rem; margin-top: 1.5rem;">
             <a href="{{ request.path }}" class="btn btn-secondary">Завантажити інший файл</a>
-            <button type="submit" class="btn btn-primary">Підтвердити та застосувати</button>
+            <button type="submit" class="btn btn-primary" {% if not preview_result.valid_rows %}disabled{% endif %}>Підтвердити та застосувати</button>
           </div>
         </form>
       </div>

@@ -1,374 +1,326 @@
-import io
 import csv
 import datetime
+import io
+from collections import Counter, defaultdict
+
 import openpyxl
-from openpyxl.styles import Font, PatternFill, Alignment
+from openpyxl.styles import Alignment, Font, PatternFill
 from django.db import transaction
+
 from apps.journals.models import Journal, LessonPlanTopic, Lesson, LessonType, AuditLog
+from apps.journals.services.scheduling import SUMMARY_TYPES, next_lesson_number
 
 
 class TopicImportService:
-    @staticmethod
-    def generate_template(file_format='xlsx'):
-        """Генерує шаблон календарно-тематичного плану."""
-        headers = [
-            "№ уроку",
-            "Тема уроку",
-            "Дата уроку (РРРР-ММ-ДД або ДД.ММ.РРРР)",
-            "Домашнє завдання",
-            "Тип уроку (ORDINARY/QUIZ/TEST/THEMATIC)",
-            "Примітки"
-        ]
-        sample_rows = [
-            [1, "Вступний урок. Правила безпеки", "2024-09-02", "Повторити §1", "ORDINARY", "Ознайомлення"],
-            [2, "Повторення вивченого за попередній рік", "2024-09-05", "Вправи 1-5", "ORDINARY", ""],
-            [3, "Діагностична контрольна робота", "2024-09-09", "", "TEST", "Контрольна робота"],
-            [4, "Аналіз контрольної роботи", "2024-09-12", "Робота над помилками", "ORDINARY", ""],
-            [5, "Тема 1. Основні поняття", "", "§2, вивчити правила", "ORDINARY", "Без дати - планова тема"],
-            [6, "Тематичне оцінювання з теми 1", "", "", "THEMATIC", "Тематичний підсумок"],
-        ]
+    HEADERS = [
+        '№ уроку', 'Тема уроку', 'Дата уроку (РРРР-ММ-ДД або ДД.ММ.РРРР)',
+        'Домашнє завдання', 'Тип уроку', 'Примітки', 'ID уроку',
+        'Номер уроку на дату', 'ID теми плану', 'Вид запису (LESSON/PLAN)', 'ID журналу',
+    ]
+    MODES = {'add_and_update', 'add_only', 'update_only'}
+    TARGETS = {'lessons_and_plan', 'plan_only'}
 
+    @classmethod
+    def generate_template(cls, file_format='xlsx'):
+        """An empty template: example dates must never become real lessons."""
+        return cls.render_file([], file_format)
+
+    @classmethod
+    def render_file(cls, rows, file_format='xlsx'):
         if file_format == 'csv':
             output = io.StringIO()
             writer = csv.writer(output)
-            writer.writerow(headers)
-            for row in sample_rows:
-                writer.writerow(row)
+            writer.writerow(cls.HEADERS)
+            writer.writerows(rows)
             return output.getvalue().encode('utf-8-sig'), 'text/csv'
-        else:
-            wb = openpyxl.Workbook()
-            ws = wb.active
-            ws.title = "Тематичний план"
-
-            header_fill = PatternFill(start_color="1E3A8A", end_color="1E3A8A", fill_type="solid")
-            header_font = Font(name="Arial", size=11, bold=True, color="FFFFFF")
-
-            ws.append(headers)
-            for cell in ws[1]:
-                cell.fill = header_fill
-                cell.font = header_font
-                cell.alignment = Alignment(horizontal="center", vertical="center")
-
-            for row in sample_rows:
-                ws.append(row)
-
-            for col in ws.columns:
-                max_len = max(len(str(cell.value or '')) for cell in col)
-                col_letter = openpyxl.utils.get_column_letter(col[0].column)
-                ws.column_dimensions[col_letter].width = max(max_len + 4, 15)
-
-            output = io.BytesIO()
-            wb.save(output)
-            output.seek(0)
-            return output.getvalue(), 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = 'Тематичний план'
+        ws.append(cls.HEADERS)
+        for cell in ws[1]:
+            cell.fill = PatternFill('solid', fgColor='1E3A8A')
+            cell.font = Font(name='Arial', size=11, bold=True, color='FFFFFF')
+            cell.alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
+        for row in rows:
+            ws.append(row)
+        for col in ws.columns:
+            width = max(len(str(cell.value or '')) for cell in col) + 4
+            ws.column_dimensions[col[0].column_letter].width = min(max(width, 15), 65)
+        ws.freeze_panes = 'A2'
+        ws.auto_filter.ref = ws.dimensions
+        output = io.BytesIO()
+        wb.save(output)
+        return output.getvalue(), 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
 
     @classmethod
     def parse_file(cls, file_obj, filename):
-        """Парсить завантажений файл XLSX або CSV."""
-        rows = []
-        is_csv = filename.lower().endswith('.csv')
-
-        if is_csv:
+        if filename.lower().endswith('.csv'):
             content = file_obj.read()
-            decoded = None
-            for enc in ['utf-8-sig', 'utf-8', 'cp1251', 'latin-1']:
+            for encoding in ('utf-8-sig', 'cp1251'):
                 try:
-                    decoded = content.decode(enc)
+                    decoded = content.decode(encoding)
                     break
                 except UnicodeDecodeError:
                     continue
-            if decoded is None:
-                raise ValueError("Не вдалося розпізнати кодування файлу CSV. Використовуйте UTF-8.")
-
-            reader = csv.reader(io.StringIO(decoded))
-            raw_rows = list(reader)
+            else:
+                raise ValueError('Не вдалося розпізнати кодування CSV. Використовуйте UTF-8.')
+            try:
+                dialect = csv.Sniffer().sniff(decoded[:8192], delimiters=',;\t')
+            except csv.Error:
+                dialect = csv.excel
+            raw_rows = list(csv.reader(io.StringIO(decoded), dialect))
+        elif filename.lower().endswith('.xlsx'):
+            wb = openpyxl.load_workbook(file_obj, data_only=True, read_only=True)
+            try:
+                raw_rows = list(wb.active.iter_rows(values_only=True))
+            finally:
+                wb.close()
         else:
-            wb = openpyxl.load_workbook(file_obj, data_only=True)
-            ws = wb.active
-            raw_rows = []
-            for row in ws.iter_rows(values_only=True):
-                if any(c is not None and str(c).strip() != '' for c in row):
-                    raw_rows.append(list(row))
-
+            raise ValueError('Підтримуються лише XLSX та CSV.')
         if not raw_rows:
             return []
-
-        raw_headers = [str(c or '').strip() for c in raw_rows[0]]
-        header_map = cls._map_headers(raw_headers)
-
+        header_map = cls._map_headers([str(c or '').strip() for c in raw_rows[0]])
+        rows = []
         for row_num, raw_row in enumerate(raw_rows[1:], start=2):
-            if not any(c is not None and str(c).strip() != '' for c in raw_row):
+            if not any(c is not None and str(c).strip() for c in raw_row):
                 continue
-
             item = {'_row_num': row_num}
-            for key, col_idx in header_map.items():
-                if col_idx is not None and col_idx < len(raw_row):
-                    val = raw_row[col_idx]
-                    item[key] = str(val).strip() if val is not None else ""
-                else:
-                    item[key] = ""
+            for key, index in header_map.items():
+                value = raw_row[index] if index is not None and index < len(raw_row) else None
+                if isinstance(value, (datetime.datetime, datetime.date)):
+                    value = value.strftime('%Y-%m-%d')
+                item[key] = str(value).strip() if value is not None else ''
             rows.append(item)
-
         return rows
 
-    @classmethod
-    def _map_headers(cls, headers):
-        mapping = {
-            'topic_number': None,
-            'title': None,
-            'date': None,
-            'homework': None,
-            'lesson_type': None,
-            'notes': None,
-        }
-        for idx, h in enumerate(headers):
-            hl = h.lower().strip()
-            if any(k in hl for k in ['№', 'номер', 'порядок', 'number']):
-                mapping['topic_number'] = idx
-            elif any(k in hl for k in ['тема', 'назва', 'topic', 'title']):
-                mapping['title'] = idx
-            elif any(k in hl for k in ['дата', 'число', 'date']):
-                mapping['date'] = idx
-            elif any(k in hl for k in ['дз', 'домашнє', 'завдання', 'homework']):
-                mapping['homework'] = idx
-            elif any(k in hl for k in ['тип', 'type']):
-                mapping['lesson_type'] = idx
-            elif any(k in hl for k in ['приміт', 'нотат', 'notes']):
-                mapping['notes'] = idx
-
-        if mapping['title'] is None and len(headers) >= 2:
-            mapping['title'] = 1
-        if mapping['topic_number'] is None:
-            mapping['topic_number'] = 0
-
+    @staticmethod
+    def _map_headers(headers):
+        mapping = dict.fromkeys(('topic_number', 'title', 'date', 'homework', 'lesson_type',
+                                 'notes', 'lesson_id', 'day_lesson_number', 'plan_topic_id',
+                                 'record_kind', 'journal_id'))
+        for index, header in enumerate(headers):
+            h = header.lower().strip()
+            if h in ('id уроку', 'lesson_id'):
+                key = 'lesson_id'
+            elif h in ('id теми плану', 'plan_topic_id'):
+                key = 'plan_topic_id'
+            elif h in ('id журналу', 'journal_id'):
+                key = 'journal_id'
+            elif h == 'day_lesson_number' or 'на дату' in h:
+                key = 'day_lesson_number'
+            elif h == 'record_kind' or 'вид запису' in h:
+                key = 'record_kind'
+            elif any(k in h for k in ('№', 'номер', 'порядок', 'number')):
+                key = 'topic_number'
+            elif any(k in h for k in ('тип', 'type')):
+                key = 'lesson_type'
+            elif any(k in h for k in ('тема', 'назва', 'topic', 'title')):
+                key = 'title'
+            elif any(k in h for k in ('дата', 'число', 'date')):
+                key = 'date'
+            elif any(k in h for k in ('дз', 'домашнє', 'завдання', 'homework')):
+                key = 'homework'
+            elif any(k in h for k in ('приміт', 'нотат', 'notes')):
+                key = 'notes'
+            else:
+                continue
+            mapping[key] = index
+        if mapping['title'] is None:
+            raise ValueError('У файлі немає колонки «Тема уроку». Завантажте шаблон.')
         return mapping
 
-    @classmethod
-    def _parse_date(cls, date_str):
-        if not date_str:
+    @staticmethod
+    def _parse_date(value):
+        if not value:
             return None
-        formats = ['%Y-%m-%d', '%d.%m.%Y', '%d/%m/%Y', '%Y.%m.%d', '%d-%m-%Y']
-        for fmt in formats:
+        for fmt in ('%Y-%m-%d', '%d.%m.%Y', '%d/%m/%Y', '%Y.%m.%d', '%d-%m-%Y'):
             try:
-                return datetime.datetime.strptime(date_str, fmt).date()
+                return datetime.datetime.strptime(value, fmt).date()
             except ValueError:
-                continue
-        # Also handle ISO with time
+                pass
         try:
-            return datetime.date.fromisoformat(date_str[:10])
-        except (ValueError, TypeError):
+            return datetime.date.fromisoformat(value[:10])
+        except ValueError:
             return None
 
     @classmethod
-    def validate_and_preview(cls, rows, journal):
-        """
-        Перевіряє коректність тем, виявляє наявні уроки/теми та конфлікти.
-        """
-        preview_data = []
-        errors = []
-        warnings = []
-
-        existing_plan_topics = {t.topic_number: t for t in LessonPlanTopic.objects.filter(journal=journal)}
-        existing_lessons = {l.date: l for l in Lesson.objects.filter(journal=journal)}
-
-        for idx, row in enumerate(rows, start=1):
-            row_num = row.get('_row_num', idx)
-            raw_num = row.get('topic_number', '').strip()
-            title = row.get('title', '').strip()
-            raw_date = row.get('date', '').strip()
-            homework = row.get('homework', '').strip()
-            lesson_type_str = row.get('lesson_type', '').strip().upper() or LessonType.ORDINARY
-            notes = row.get('notes', '').strip()
-
-            row_errors = []
-            row_warnings = []
-
-            # Перевірка теми
-            if not title:
-                row_errors.append("Тема уроку є обов'язковою")
-
-            # Перевірка номера
-            try:
-                topic_number = int(raw_num) if raw_num else idx
-            except ValueError:
-                topic_number = idx
-                row_warnings.append(f"Некоректний номер уроку '{raw_num}'. Призначено автоматично: {idx}")
-
-            # Перевірка дати
-            parsed_date = None
-            if raw_date:
-                parsed_date = cls._parse_date(raw_date)
-                if not parsed_date:
-                    row_errors.append(f"Некоректний формат дати '{raw_date}'. Використовуйте РРРР-ММ-ДД або ДД.ММ.РРРР")
-
-            # Перевірка типу уроку
-            valid_types = [t[0] for t in LessonType.choices]
-            if lesson_type_str not in valid_types:
-                lesson_type_str = LessonType.ORDINARY
-
-            # Виявлення збігів/конфліктів
-            exists_in_plan = topic_number in existing_plan_topics
-            exists_lesson = parsed_date in existing_lessons if parsed_date else False
-
-            if exists_in_plan:
-                row_warnings.append(f"У тематичному плані вже є урок №{topic_number}: «{existing_plan_topics[topic_number].title}»")
-            if exists_lesson:
-                row_warnings.append(f"У журналі на дату {parsed_date.strftime('%d.%m.%Y')} вже є проведений урок: «{existing_lessons[parsed_date].topic}»")
-
-            preview_item = {
-                'row_num': row_num,
-                'topic_number': topic_number,
-                'title': title,
-                'date': parsed_date.isoformat() if parsed_date else "",
-                'date_display': parsed_date.strftime('%d.%m.%Y') if parsed_date else "Не вказано (план)",
-                'homework': homework,
-                'lesson_type': lesson_type_str,
-                'notes': notes,
-                'exists_in_plan': exists_in_plan,
-                'exists_lesson': exists_lesson,
-                'is_valid': len(row_errors) == 0,
-                'errors': row_errors,
-                'warnings': row_warnings,
-            }
-            preview_data.append(preview_item)
-            if row_errors:
-                errors.append(f"Рядок {row_num}: {'; '.join(row_errors)}")
-            if row_warnings:
-                warnings.append(f"Рядок {row_num}: {'; '.join(row_warnings)}")
-
-        return {
-            'preview_data': preview_data,
-            'total_rows': len(preview_data),
-            'valid_rows': len([p for p in preview_data if p['is_valid']]),
-            'error_rows': len([p for p in preview_data if not p['is_valid']]),
-            'errors': errors,
-            'warnings': warnings,
-        }
+    def validate_and_preview(cls, rows, journal, target='lessons_and_plan'):
+        if target not in cls.TARGETS:
+            raise ValueError('Невідомий спосіб імпорту.')
+        plans = list(journal.plan_topics.all())
+        lessons = list(journal.lessons.all())
+        plans_by_id = {p.pk: p for p in plans}
+        lessons_by_id = {l.pk: l for l in lessons}
+        plans_by_number, lessons_by_date, lessons_by_plan = defaultdict(list), defaultdict(list), defaultdict(list)
+        for p in plans:
+            plans_by_number[p.topic_number].append(p)
+        for lesson in lessons:
+            lessons_by_date[lesson.date].append(lesson)
+            if lesson.linked_plan_topic_id:
+                lessons_by_plan[lesson.linked_plan_topic_id].append(lesson)
+        preview = []
+        for index, raw in enumerate(rows, 1):
+            item = {key: str(raw.get(key) or '').strip() for key in cls._map_headers(cls.HEADERS)}
+            item['row_num'] = raw.get('_row_num', raw.get('row_num', index + 1))
+            errors = []
+            if not item['title'] or len(item['title']) > 255:
+                errors.append('Тема обов’язкова та має містити до 255 символів.')
+            if len(item['notes']) > 255:
+                errors.append('Примітка має містити до 255 символів.')
+            for key, maximum in (('topic_number', 2147483647), ('day_lesson_number', 32767),
+                                 ('lesson_id', None), ('plan_topic_id', None), ('journal_id', None)):
+                try:
+                    value = int(item[key]) if item[key] else (index if key == 'topic_number' else None)
+                    if value is not None and (value < 1 or (maximum and value > maximum)):
+                        raise ValueError()
+                    item[key] = value
+                except ValueError:
+                    item[key] = None
+                    errors.append(f'Некоректне значення «{key}»: потрібне додатне ціле число.')
+            if item['journal_id'] and item['journal_id'] != journal.pk:
+                errors.append('Файл належить іншому журналу. Завантажте дані цього журналу.')
+            lesson_date = cls._parse_date(item['date'])
+            if item['date'] and lesson_date is None:
+                errors.append('Некоректна дата. Використовуйте РРРР-ММ-ДД або ДД.ММ.РРРР.')
+            if lesson_date and not journal.academic_year.start_date <= lesson_date <= journal.academic_year.end_date:
+                errors.append('Дата поза навчальним роком цього журналу. Перевірте рік у файлі.')
+            item['date'] = lesson_date.isoformat() if lesson_date else ''
+            item['date_display'] = lesson_date.strftime('%d.%m.%Y') if lesson_date else 'Без дати (план)'
+            item['lesson_type'] = item['lesson_type'].upper() or LessonType.ORDINARY
+            if item['lesson_type'] not in LessonType.values:
+                errors.append('Невідомий тип уроку. Наприклад: ORDINARY, QUIZ, TEST, THEMATIC.')
+            item['record_kind'] = item['record_kind'].upper()
+            if item['record_kind'] not in ('', 'LESSON', 'PLAN'):
+                errors.append('Вид запису має бути LESSON (урок) або PLAN (план).')
+            lesson = lessons_by_id.get(item['lesson_id'])
+            plan = plans_by_id.get(item['plan_topic_id'])
+            if item['lesson_id'] and lesson is None:
+                errors.append('ID уроку відсутній у цьому журналі. Завантажте актуальний файл.')
+            if item['plan_topic_id'] and plan is None:
+                errors.append('ID теми плану відсутній у цьому журналі. Завантажте актуальний файл.')
+            if lesson and plan and lesson.linked_plan_topic_id not in (None, plan.pk):
+                errors.append('Урок пов’язаний з іншою темою плану.')
+            if not plan and lesson and lesson.linked_plan_topic_id:
+                plan = plans_by_id.get(lesson.linked_plan_topic_id)
+            if not plan and not item['plan_topic_id']:
+                candidates = plans_by_number[item['topic_number']]
+                if len(candidates) > 1:
+                    errors.append('У плані кілька тем із цим номером. Використайте експорт із ID теми.')
+                elif candidates:
+                    plan = candidates[0]
+            plan_only = target == 'plan_only' or item['record_kind'] == 'PLAN'
+            if plan_only:
+                lesson = None
+            elif not lesson:
+                candidates = lessons_by_plan[plan.pk] if plan else []
+                if not candidates and lesson_date:
+                    candidates = lessons_by_date[lesson_date]
+                    if item['day_lesson_number']:
+                        candidates = [l for l in candidates if l.lesson_number == item['day_lesson_number']]
+                    elif item['lesson_type'] in SUMMARY_TYPES:
+                        candidates = [l for l in candidates if l.lesson_type == item['lesson_type']]
+                    else:
+                        candidates = [l for l in candidates if l.lesson_type not in SUMMARY_TYPES]
+                if len(candidates) > 1:
+                    errors.append('На цю дату є кілька уроків. Завантажте поточні дані з ID або вкажіть «Номер уроку на дату».')
+                elif candidates:
+                    lesson = candidates[0]
+            if lesson:
+                if lesson_date and lesson_date != lesson.date:
+                    errors.append('Дата не збігається з наявним уроком. Імпорт тем не переносить уроки; змініть дату окремо.')
+                if lesson.nz_schedule_id and ((lesson.lesson_type in SUMMARY_TYPES) != (item['lesson_type'] in SUMMARY_TYPES)
+                                              or (lesson.lesson_type in SUMMARY_TYPES and lesson.lesson_type != item['lesson_type'])):
+                    errors.append('Тип підсумкової онлайн-колонки змініть у nz.ua та оновіть журнал.')
+                if not plan and lesson.linked_plan_topic_id:
+                    plan = plans_by_id[lesson.linked_plan_topic_id]
+            elif not plan_only and item['record_kind'] == 'LESSON' and not lesson_date:
+                errors.append('Новий урок потребує дати. Для майбутньої теми виберіть PLAN.')
+            if plan and item['topic_number'] != plan.topic_number:
+                errors.append('Номер не збігається з темою плану. Змініть порядок тем у журналі.')
+            item.update(matched_lesson_id=lesson.pk if lesson else None, matched_plan_id=plan.pk if plan else None,
+                        exists_lesson=bool(lesson), exists_in_plan=bool(plan), errors=errors, warnings=[],
+                        create_lesson=bool(not plan_only and not lesson and lesson_date))
+            if lesson:
+                item['action_label'] = f'Оновити урок {lesson.date:%d.%m.%Y}, №{lesson.lesson_number}'
+            elif item['create_lesson']:
+                item['action_label'] = 'Створити урок і тему плану'
+            else:
+                item['action_label'] = 'Оновити тему плану' if plan else 'Додати тему плану'
+            preview.append(item)
+        numbers = Counter(p['topic_number'] for p in preview)
+        lesson_ids = Counter(p['matched_lesson_id'] for p in preview if p['matched_lesson_id'])
+        plan_ids = Counter(p['matched_plan_id'] for p in preview if p['matched_plan_id'])
+        new_slots = Counter((p['date'], p['day_lesson_number']) for p in preview if p['create_lesson'])
+        for item in preview:
+            if numbers[item['topic_number']] > 1 or lesson_ids[item['matched_lesson_id']] > 1 or plan_ids[item['matched_plan_id']] > 1:
+                item['errors'].append('Кілька рядків змінюють той самий урок або номер теми. Залиште один рядок.')
+            if item['create_lesson'] and new_slots[(item['date'], item['day_lesson_number'])] > 1:
+                item['errors'].append('Для кількох нових уроків на одну дату вкажіть різні номери уроку на дату.')
+            item['is_valid'] = not item['errors']
+        return {'preview_data': preview, 'total_rows': len(preview),
+                'valid_rows': sum(p['is_valid'] for p in preview), 'error_rows': sum(not p['is_valid'] for p in preview),
+                'errors': [f"Рядок {p['row_num']}: {'; '.join(p['errors'])}" for p in preview if p['errors']], 'warnings': []}
 
     @classmethod
     @transaction.atomic
-    def execute_import(cls, preview_data, journal, mode='add_and_update', user=None):
-        """
-        Застосовує імпорт тем уроків.
-        ВАЖЛИВО: Оновлення тем НЕ змінює та НЕ видаляє виставлені оцінки та відвідуваність!
-        """
-        added_plan = 0
-        updated_plan = 0
-        added_lessons = 0
-        updated_lessons = 0
-        skipped = 0
-
-        # Семестри журналу для автоматичної прив'язки уроків
+    def execute_import(cls, preview_data, journal, mode='add_and_update', user=None, target='lessons_and_plan'):
+        if mode not in cls.MODES:
+            raise ValueError('Невідомий режим імпорту.')
+        Journal.objects.select_for_update().get(pk=journal.pk)
+        valid_items = [item for item in preview_data if item.get('is_valid', True)]
+        current = cls.validate_and_preview(valid_items, journal, target)['preview_data']
+        for old, item in zip(valid_items, current):
+            if not item['is_valid'] or any(key in old and old[key] != item[key] for key in ('matched_lesson_id', 'matched_plan_id')):
+                raise ValueError('Уроки або план змінилися після перегляду. Завантажте файл і перевірте його ще раз.')
+        stats = dict.fromkeys(('added_plan', 'updated_plan', 'added_lessons', 'updated_lessons', 'unchanged'), 0)
+        stats['skipped'] = len(preview_data) - len(valid_items)
         semesters = list(journal.academic_year.semesters.all())
-
-        for item in preview_data:
-            if not item.get('is_valid', True):
-                skipped += 1
+        for item in current:
+            lesson = journal.lessons.filter(pk=item['matched_lesson_id']).first()
+            plan = journal.plan_topics.filter(pk=item['matched_plan_id']).first()
+            if (mode == 'add_only' and (lesson or plan)) or (mode == 'update_only' and not (lesson or plan)):
+                stats['skipped'] += 1
                 continue
-
-            topic_num = item.get('topic_number')
-            title = item.get('title')
-            date_str = item.get('date')
-            homework = item.get('homework')
-            lesson_type = item.get('lesson_type', LessonType.ORDINARY)
-            notes = item.get('notes', '')
-
-            lesson_date = datetime.date.fromisoformat(date_str) if date_str else None
-
-            # 1. Оновлення або створення в LessonPlanTopic
-            plan_topic = LessonPlanTopic.objects.filter(journal=journal, topic_number=topic_num).first()
-            if plan_topic:
-                if mode != 'add_only':
-                    plan_topic.title = title
-                    if lesson_date:
-                        plan_topic.planned_date = lesson_date
-                    if homework:
-                        plan_topic.homework = homework
-                    plan_topic.lesson_type = lesson_type
-                    if notes:
-                        plan_topic.notes = notes
-                    plan_topic.save()
-                    updated_plan += 1
+            lesson_date = datetime.date.fromisoformat(item['date']) if item['date'] else None
+            plan_fields = dict(title=item['title'], homework=item['homework'], lesson_type=item['lesson_type'],
+                               notes=item['notes'], planned_date=lesson.date if lesson else lesson_date)
+            if plan:
+                changed = any(getattr(plan, key) != value for key, value in plan_fields.items())
+                for key, value in plan_fields.items():
+                    setattr(plan, key, value)
+                if changed:
+                    plan.save()
+                    stats['updated_plan'] += 1
+            elif mode != 'update_only':
+                plan = LessonPlanTopic.objects.create(journal=journal, topic_number=item['topic_number'], **plan_fields)
+                stats['added_plan'] += 1
+            if lesson:
+                fields = {'topic': item['title'], 'homework': item['homework'], 'lesson_type': item['lesson_type'], 'notes': item['notes']}
+                changed = any(getattr(lesson, key) != value for key, value in fields.items())
+                linked_changed = plan and lesson.linked_plan_topic_id != plan.pk
+                for key, value in fields.items():
+                    setattr(lesson, key, value)
+                if plan:
+                    lesson.linked_plan_topic = plan
+                if changed:
+                    lesson.is_synced_to_nz = False
+                if changed or linked_changed:
+                    lesson.save()
+                    stats['updated_lessons'] += 1
                 else:
-                    skipped += 1
-            else:
-                if mode != 'update_only':
-                    plan_topic = LessonPlanTopic.objects.create(
-                        journal=journal,
-                        topic_number=topic_num,
-                        title=title,
-                        planned_date=lesson_date,
-                        homework=homework,
-                        lesson_type=lesson_type,
-                        notes=notes
-                    )
-                    added_plan += 1
-
-            # 2. Якщо вказано дату — створюємо або оновлюємо реальний урок (Lesson)
-            if lesson_date:
-                # Визначаємо семестр для дати
-                target_sem = None
-                for sem in semesters:
-                    if sem.start_date <= lesson_date <= sem.end_date:
-                        target_sem = sem
-                        break
-
-                lesson = Lesson.objects.filter(journal=journal, date=lesson_date, lesson_number=1).first()
-                if lesson:
-                    if mode != 'add_only':
-                        # Оновлюємо тему та ДЗ уроку, але ЗБЕРІГАЄМО ОЦІНКИ ТА ВІДВІДУВАНІСТЬ!
-                        lesson.topic = title
-                        if homework:
-                            lesson.homework = homework
-                        lesson.lesson_type = lesson_type
-                        lesson.is_synced_to_nz = False
-                        if notes:
-                            lesson.notes = notes
-                        if plan_topic:
-                            lesson.linked_plan_topic = plan_topic
-                        lesson.save()
-                        updated_lessons += 1
-                else:
-                    if mode != 'update_only':
-                        lesson = Lesson.objects.create(
-                            journal=journal,
-                            semester=target_sem,
-                            date=lesson_date,
-                            lesson_number=1,
-                            topic=title,
-                            homework=homework,
-                            lesson_type=lesson_type,
-                            notes=notes,
-                            linked_plan_topic=plan_topic,
-                            created_by=user
-                        )
-                        added_lessons += 1
-
-                if plan_topic and not plan_topic.is_conducted:
-                    plan_topic.is_conducted = True
-                    plan_topic.save()
-
-        # AuditLog
-        AuditLog.objects.create(
-            school=journal.school,
-            user=user,
-            action=AuditLog.Action.IMPORT,
-            target_model='LessonPlanTopic',
-            target_id=str(journal.id),
-            description=f"Імпорт тем для {journal}: теми плану (+{added_plan}, ~{updated_plan}), уроки (+{added_lessons}, ~{updated_lessons})",
-            changes={
-                'added_plan': added_plan,
-                'updated_plan': updated_plan,
-                'added_lessons': added_lessons,
-                'updated_lessons': updated_lessons,
-                'skipped': skipped
-            }
-        )
-
-        return {
-            'added_plan': added_plan,
-            'updated_plan': updated_plan,
-            'added_lessons': added_lessons,
-            'updated_lessons': updated_lessons,
-            'skipped': skipped,
-        }
+                    stats['unchanged'] += 1
+            elif item['create_lesson'] and mode != 'update_only':
+                lesson = Lesson.objects.create(journal=journal, date=lesson_date,
+                    lesson_number=item['day_lesson_number'] or next_lesson_number(journal, lesson_date),
+                    semester=next((s for s in semesters if s.start_date <= lesson_date <= s.end_date), None),
+                    topic=item['title'], homework=item['homework'], lesson_type=item['lesson_type'], notes=item['notes'],
+                    linked_plan_topic=plan, created_by=user)
+                stats['added_lessons'] += 1
+            if plan and lesson and not plan.is_conducted:
+                plan.is_conducted = True
+                plan.save(update_fields=['is_conducted', 'updated_at'])
+        AuditLog.objects.create(school=journal.school, user=user, action=AuditLog.Action.IMPORT,
+            target_model='LessonPlanTopic', target_id=str(journal.pk),
+            description=f"Імпорт тем: уроків додано {stats['added_lessons']}, оновлено {stats['updated_lessons']}.",
+            changes={**stats, 'mode': mode, 'target': target})
+        return stats

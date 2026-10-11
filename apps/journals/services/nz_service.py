@@ -15,7 +15,8 @@ from apps.curriculum.models import (
     AcademicYear, Semester, Student, StudentClass, Subject, ClassEnrollment,
     LessonTime, WeeklyScheduleEntry
 )
-from apps.journals.models import Journal, Lesson, Grade, Attendance, NZAccount, NZSyncLog, LessonType
+from apps.journals.models import Journal, Lesson, Grade, Attendance, NZAccount, NZSyncLog, LessonType, AuditLog
+from .journal_lifecycle import clear_journal_content
 
 logger = logging.getLogger(__name__)
 
@@ -726,7 +727,8 @@ class NZService:
         local_journal: Journal,
         nz_subgroup_id: str = "",
         user=None,
-        html_content: str = None
+        html_content: str = None,
+        replace: bool = False,
     ) -> dict:
         """
         Імпортувати дані з журналу nz.ua у локальний Journal:
@@ -739,6 +741,14 @@ class NZService:
         """
         data = self.fetch_journal_data(nz_journal_id, nz_subgroup_id, html_content=html_content)
         Journal.objects.select_for_update().get(pk=local_journal.pk)
+
+        removed = None
+        if replace:
+            if not all(isinstance(data.get(key), list) for key in ('students', 'lessons', 'marks')) or not any(
+                lesson.get('date') for lesson in data['lessons']
+            ):
+                raise NZServiceError('Онлайн-журнал не містить розпізнаних уроків. Локальні дані збережено; перевірте журнал у nz.ua.')
+            removed = clear_journal_content(local_journal)
 
         local_journal.nz_journal_id = nz_journal_id
         if nz_subgroup_id:
@@ -1109,6 +1119,13 @@ class NZService:
                 Attendance.objects.filter(lesson=lesson, student=student, is_synced_to_nz=True).update(
                     status=Attendance.Status.PRESENT, nz_last_synced_status=Attendance.Status.PRESENT)
 
+        if replace:
+            stats['replaced'] = True
+            stats['removed'] = removed
+            AuditLog.objects.create(school=local_journal.school, user=user, action=AuditLog.Action.IMPORT,
+                target_model='Journal', target_id=str(local_journal.pk),
+                description='Локальні уроки, план та оцінки замінено даними з nz.ua.',
+                changes={'mode': 'replace', 'removed': removed, 'imported': dict(stats)})
         return stats
 
     def get_unsynced_changes(self, journal: Journal) -> dict:

@@ -55,10 +55,14 @@
                     class="btn btn-sm"
                     onclick="pullNzJournal({{ journal.id }})"
                     style="display: inline-flex; align-items: center; gap: 0.35rem; font-weight: 600; border: 1px solid #0284c7; color: #0369a1; background: #f0f9ff;"
-                    title="Завантажити та оновити оцінки, уроки і учнів з сайту nz.ua (Журнал {{ journal.nz_journal_id }})">
+                    title="Отримати оновлення з nz.ua зі збереженням локальних змін. Для повної заміни використайте «Завантажити заново з nz.ua».">
               <span style="font-size: 1.05rem; line-height: 1;">⤓</span>
-              <span>Завантажити з nz.ua</span>
+              <span>Оновити з nz.ua</span>
             </button>
+
+            {% if can_manage %}
+              <a href="{% url 'portal:nz_journal_reload' journal.id %}" class="btn btn-secondary btn-sm" title="Замінити локальні уроки, план та оцінки даними онлайн-журналу">Завантажити заново з nz.ua</a>
+            {% endif %}
 
             <!-- Кнопка 2: Вивантажити зміни в nz.ua -->
             <button type="button"
@@ -104,6 +108,7 @@
           {% if can_edit %}<a href="#calendarSection" onclick="this.closest('details').open = false">Редагувати журнал</a>{% endif %}
           <a href="{% url 'portal:export_journal_xlsx' journal_id=journal.id %}{% if selected_semester %}?semester_id={{ selected_semester.id }}{% endif %}">Експорт в Excel</a>
           <a href="{% url 'portal:export_journal_pdf' journal_id=journal.id %}{% if selected_semester %}?semester_id={{ selected_semester.id }}{% endif %}">Версія журналу для друку</a>
+          {% if can_manage %}<a href="{% url 'portal:journal_delete' journal.id %}" style="color:var(--danger)">Видалити локальний журнал</a>{% endif %}
           {% if can_edit %}
           <a href="{% url 'portal:assessment_calculate' journal_id=journal.id %}?grade_type=THEMATIC&semester_id={{ selected_semester_param }}" data-assessment-link>Розрахувати тематичну</a>
           <a href="{% url 'portal:assessment_calculate' journal_id=journal.id %}?grade_type=MODULAR&semester_id={{ selected_semester_param }}" data-assessment-link>Розрахувати модульну</a>

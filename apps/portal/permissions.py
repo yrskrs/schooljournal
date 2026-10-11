@@ -90,6 +90,15 @@ def get_user_journals(user):
     ).select_related('school', 'academic_year', 'student_class', 'subject', 'teacher').distinct()
 
 
+def can_manage_journal(user, journal):
+    """Replacement/deletion belongs to the owner, rather than a substitute teacher."""
+    return has_journal_access(user, journal, write=True) and (
+        user.is_superadmin_user or journal.teacher_id == user.pk or
+        journal.local_profile_id == user.pk or
+        (journal.nz_owner_id and journal.nz_owner.user_id == user.pk)
+    )
+
+
 def models_teacher_filter(user):
     from django.db.models import Q
     return Q(teacher=user) | Q(allows_override_teacher=True)

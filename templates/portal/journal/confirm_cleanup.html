@@ -1,0 +1,40 @@
+{% extends 'base.html' %}
+{% block title %}{% if cleanup_kind == 'replace' %}Завантажити заново з nz.ua{% else %}Видалити локальний журнал{% endif %}{% endblock %}
+{% block content %}
+<div class="card" style="max-width:850px;margin:1.5rem auto;padding:2rem">
+  <h1>{% if cleanup_kind == 'replace' %}Завантажити заново з nz.ua{% else %}Видалити локальний журнал{% endif %}</h1>
+  <p><strong>{{ journal.student_class.name }} — {{ journal.subject.name }}</strong> · {{ journal.academic_year.name }}</p>
+  <div class="alert alert-warning">
+    {% if cleanup_kind == 'replace' %}
+      Усі локальні уроки, календарний план, оцінки, відвідуваність, підсумки та розклад цього журналу буде замінено даними з nz.ua.
+      Локальні зміни, яких немає онлайн, буде втрачено. Підключення тестів і завдань та відповідності учнів збережуться;
+      їхні оцінки можна отримати окремими кнопками після завантаження. Номер і посилання локального журналу збережуться.
+    {% else %}
+      Буде видалено цей локальний журнал, його уроки, календарний план, оцінки, відвідуваність, підсумки, розклад,
+      підключення API та збережені результати цих підключень. Відновлення через сайт не передбачено.
+    {% endif %}
+    <p>Журнал у nz.ua не змінюється. Учні та клас зберігаються, оскільки ними користуються інші журнали.</p>
+  </div>
+  <p>Поточні дані: уроків — {{ counts.lessons }}, тем плану — {{ counts.plan_topics }}, оцінок — {{ counts.grades }},
+    записів відвідування — {{ counts.attendances }}, підсумкових оцінок — {{ counts.summary_grades }}.
+    Підключень тестів та завдань — {{ counts.connections }}.</p>
+  <p><a href="{% url 'portal:export_journal_xlsx' journal.id %}">Завантажити журнал з оцінками (Excel)</a> ·
+    <a href="{% url 'portal:export_topics' journal.id %}">Завантажити уроки та календарний план (Excel)</a></p>
+  {% if cleanup_kind == 'replace' %}
+    <p>Спочатку сервер завантажить онлайн-журнал. Якщо завантаження або збереження завершиться помилкою, локальні дані залишаться.</p>
+  {% elif journal.nz_journal_id %}
+    <p>Після видалення відкрийте «nz.ua» та імпортуйте цей журнал знову. Або
+      <a href="{% url 'portal:nz_journal_reload' journal.id %}">завантажте заново без видалення журналу</a>.</p>
+  {% endif %}
+  <form method="post" {% if cleanup_kind == 'replace' %}action="{% url 'portal:nz_journal_import_for_journal' journal.id %}"{% endif %}>
+    {% csrf_token %}
+    {% if cleanup_kind == 'replace' %}<input type="hidden" name="import_mode" value="replace">{% endif %}
+    <label style="display:block;margin:1rem 0">
+      <input type="checkbox" name="{% if cleanup_kind == 'replace' %}confirm_replace{% else %}confirm_delete{% endif %}" required>
+      {% if cleanup_kind == 'replace' %}Підтверджую заміну локальних даних онлайн-даними.{% else %}Підтверджую видалення локального журналу та його даних.{% endif %}
+    </label>
+    <a href="{% url 'portal:journal_detail' journal.id %}" class="btn btn-secondary">Скасувати</a>
+    <button class="btn btn-danger" type="submit">{% if cleanup_kind == 'replace' %}Замінити дані та завантажити з nz.ua{% else %}Видалити локальний журнал{% endif %}</button>
+  </form>
+</div>
+{% endblock %}

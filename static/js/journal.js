@@ -1042,7 +1042,7 @@ function pullNzJournal(journalId) {
     .catch(function (err) {
       if (btn) {
         btn.disabled = false;
-        btn.innerHTML = '<span style="font-size: 1.1rem; line-height: 1;">⤓</span> <span>Завантажити з nz.ua</span>';
+        btn.innerHTML = '<span style="font-size: 1.1rem; line-height: 1;">⤓</span> <span>Оновити з nz.ua</span>';
       }
       if (modalPullBtn) {
         modalPullBtn.disabled = false;

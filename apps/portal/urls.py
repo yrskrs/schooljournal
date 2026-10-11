@@ -66,6 +66,7 @@ urlpatterns = [
     path('journal/<int:journal_id>/assessment/', views_journal.assessment_calculate, name='assessment_calculate'),
     path('journal/<int:journal_id>/lesson/<int:lesson_id>/edit/', views_journal.lesson_edit, name='lesson_edit'),
     path('journal/<int:journal_id>/lesson/<int:lesson_id>/delete/', views_journal.lesson_delete, name='lesson_delete'),
+    path('journal/<int:journal_id>/delete/', views_journal.journal_delete, name='journal_delete'),
 
     # Інтеграція з nz.ua (Нові знання)
     path('nz/status/', views_nz.nz_account_status_view, name='nz_status'),
@@ -74,6 +75,7 @@ urlpatterns = [
     path('nz/journals/', views_nz.nz_journals_list_view, name='nz_journals_list'),
     path('nz/import/', views_nz.nz_journal_import_view, name='nz_journal_import'),
     path('journal/<int:journal_id>/nz/import/', views_nz.nz_journal_import_view, name='nz_journal_import_for_journal'),
+    path('journal/<int:journal_id>/nz/reload/', views_nz.nz_journal_reload_view, name='nz_journal_reload'),
     path('journal/<int:journal_id>/nz/preview/', views_nz.nz_sync_preview_view, name='nz_sync_preview'),
     path('journal/<int:journal_id>/nz/sync/', views_nz.nz_sync_execute_view, name='nz_sync_execute'),
     path('journal/<int:journal_id>/nz/ignore-change/', views_nz.nz_ignore_change_view, name='nz_ignore_change'),

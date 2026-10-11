@@ -45,6 +45,10 @@ def download_template(request, template_type, fmt='xlsx'):
         content, content_type = StudentImportService.generate_template(file_format=fmt)
         return _make_download_response(content, content_type, f"template_students.{fmt}", f"shablon_uchni.{fmt}")
     elif template_type == 'topics':
+        if request.GET.get('journal_id'):
+            journal = _get_journal_for_import_export(request.user, request.GET['journal_id'])
+            content, content_type = ExportService.export_topics(journal, file_format=fmt)
+            return _make_download_response(content, content_type, f"topics_journal_{journal.pk}.{fmt}", f"plan_zhurnalu_{journal.pk}.{fmt}")
         content, content_type = TopicImportService.generate_template(file_format=fmt)
         return _make_download_response(content, content_type, f"template_topics.{fmt}", f"shablon_tematychnyi_plan.{fmt}")
     else:
@@ -178,11 +182,15 @@ def import_topics_view(request, journal_id):
     journal = _get_journal_for_import_export(request.user, journal_id, write=True)
     step = 'upload'
     preview_result = None
+    import_target = 'lessons_and_plan'
 
     if request.method == 'POST':
         action = request.POST.get('action')
 
         if action == 'upload_file':
+            for key in ('topic_import_preview', 'topic_import_journal_id', 'topic_import_target'):
+                request.session.pop(key, None)
+            import_target = request.POST.get('import_target', 'lessons_and_plan')
             uploaded_file = request.FILES.get('file')
             if not uploaded_file:
                 messages.error(request, "Оберіть файл плану.")
@@ -192,8 +200,10 @@ def import_topics_view(request, journal_id):
                     if not rows:
                         messages.warning(request, "Файл порожній.")
                     else:
-                        preview_result = TopicImportService.validate_and_preview(rows, journal=journal)
+                        preview_result = TopicImportService.validate_and_preview(rows, journal=journal, target=import_target)
                         request.session['topic_import_preview'] = preview_result['preview_data']
+                        request.session['topic_import_journal_id'] = journal.pk
+                        request.session['topic_import_target'] = import_target
                         step = 'preview'
                 except Exception as e:
                     messages.error(request, f"Помилка при читанні файлу: {str(e)}")
@@ -201,30 +211,36 @@ def import_topics_view(request, journal_id):
         elif action == 'confirm_import':
             preview_data = request.session.get('topic_import_preview')
             mode = request.POST.get('import_mode', 'add_and_update')
+            import_target = request.session.get('topic_import_target', 'lessons_and_plan')
 
-            if not preview_data:
+            if not preview_data or request.session.get('topic_import_journal_id') != journal.pk:
                 messages.error(request, "Дані попереднього перегляду застаріли.")
                 return redirect(request.path)
 
             try:
-                res = TopicImportService.execute_import(preview_data, journal=journal, mode=mode, user=request.user)
+                res = TopicImportService.execute_import(preview_data, journal=journal, mode=mode, user=request.user, target=import_target)
                 messages.success(
                     request,
                     f"Імпорт тем успішно застосовано! "
                     f"Планові теми: додано {res['added_plan']}, оновлено {res['updated_plan']}. "
-                    f"Проведені уроки: створено {res['added_lessons']}, оновлено {res['updated_lessons']}."
+                    f"Уроки: створено {res['added_lessons']}, оновлено {res['updated_lessons']}. "
+                    f"Без змін: {res['unchanged']}, пропущено: {res['skipped']}."
                 )
                 request.session.pop('topic_import_preview', None)
+                request.session.pop('topic_import_journal_id', None)
+                request.session.pop('topic_import_target', None)
                 return redirect('portal:journal_detail', journal_id=journal.id)
             except Exception as e:
                 messages.error(request, f"Помилка транзакції: {str(e)}")
                 step = 'preview'
-                preview_result = {'preview_data': preview_data}
+                preview_result = {'preview_data': preview_data, 'total_rows': len(preview_data),
+                                  'valid_rows': sum(p.get('is_valid', False) for p in preview_data)}
 
     context = {
         'journal': journal,
         'step': step,
         'preview_result': preview_result,
+        'import_target': import_target,
     }
     return render(request, 'portal/importers/topic_import.html', context)
 
