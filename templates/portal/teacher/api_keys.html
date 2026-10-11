@@ -1,0 +1,218 @@
+{% extends 'base.html' %}
+
+{% block title %}Підключені API ключі | Кабінет вчителя{% endblock %}
+
+{% block content %}
+<div class="schedule-page">
+  <div class="schedule-page-header" style="margin-bottom: 1.5rem;">
+    <div>
+      <h1 style="font-size: 1.75rem; font-weight: 700; color: var(--primary-dark, #1e3a8a); margin-bottom: 0.25rem;">
+        Підключені API ключі
+      </h1>
+      <p style="color: var(--text-muted, #64748b); font-size: 0.95rem; margin: 0;">
+        Керування підключеннями до тестів, завдань та зовнішніх систем. Видаляйте недійсні або застарілі ключі, щоб вони не заважали синхронізації.
+      </p>
+    </div>
+    <div style="display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: center;">
+      <a class="btn btn-outline-secondary" href="{% url 'portal:roster_sync' %}">Списки та обмін</a>
+      <a class="btn btn-outline-primary" href="{% url 'portal:teacher_dashboard' %}">До кабінету вчителя</a>
+    </div>
+  </div>
+
+  <!-- Статистичні картки -->
+  <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 1rem; margin-bottom: 2rem;">
+    <div class="schedule-card" style="margin-bottom: 0; padding: 1.25rem; border-left: 4px solid var(--primary, #2563eb);">
+      <div style="font-size: 0.85rem; color: var(--text-muted, #64748b); font-weight: 600; text-transform: uppercase;">Підключень до журналів</div>
+      <div style="font-size: 2rem; font-weight: 700; color: var(--text-main, #1e293b); margin-top: 0.25rem;">{{ total_connections_count }}</div>
+    </div>
+    <div class="schedule-card" style="margin-bottom: 0; padding: 1.25rem; border-left: 4px solid #10b981;">
+      <div style="font-size: 0.85rem; color: var(--text-muted, #64748b); font-weight: 600; text-transform: uppercase;">Унікальних API ключів</div>
+      <div style="font-size: 2rem; font-weight: 700; color: var(--text-main, #1e293b); margin-top: 0.25rem;">{{ unique_keys_count }}</div>
+    </div>
+    <div class="schedule-card" style="margin-bottom: 0; padding: 1.25rem; border-left: 4px solid #f59e0b;">
+      <div style="font-size: 0.85rem; color: var(--text-muted, #64748b); font-weight: 600; text-transform: uppercase;">API списків учнів</div>
+      <div style="font-size: 2rem; font-weight: 700; color: var(--text-main, #1e293b); margin-top: 0.25rem;">{{ student_grants|length }}</div>
+    </div>
+  </div>
+
+  <!-- Розділ 1: Зовнішні API підключення -->
+  <section style="margin-bottom: 2.5rem;">
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; flex-wrap: wrap; gap: 0.5rem;">
+      <h2 style="font-size: 1.35rem; font-weight: 700; color: var(--text-main, #1e293b); margin: 0;">
+        Зовнішні ключі оцінок (Тести, Завдання, Зовнішні сайти)
+      </h2>
+      <span style="font-size: 0.9rem; color: var(--text-muted, #64748b);">
+        Видалення ключа не шкодить оцінкам, що вже збережені в журналі
+      </span>
+    </div>
+
+    {% if key_groups %}
+      <div style="display: flex; flex-direction: column; gap: 1.25rem;">
+        {% for grp in key_groups %}
+          <div class="schedule-card" style="margin-bottom: 0; padding: 1.5rem; border: 1px solid var(--border, #e2e8f0); border-radius: 8px;">
+            <div style="display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 1rem; margin-bottom: 1rem;">
+              <div>
+                <div style="display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; margin-bottom: 0.35rem;">
+                  <span class="user-role-pill" style="font-weight: 700; font-size: 0.85rem; background: var(--primary-light, #eff6ff); color: var(--primary, #2563eb);">
+                    {{ grp.source_display }}
+                  </span>
+                  <h3 style="margin: 0; font-size: 1.2rem; font-weight: 700; color: var(--text-main, #1e293b);">
+                    {{ grp.name }}
+                  </h3>
+                  <span class="badge" style="background: #e2e8f0; color: #334155; font-size: 0.8rem;">
+                    {{ grp.journals_count }} {% if grp.journals_count == 1 %}журнал{% elif grp.journals_count < 5 %}журнали{% else %}журналів{% endif %}
+                  </span>
+                  {% if grp.can_send %}
+                    <span class="badge" style="background: #dcfce7; color: #15803d; font-size: 0.8rem;">
+                      Передає учнів
+                    </span>
+                  {% endif %}
+                </div>
+                <div style="font-size: 0.88rem; color: var(--text-muted, #64748b);">
+                  {{ grp.capabilities_description }}
+                </div>
+              </div>
+
+              <!-- Групове видалення ключа -->
+              <div>
+                <form method="post" action="{% url 'portal:delete_api_key_group' %}" onsubmit="return confirm('Ви дійсно бажаєте видалити ключ «{{ grp.name }}» з усіх {{ grp.journals_count }} журналів?\n\nЯкщо ключ недійсний або сайт змінив налаштування, його буде повністю видалено з ваших журналів.');">
+                  {% csrf_token %}
+                  <input type="hidden" name="connection_id" value="{{ grp.id }}">
+                  <input type="hidden" name="delete_all" value="1">
+                  <button type="submit" class="btn btn-outline-danger btn-sm" style="display: inline-flex; align-items: center; gap: 0.35rem;">
+                    Видалити з усіх журналів ({{ grp.journals_count }})
+                  </button>
+                </form>
+              </div>
+            </div>
+
+            <div style="background: var(--bg-card, #f8fafc); padding: 0.85rem 1rem; border-radius: 6px; margin-bottom: 1rem; font-size: 0.9rem; display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 0.75rem;">
+              <div>
+                <strong style="color: var(--text-muted, #64748b); display: block; font-size: 0.8rem; margin-bottom: 0.15rem;">Адреса сервера:</strong>
+                <code style="word-break: break-all;">{{ grp.url }}</code>
+              </div>
+              <div>
+                <strong style="color: var(--text-muted, #64748b); display: block; font-size: 0.8rem; margin-bottom: 0.15rem;">Ключ API:</strong>
+                <code>{{ grp.masked_key }}</code>
+              </div>
+              <div>
+                <strong style="color: var(--text-muted, #64748b); display: block; font-size: 0.8rem; margin-bottom: 0.15rem;">Остання синхронізація оцінок:</strong>
+                <span>{{ grp.last_pulled|date:'d.m.Y H:i'|default:'ще не проводилася' }}</span>
+              </div>
+            </div>
+
+            <!-- Список прив'язаних журналів -->
+            <div>
+              <div style="font-weight: 600; font-size: 0.95rem; margin-bottom: 0.5rem; color: var(--text-main, #1e293b);">
+                Підключені журнали:
+              </div>
+              <div style="display: flex; flex-direction: column; gap: 0.4rem;">
+                {% for conn in grp.connections %}
+                  <div style="display: flex; justify-content: space-between; align-items: center; padding: 0.5rem 0.75rem; background: white; border: 1px solid var(--border, #e2e8f0); border-radius: 4px; font-size: 0.9rem; flex-wrap: wrap; gap: 0.5rem;">
+                    <div style="display: flex; align-items: center; gap: 0.5rem;">
+                      <span style="font-weight: 600;">{{ conn.journal.student_class.name }}</span>
+                      <span style="color: var(--text-muted, #64748b);">&bull;</span>
+                      <span>{{ conn.journal.subject.name }}</span>
+                      {% if conn.enabled %}
+                        <span class="badge" style="background: #dcfce7; color: #166534; font-size: 0.75rem;">Активно</span>
+                      {% else %}
+                        <span class="badge" style="background: #fef3c7; color: #92400e; font-size: 0.75rem;">Налаштовується</span>
+                      {% endif %}
+                    </div>
+                    <div style="display: flex; gap: 0.5rem; align-items: center;">
+                      <a href="{% url 'portal:connect_source' conn.journal.pk %}?connection={{ conn.pk }}" class="btn btn-outline-primary btn-sm" style="font-size: 0.8rem; padding: 0.2rem 0.5rem;">
+                        Налаштувати
+                      </a>
+                      <form method="post" action="{% url 'portal:delete_api_key_group' %}" style="display: inline;" onsubmit="return confirm('Видалити підключення ключа для журналу {{ conn.journal.student_class.name }} · {{ conn.journal.subject.name }}?');">
+                        {% csrf_token %}
+                        <input type="hidden" name="connection_id" value="{{ conn.pk }}">
+                        <input type="hidden" name="delete_all" value="0">
+                        <button type="submit" class="btn btn-outline-danger btn-sm" style="font-size: 0.8rem; padding: 0.2rem 0.5rem;">
+                          Відключити
+                        </button>
+                      </form>
+                    </div>
+                  </div>
+                {% endfor %}
+              </div>
+            </div>
+          </div>
+        {% endfor %}
+      </div>
+    {% else %}
+      <div class="schedule-card" style="padding: 2rem; text-align: center;">
+        <p style="font-size: 1.05rem; color: var(--text-muted, #64748b); margin-bottom: 1rem;">
+          У вас ще немає підключених зовнішніх ключів API (SchoolTest чи SchoolWork).
+        </p>
+        <p style="font-size: 0.9rem; color: var(--text-muted, #64748b); margin-bottom: 1.5rem;">
+          Щоб підключити тести або завдання, відкрийте відповідний журнал і виберіть «Підключити тести / завдання».
+        </p>
+        <a href="{% url 'portal:teacher_dashboard' %}" class="btn btn-primary">
+          Перейти до моїх журналів
+        </a>
+      </div>
+    {% endif %}
+  </section>
+
+  <!-- Розділ 2: Ключі доступу до списку учнів (StudentAPIGrant) -->
+  <section style="margin-bottom: 2rem;">
+    <div style="margin-bottom: 1rem;">
+      <h2 style="font-size: 1.35rem; font-weight: 700; color: var(--text-main, #1e293b); margin-bottom: 0.25rem;">
+        Ключі доступу до списку учнів (Student API)
+      </h2>
+      <p style="color: var(--text-muted, #64748b); font-size: 0.9rem; margin: 0;">
+        Ці ключі дозволяють іншим сервісам автоматично зчитувати затверджені списки учнів журналів. Оцінки та приватні дані через цей API не надаються.
+      </p>
+    </div>
+
+    {% if student_grants %}
+      <div class="table-responsive">
+        <table class="table" style="width: 100%; border-collapse: collapse; background: white; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.05);">
+          <thead>
+            <tr style="background: var(--bg-card, #f8fafc); border-bottom: 2px solid var(--border, #e2e8f0); text-align: left;">
+              <th style="padding: 0.75rem 1rem; font-weight: 600; font-size: 0.85rem; color: var(--text-muted, #64748b);">Журнал</th>
+              <th style="padding: 0.75rem 1rem; font-weight: 600; font-size: 0.85rem; color: var(--text-muted, #64748b);">Статус</th>
+              <th style="padding: 0.75rem 1rem; font-weight: 600; font-size: 0.85rem; color: var(--text-muted, #64748b);">Дозволені поля</th>
+              <th style="padding: 0.75rem 1rem; font-weight: 600; font-size: 0.85rem; color: var(--text-muted, #64748b);">Термін дії</th>
+              <th style="padding: 0.75rem 1rem; font-weight: 600; font-size: 0.85rem; color: var(--text-muted, #64748b); text-align: right;">Дія</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for grant in student_grants %}
+              <tr style="border-bottom: 1px solid var(--border, #e2e8f0);">
+                <td style="padding: 0.75rem 1rem; font-weight: 600;">
+                  {{ grant.journal.student_class.name }} &bull; {{ grant.journal.subject.name }}
+                </td>
+                <td style="padding: 0.75rem 1rem;">
+                  {% if grant.enabled and grant.token_hash %}
+                    <span class="badge" style="background: #dcfce7; color: #166534; font-size: 0.8rem;">Увімкнено</span>
+                  {% elif grant.token_hash %}
+                    <span class="badge" style="background: #fef3c7; color: #92400e; font-size: 0.8rem;">Вимкнено (ключ існує)</span>
+                  {% else %}
+                    <span class="badge" style="background: #f1f5f9; color: #64748b; font-size: 0.8rem;">Не створено</span>
+                  {% endif %}
+                </td>
+                <td style="padding: 0.75rem 1rem; font-size: 0.85rem; color: var(--text-muted, #64748b);">
+                  {{ grant.fields|join:', '|default:'id, name' }}
+                </td>
+                <td style="padding: 0.75rem 1rem; font-size: 0.85rem;">
+                  {{ grant.expires_at|date:'d.m.Y'|default:'Безстроково' }}
+                </td>
+                <td style="padding: 0.75rem 1rem; text-align: right;">
+                  <a href="{% url 'portal:journal_integrations' grant.journal.pk %}" class="btn btn-outline-primary btn-sm">
+                    Налаштувати
+                  </a>
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      <div class="schedule-card" style="padding: 1.5rem; color: var(--text-muted, #64748b);">
+        Немає журналів із налаштованим Student API. Щоб увімкнути ключ доступу до списку учнів для будь-якого класу, відкрийте журнал та перейдіть у «Профілі та API».
+      </div>
+    {% endif %}
+  </section>
+</div>
+{% endblock %}

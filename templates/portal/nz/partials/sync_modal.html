@@ -1,9 +1,8 @@
-<div class="modal fade show" id="nzSyncModal" tabindex="-1" style="display: block; background: rgba(15, 23, 42, 0.6); backdrop-filter: blur(4px); z-index: 1050;">
-  <div class="modal-dialog modal-lg modal-dialog-scrollable" style="max-width: 850px; margin: 2rem auto;">
-    <div class="modal-content" style="border-radius: var(--radius-md); border: 1px solid var(--border); box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);">
+<div class="modal-overlay open" id="nzSyncModal" tabindex="-1" style="z-index: 1050; display: flex; position: fixed; inset: 0; background: rgba(15, 23, 42, 0.6); backdrop-filter: blur(4px); align-items: center; justify-content: center; padding: 1rem;" onclick="if(event.target===this)closeNzSyncModal()">
+  <div class="modal-card" style="max-width: 880px; width: 100%; max-height: calc(100vh - 2rem); margin: 0; padding: 0; display: flex; flex-direction: column; border-radius: var(--radius-md); border: 1px solid var(--border); box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25); overflow: hidden; background: #fff; animation: modal-appear 0.2s ease-out;">
 
       <!-- Шапка модального вікна -->
-      <div class="modal-header" style="background: linear-gradient(135deg, #1e3a8a 0%, #2563eb 100%); color: white; padding: 1.25rem 1.5rem; border-top-left-radius: var(--radius-md); border-top-right-radius: var(--radius-md); display: flex; justify-content: space-between; align-items: center;">
+      <div class="modal-header" style="flex-shrink: 0; background: linear-gradient(135deg, #1e3a8a 0%, #2563eb 100%); color: white; padding: 1.25rem 1.5rem; display: flex; justify-content: space-between; align-items: center; margin-bottom: 0;">
         <div style="display: flex; align-items: center; gap: 0.75rem;">
           <div style="width: 36px; height: 36px; border-radius: 8px; background: rgba(255, 255, 255, 0.2); display: flex; align-items: center; justify-content: center; font-size: 1.25rem;">
             &#8644;
@@ -17,11 +16,11 @@
             </div>
           </div>
         </div>
-        <button type="button" class="btn-close btn-close-white" onclick="closeNzSyncModal()" style="filter: brightness(0) invert(1); opacity: 0.8; font-size: 1.1rem; cursor: pointer; background: transparent; border: none; color: white;">&times;</button>
+        <button type="button" class="modal-close" onclick="closeNzSyncModal()" style="color: white; opacity: 0.85; font-size: 1.6rem; line-height: 1; cursor: pointer; background: transparent; border: none; padding: 0.25rem;" aria-label="Закрити">&times;</button>
       </div>
 
       <!-- Тіло модального вікна -->
-      <div class="modal-body" style="padding: 1.5rem; max-height: calc(85vh - 160px); overflow-y: auto;">
+      <div class="modal-body" style="padding: 1.5rem; overflow-y: auto; flex: 1 1 auto; max-height: calc(88vh - 140px);">
 
         {% if preview.blocked_grades_count %}<p class="alert alert-info">Попередні оцінки ШІ ({{ preview.blocked_grades_count }}) виключено з вивантаження. <a href="{% url 'portal:external_grade_review' journal.id %}">Розглянути оцінки</a>.</p>{% endif %}
         <!-- Статус зв'язку з nz.ua -->
@@ -215,7 +214,7 @@
       </div>
 
       <!-- Футер модального вікна -->
-      <div class="modal-footer" style="padding: 1rem 1.5rem; border-top: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center;">
+      <div class="modal-footer" style="flex-shrink: 0; padding: 1rem 1.5rem; border-top: 1px solid var(--border); background: #f8fafc; display: flex; justify-content: space-between; align-items: center;">
         <div style="display: flex; gap: 0.5rem; align-items: center;">
           <a href="{% url 'portal:nz_sync_history' journal_id=journal.id %}" target="_blank" class="btn btn-sm btn-outline-secondary" style="font-size: 0.85rem;">
             Історія синхронізацій &rarr;
@@ -238,6 +237,5 @@
         </div>
       </div>
 
-    </div>
   </div>
 </div>

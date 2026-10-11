@@ -98,8 +98,11 @@ def import_grade_records(connection, rows, user, date_from, date_to):
     from apps.portal.permissions import has_journal_access
     if not has_journal_access(user, journal, write=True):
         raise ExternalAPIError('Доступ до журналу змінився. Оновіть сторінку.')
+    ignored_student_ids = set(journal.ignored_students.values_list('pk', flat=True))
     students = {}
     for student in journal_students(journal):
+        if student.pk in ignored_student_ids:
+            continue
         identifier = str(getattr(student, connection.student_identifier) or '')
         if identifier:
             students.setdefault(identifier, []).append(student)
@@ -127,10 +130,19 @@ def import_grade_records(connection, rows, user, date_from, date_to):
                 raise ValueError('Повторний ID оцінки в одній відповіді API.')
             seen.add(external_id)
             if connection.contract_version == 2:
+                if row.get('student_id') in ignored_student_ids:
+                    continue
                 candidates = [student for student in journal_students(journal)
                     if student.pk == row['student_id']]
             else:
-                candidates = students.get(str(json_field(row, connection.student_key)), [])
+                raw_student_id = str(json_field(row, connection.student_key))
+                candidates = students.get(raw_student_id, [])
+                if not candidates:
+                    # Check if student was intentionally ignored
+                    ignored_matches = [s for s in journal_students(journal)
+                        if s.pk in ignored_student_ids and str(getattr(s, connection.student_identifier) or '') == raw_student_id]
+                    if ignored_matches:
+                        continue
             if len(candidates) != 1:
                 raise ValueError('ID учня відсутній у журналі або не є унікальним.')
             student = candidates[0]

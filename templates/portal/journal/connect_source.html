@@ -2,10 +2,67 @@
 {% block title %}Підключити тести та завдання | Журнал{% endblock %}
 {% block content %}
 <div class="schedule-page integration-page">
-  <div class="schedule-page-header"><div><h1>Підключити тести та завдання</h1><p>Журнал: {{ journal.student_class.name }} · {{ journal.subject.name }}</p></div><a class="btn btn-outline-primary" href="{% url 'portal:journal_detail' journal.pk %}">До журналу</a></div>
+  <div class="schedule-page-header">
+    <div>
+      <h1>Підключити тести та завдання</h1>
+      <p>Журнал: {{ journal.student_class.name }} · {{ journal.subject.name }}</p>
+    </div>
+    <div style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
+      <a class="btn btn-outline-secondary" href="{% url 'portal:teacher_api_keys' %}">Усі API ключі</a>
+      <a class="btn btn-outline-primary" href="{% url 'portal:journal_detail' journal.pk %}">До журналу</a>
+    </div>
+  </div>
   <p>Вставте адресу й ключ. Журнал передасть копію свого класу та учнів у місцеву базу сайту. Надалі оцінки отримуються двома кнопками у журналі. Підключення необов’язкове для роботи будь-якого сайту.</p>
-  {% for item in connections %}<p><a href="?connection={{ item.pk }}">{{ item.get_source_display }}{% if item.enabled %} — підключено{% else %} — завершіть налаштування{% endif %}</a></p>{% endfor %}
-  {% if available_sources and not connection %}<section class="schedule-card"><h2>Уже підключений сайт</h2><p>Адресу й ключ повторно вводити не потрібно. Журнал передасть учнів цього класу після натискання.</p><form method="post">{% csrf_token %}<select name="reuse_connection">{% for source in available_sources %}<option value="{{ source.pk }}">{{ source.get_source_display }} · {{ source.journal.student_class.name }} · {{ source.journal.subject.name }}</option>{% endfor %}</select> <button class="btn btn-primary" name="action" value="reuse">Використати це підключення</button></form></section>{% endif %}
+  {% if connections %}
+    <div style="margin-bottom: 1.25rem;">
+      <h3 style="font-size: 1rem; margin-bottom: 0.5rem;">Підключені до цього журналу сайти:</h3>
+      {% for item in connections %}
+        <div style="display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; padding: 0.5rem 0.75rem; margin-bottom: 0.35rem; background: var(--bg-card, #f8fafc); border-radius: 6px; border: 1px solid var(--border, #e2e8f0); max-width: 600px;">
+          <div>
+            <a href="?connection={{ item.pk }}" style="font-weight: 600;">{{ item.get_source_display }}</a>
+            <span style="font-size: 0.85rem; color: var(--text-muted, #64748b);">{% if item.enabled %} — підключено{% else %} — налаштування не завершено{% endif %}</span>
+          </div>
+          <form method="post" action="{% url 'portal:delete_source_connection' journal.pk item.pk %}" style="display: inline;" onsubmit="return confirm('Видалити підключення «{{ item.get_source_display }}»?');">
+            {% csrf_token %}
+            <button type="submit" class="btn btn-outline-danger btn-sm" style="padding: 0.2rem 0.6rem; font-size: 0.8rem;">Видалити</button>
+          </form>
+        </div>
+      {% endfor %}
+    </div>
+  {% endif %}
+  {% if available_sources and not connection %}
+  <section class="schedule-card">
+    <h2>Уже підключений сайт</h2>
+    <p>Адресу й ключ повторно вводити не потрібно. Журнал передасть учнів цього класу після натискання.</p>
+    <form method="post">
+      {% csrf_token %}
+      <p>
+        <label for="reuse_connection_select" style="display: block; margin-bottom: 0.35rem; font-weight: 500;">Оберіть ключ підключення:</label>
+        <select name="reuse_connection" id="reuse_connection_select" style="max-width: 100%; min-width: 320px; padding: 0.45rem; border-radius: 4px; border: 1px solid var(--border);">
+          {% for source in available_sources %}
+            <option value="{{ source.pk }}">{{ source.key_display_name }}</option>
+          {% endfor %}
+        </select>
+      </p>
+      <p style="margin: 0.75rem 0;">
+        <label style="display: inline-flex; align-items: center; gap: 0.5rem; cursor: pointer; font-weight: 500;">
+          <input type="checkbox" name="apply_to_all_classes" value="1">
+          Підключити тести та завдання для всіх моїх класів/журналів одночасно
+        </label>
+      </p>
+      <div style="display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: center; margin-top: 1rem;">
+        <button class="btn btn-primary" name="action" value="reuse">Використати це підключення</button>
+        <button class="btn btn-outline-danger" name="action" value="delete_saved_key" onclick="return confirm('Видалити цей збережений ключ? Якщо він більше недійсний, його буде видалено.');">Видалити збережений ключ</button>
+      </div>
+      <p style="margin-top: 0.5rem;">
+        <label style="display: inline-flex; align-items: center; gap: 0.5rem; cursor: pointer; font-size: 0.85rem; color: var(--danger, #dc2626);">
+          <input type="checkbox" name="delete_all_matching" value="1">
+          Якщо видаляєте: видалити цей ключ також з усіх інших моїх журналів
+        </label>
+      </p>
+    </form>
+  </section>
+  {% endif %}
   {% if connection %}
   <section class="schedule-card"><h2>Список журналу → {{ connection.get_source_display }}</h2>
     <p>Клас: {{ journal.student_class.name }}. Остання підтверджена передача: {{ connection.roster_sent_at|date:'d.m.Y H:i'|default:'ще не передано' }}. Учні зберігаються на сайті й доступні, коли журнал вимкнений.</p>
@@ -33,11 +90,33 @@
   <details class="schedule-card" {% if setup_form.errors %}open{% endif %}><summary>Змінити IP, порт або ключ цього підключення</summary>
   {% else %}<section class="schedule-card"><h2>1. Вкажіть адресу та ключ</h2><p>У тестах відкрийте «Підключення до журналу», у завданнях — «Налаштування → API та журнал». Натисніть «Створити ключ API». Скопіюйте адресу сайту та ключ у відповідні поля нижче.</p>{% endif %}
     <form method="post">{% csrf_token %}{% if connection %}<input type="hidden" name="connection_id" value="{{ connection.pk }}">{% endif %}{{ setup_form.non_field_errors }}
-      <p>{{ setup_form.source.label_tag }} {{ setup_form.source }} {{ setup_form.source.errors }}</p><p>{{ setup_form.site_url.label_tag }} {{ setup_form.site_url }} {{ setup_form.site_url.errors }}<small>{{ setup_form.site_url.help_text }}</small></p><p>{{ setup_form.api_key.label_tag }} {{ setup_form.api_key }} {{ setup_form.api_key.errors }}</p>
+      <p>{{ setup_form.source.label_tag }} {{ setup_form.source }} {{ setup_form.source.errors }}</p>
+      <p>{{ setup_form.key_name.label_tag }} {{ setup_form.key_name }} {{ setup_form.key_name.errors }}<small>{{ setup_form.key_name.help_text }}</small></p>
+      <p>{{ setup_form.site_url.label_tag }} {{ setup_form.site_url }} {{ setup_form.site_url.errors }}<small>{{ setup_form.site_url.help_text }}</small></p>
+      <p>{{ setup_form.api_key.label_tag }} {{ setup_form.api_key }} {{ setup_form.api_key.errors }}</p>
       <details {% if setup_form.connection_code.errors %}open{% endif %}><summary>Код зі старої версії</summary><p>{{ setup_form.connection_code.label_tag }} {{ setup_form.connection_code }} {{ setup_form.connection_code.errors }}</p></details>
+      <p style="margin: 0.75rem 0;">
+        <label style="display: inline-flex; align-items: center; gap: 0.5rem; cursor: pointer; font-weight: 500;">
+          <input type="checkbox" name="apply_to_all_classes" value="1">
+          Підключити тести та завдання для всіх моїх класів/журналів одночасно
+        </label>
+      </p>
       <p><button name="action" value="connect" class="btn btn-primary">Підключити й передати учнів</button></p>
     </form>
-  {% if connection %}</details>{% else %}</section>{% endif %}
+  {% if connection %}
+  </details>
+  <details class="schedule-card" style="border-left: 4px solid var(--danger, #dc2626); margin-top: 1rem;">
+    <summary style="color: var(--danger, #dc2626); font-weight: 600;">Недійсне або непотрібне підключення? Видалити</summary>
+    <p>Якщо ключ недійсний, сайт вимкнений або підключення більше не потрібне, видаліть його, щоб воно не заважало. Оцінки, які вже були виставлені в журналі, залишаться в повній безпеці.</p>
+    <form method="post" onsubmit="return confirm('Видалити це підключення з поточного журналу?');">
+      {% csrf_token %}
+      <input type="hidden" name="connection_id" value="{{ connection.pk }}">
+      <button name="action" value="delete_connection" class="btn btn-outline-danger">Видалити це підключення</button>
+    </form>
+  </details>
+  {% else %}
+  </section>
+  {% endif %}
   <p>Ця сторінка не імпортує оцінок. Відкрийте журнал і натисніть «Синхронізувати з тестами» або «Синхронізувати із завданнями» за потрібний період.</p>
   <p>Сайти можуть працювати на різних серверах і в різних мережах. У разі зміни IP чи порту змініть адресу в цьому підключенні. Коли джерело недоступне, журнал працює зі збереженими списками й оцінками. Після відновлення зв’язку повторіть синхронізацію.</p>
 </div>

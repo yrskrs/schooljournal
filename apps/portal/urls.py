@@ -25,6 +25,7 @@ urlpatterns = [
     path('api/v1/journals/<int:journal_id>/students/', views_integrations.student_list_api, name='student_list_api'),
     path('journal/<int:journal_id>/integrations/', views_integrations.journal_integrations, name='journal_integrations'),
     path('journal/<int:journal_id>/connect/', views_connection_setup.connect_source, name='connect_source'),
+    path('journal/<int:journal_id>/connection/<int:connection_id>/delete/', views_connection_setup.delete_source_connection, name='delete_source_connection'),
     path('journal/<int:journal_id>/integrations/<int:connection_id>/pull/', views_integrations.pull_external_grades, name='pull_external_grades'),
     path('journal/<int:journal_id>/sync/<str:source>/', views_integrations.pull_source_grades, name='pull_source_grades'),
     path('journal/<int:journal_id>/external-grades/', views_integrations.external_grade_review, name='external_grade_review'),
@@ -44,11 +45,14 @@ urlpatterns = [
     path('teacher-portal/', views_teacher.teacher_dashboard, name='teacher_dashboard'),
     path('teacher-portal/schedule/', views_schedule.weekly_schedule, name='weekly_schedule'),
     path('teacher-portal/lesson-times/', views_schedule.lesson_times, name='lesson_times'),
+    path('teacher-portal/api-keys/', views_connection_setup.teacher_api_keys, name='teacher_api_keys'),
+    path('teacher-portal/api-keys/delete/', views_connection_setup.delete_api_key_group, name='delete_api_key_group'),
     path('teacher-portal/journal/create/', views_teacher.create_journal, name='create_journal'),
 
     # Інтерактивний журнал
     path('journal/<int:journal_id>/', views_journal.journal_detail, name='journal_detail'),
     path('journal/<int:journal_id>/grade/update/', views_journal.update_grade, name='update_grade'),
+    path('journal/<int:journal_id>/student/<int:student_id>/toggle-ignore/', views_journal.toggle_student_sync_ignore, name='toggle_student_sync_ignore'),
     path('journal/<int:journal_id>/attendance/update/', views_journal.update_attendance, name='update_attendance'),
     path('journal/<int:journal_id>/summary-grade/update/', views_journal.update_summary_grade, name='update_summary_grade'),
     path('journal/<int:journal_id>/lesson/create/', views_journal.lesson_create, name='lesson_create'),

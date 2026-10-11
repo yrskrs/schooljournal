@@ -107,6 +107,16 @@ def journal_integrations(request, journal_id):
                         target_model='GradeAPIConnection', target_id=str(connection.pk), description='Збережено підключення API оцінок.')
                     messages.success(request, 'Підключення API оцінок збережено.')
                     return redirect(destination)
+            elif action == 'delete_connection':
+                del_id = request.POST.get('connection_id')
+                conn_to_del = get_object_or_404(connections, pk=del_id if str(del_id).isdigit() else 0)
+                conn_name = conn_to_del.name or conn_to_del.get_source_display()
+                AuditLog.objects.create(school=journal.school, user=request.user, action=AuditLog.Action.DELETE,
+                    target_model='GradeAPIConnection', target_id=str(conn_to_del.pk),
+                    description=f'Видалено підключення API {conn_name} ({conn_to_del.url}) для журналу {journal.student_class.name}.')
+                conn_to_del.delete()
+                messages.success(request, f'Підключення «{conn_name}» видалено.')
+                return redirect(destination)
             elif action == 'student_mapping':
                 connection = get_object_or_404(connections, pk=request.POST.get('mapping_connection_id') if
                     str(request.POST.get('mapping_connection_id', '')).isdigit() else 0)

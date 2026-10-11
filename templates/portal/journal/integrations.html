@@ -4,7 +4,10 @@
 <div class="schedule-page integration-page">
   <div class="schedule-page-header">
     <div><h1>Профілі та API журналу</h1><p>{{ journal.student_class.name }} · {{ journal.subject.name }}</p></div>
-    <a class="btn btn-outline-primary" href="{% url 'portal:journal_detail' journal.id %}">Повернутися до журналу</a>
+    <div style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
+      <a class="btn btn-outline-secondary" href="{% url 'portal:teacher_api_keys' %}">Усі API ключі</a>
+      <a class="btn btn-outline-primary" href="{% url 'portal:journal_detail' journal.id %}">Повернутися до журналу</a>
+    </div>
   </div>
   <section class="schedule-card"><h2>Підключення тестів і завдань</h2><p>Для цих двох сайтів використовуйте майстер: вставте адресу сайту з IP і портом та окремо ключ API, виберіть назви класу й предмета та підтвердьте учнів.</p><a class="btn btn-primary" href="{% url 'portal:connect_source' journal.pk %}">Підключити тести / завдання</a></section>
   <fieldset class="integration-settings" {% if not can_edit %}disabled{% endif %}>
@@ -44,7 +47,14 @@
         <h3>{{ connection.name }} {% if not connection.enabled %}<span class="badge">Вимкнено</span>{% endif %}</h3>
         <p class="integration-url">{{ connection.url }}</p>
         <p class="text-muted">Останнє отримання: {{ connection.last_pulled_at|date:'d.m.Y H:i'|default:'ще не було' }}. {% if connection.api_key %}Ключ збережено.{% endif %}</p>
-        <a href="?edit={{ connection.pk }}#connectionEditor">Змінити налаштування</a>
+        <div style="display: flex; gap: 0.75rem; align-items: center; margin: 0.5rem 0;">
+          <a href="?edit={{ connection.pk }}#connectionEditor" class="btn btn-outline-primary btn-sm">Змінити налаштування</a>
+          <form method="post" action="{% url 'portal:delete_source_connection' journal.pk connection.pk %}" style="display: inline;" onsubmit="return confirm('Видалити підключення «{{ connection.name|default:connection.get_source_display }}»?');">
+            {% csrf_token %}
+            <input type="hidden" name="next" value="{% url 'portal:journal_integrations' journal.pk %}">
+            <button type="submit" class="btn btn-outline-danger btn-sm">Видалити підключення</button>
+          </form>
+        </div>
         {% if connection.contract_version == 2 %}
         <details><summary>Явне зіставлення учнів для API v2</summary>
           <p>Виберіть учня журналу та введіть його ID на сайті джерела. Однаковий ПІБ не є підставою для об’єднання.</p>

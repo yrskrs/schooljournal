@@ -5,8 +5,8 @@ from django.test import TestCase, Client, override_settings
 from django.conf import settings
 from django.urls import reverse
 from apps.accounts.models import User
-from apps.curriculum.models import Student, ClassEnrollment
-from apps.journals.models import GradeAPIConnection, GradeStudentMapping, Grade, ExternalGrade
+from apps.curriculum.models import Student, ClassEnrollment, StudentClass
+from apps.journals.models import Journal, GradeAPIConnection, GradeStudentMapping, Grade, ExternalGrade, AuditLog, StudentAPIGrant
 from apps.journals.services.connection_setup import roster_version, validate_roster, source_urls
 from apps.journals.services.external_grades import ExternalAPIError, import_grade_records
 from tests import test_journal_workflows as workflows
@@ -241,3 +241,159 @@ class ConnectionSetupTests(TestCase):
         for changes in ({'schema_version': 1}, {'source': 'schoolwork'}, {'classes': None},
             {'classes': [{'id': True, 'name': 'Клас'}]}, {'students': [{'id': 41, 'class_id': 999, 'name': 'Вигаданий Учень'}]}):
             with self.assertRaises(ExternalAPIError): validate_roster({**self.payload, **changes}, 'schooltest')
+
+    def test_connection_key_name_and_display_properties(self):
+        payload_with_caps = {**self.payload, 'capabilities': ['journal_roster_import']}
+        with patch('apps.portal.views_connection_setup.fetch_source_roster', return_value=payload_with_caps), \
+             patch('apps.portal.views_connection_setup.send_journal_roster', return_value={'counts': {'created': 1, 'updated': 0, 'needs_review': 0, 'conflicts': 0}}):
+            resp = self.client.post(self.url, {
+                'action': 'connect',
+                'source': 'schooltest',
+                'key_name': 'Мій унікальний тестовий ключ',
+                'site_url': 'http://10.25.4.21:8000',
+                'api_key': 'abc123secretkey',
+            })
+            self.assertEqual(resp.status_code, 302)
+        conn = GradeAPIConnection.objects.get(journal=self.journal)
+        self.assertEqual(conn.name, 'Мій унікальний тестовий ключ')
+        self.assertEqual(conn.masked_key, '...retkey')
+        self.assertEqual(conn.capabilities_description, 'може отримувати та передавати дані')
+        self.assertIn('Мій унікальний тестовий ключ', conn.key_display_name)
+        self.assertIn('може отримувати та передавати дані', conn.key_display_name)
+
+    def test_apply_to_all_classes_connects_all_teacher_journals(self):
+        group2 = StudentClass.objects.create(school=self.school, academic_year=self.year, name='8-Б клас')
+        journal2 = Journal.objects.create(school=self.school, academic_year=self.year, student_class=group2, subject=self.subject, teacher=self.teacher)
+
+        with patch('apps.portal.views_connection_setup.fetch_source_roster', return_value=self.payload), \
+             patch('apps.portal.views_connection_setup.send_journal_roster', return_value={'counts': {'created': 1, 'updated': 0, 'needs_review': 0, 'conflicts': 0}}):
+            resp = self.client.post(self.url, {
+                'action': 'connect',
+                'source': 'schooltest',
+                'key_name': 'Ключ для всіх',
+                'site_url': 'http://10.25.4.21:8000',
+                'api_key': 'sharedkey12345',
+                'apply_to_all_classes': '1',
+            })
+            self.assertEqual(resp.status_code, 302)
+
+        # Both journals should have connection
+        conn1 = GradeAPIConnection.objects.filter(journal=self.journal).first()
+        conn2 = GradeAPIConnection.objects.filter(journal=journal2).first()
+        self.assertIsNotNone(conn1)
+        self.assertIsNotNone(conn2)
+        self.assertEqual(conn1.api_key, 'sharedkey12345')
+        self.assertEqual(conn2.api_key, 'sharedkey12345')
+        self.assertEqual(conn2.name, 'Ключ для всіх')
+
+    def test_delete_source_connection(self):
+        conn = self.connect()
+        conn_pk = conn.pk
+        resp = self.client.post(reverse('portal:delete_source_connection', kwargs={
+            'journal_id': self.journal.pk,
+            'connection_id': conn_pk
+        }))
+        self.assertEqual(resp.status_code, 302)
+        self.assertFalse(GradeAPIConnection.objects.filter(pk=conn_pk).exists())
+        self.assertTrue(AuditLog.objects.filter(
+            action=AuditLog.Action.DELETE, target_model='GradeAPIConnection', target_id=str(conn_pk)
+        ).exists())
+
+    def test_delete_connection_from_connect_source_preserves_grades(self):
+        conn = self.connect()
+        self.context(conn); conn.refresh_from_db(); self.confirm(conn)
+        grade = Grade.objects.create(lesson=self.l1, student=self.student, value='12', created_by=self.teacher)
+        conn_pk = conn.pk
+        resp = self.client.post(self.url, {
+            'action': 'delete_connection',
+            'connection_id': conn_pk,
+        })
+        self.assertEqual(resp.status_code, 302)
+        self.assertFalse(GradeAPIConnection.objects.filter(pk=conn_pk).exists())
+        # Ensure Grade was NOT destroyed
+        grade.refresh_from_db()
+        self.assertEqual(grade.value, '12')
+
+    def test_delete_saved_key_single_and_all(self):
+        group2 = StudentClass.objects.create(school=self.school, academic_year=self.year, name='9-А клас')
+        journal2 = Journal.objects.create(school=self.school, academic_year=self.year, student_class=group2, subject=self.subject, teacher=self.teacher)
+
+        conn1 = self.connect()
+        conn2 = GradeAPIConnection.objects.create(
+            journal=journal2, source=conn1.source, url=conn1.url, api_key=conn1.api_key, name=conn1.name, contract_version=2
+        )
+
+        url2 = reverse('portal:connect_source', kwargs={'journal_id': journal2.pk})
+        # Delete only single saved key (conn1) from available list
+        resp = self.client.post(url2, {
+            'action': 'delete_saved_key',
+            'reuse_connection': conn1.pk,
+            'delete_all_matching': '0',
+        })
+        self.assertEqual(resp.status_code, 302)
+        self.assertFalse(GradeAPIConnection.objects.filter(pk=conn1.pk).exists())
+        self.assertTrue(GradeAPIConnection.objects.filter(pk=conn2.pk).exists())
+
+        # Now test delete_all_matching
+        conn3 = GradeAPIConnection.objects.create(
+            journal=self.journal, source=conn2.source, url=conn2.url, api_key=conn2.api_key, name=conn2.name, contract_version=2
+        )
+        resp2 = self.client.post(self.url, {
+            'action': 'delete_saved_key',
+            'reuse_connection': conn2.pk,
+            'delete_all_matching': '1',
+        })
+        self.assertEqual(resp2.status_code, 302)
+        self.assertFalse(GradeAPIConnection.objects.filter(pk=conn2.pk).exists())
+        self.assertFalse(GradeAPIConnection.objects.filter(pk=conn3.pk).exists())
+
+    def test_teacher_api_keys_view_and_bulk_deletion(self):
+        group2 = StudentClass.objects.create(school=self.school, academic_year=self.year, name='10-А клас')
+        journal2 = Journal.objects.create(school=self.school, academic_year=self.year, student_class=group2, subject=self.subject, teacher=self.teacher)
+
+        conn1 = self.connect()
+        conn2 = GradeAPIConnection.objects.create(
+            journal=journal2, source=conn1.source, url=conn1.url, api_key=conn1.api_key, name='Загальний ключ', contract_version=2
+        )
+        StudentAPIGrant.objects.create(journal=self.journal, enabled=True, fields=['id', 'name'])
+
+        keys_url = reverse('portal:teacher_api_keys')
+        resp = self.client.get(keys_url)
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, 'Підключені API ключі')
+        self.assertContains(resp, conn1.masked_key)
+        self.assertContains(resp, self.group.name)
+        self.assertContains(resp, '10-А клас')
+
+        # Test single delete from api_keys page
+        del_url = reverse('portal:delete_api_key_group')
+        resp_single = self.client.post(del_url, {
+            'connection_id': conn2.pk,
+            'delete_all': '0',
+        })
+        self.assertEqual(resp_single.status_code, 302)
+        self.assertFalse(GradeAPIConnection.objects.filter(pk=conn2.pk).exists())
+        self.assertTrue(GradeAPIConnection.objects.filter(pk=conn1.pk).exists())
+
+        # Test bulk delete
+        resp_bulk = self.client.post(del_url, {
+            'connection_id': conn1.pk,
+            'delete_all': '1',
+        })
+        self.assertEqual(resp_bulk.status_code, 302)
+        self.assertFalse(GradeAPIConnection.objects.filter(pk=conn1.pk).exists())
+
+    def test_delete_connection_from_journal_integrations(self):
+        conn = self.connect()
+        conn_pk = conn.pk
+        int_url = reverse('portal:journal_integrations', kwargs={'journal_id': self.journal.pk})
+        resp = self.client.post(int_url, {
+            'action': 'delete_connection',
+            'connection_id': conn_pk,
+        })
+        self.assertEqual(resp.status_code, 302)
+        self.assertFalse(GradeAPIConnection.objects.filter(pk=conn_pk).exists())
+        self.assertTrue(AuditLog.objects.filter(
+            action=AuditLog.Action.DELETE, target_model='GradeAPIConnection', target_id=str(conn_pk)
+        ).exists())
+

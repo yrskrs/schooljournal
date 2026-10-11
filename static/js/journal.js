@@ -929,12 +929,11 @@ function openNzSyncModal(journalId) {
   }
 
   modalContainer.innerHTML = `
-    <div class="modal fade show" tabindex="-1" style="display: block; background: rgba(15, 23, 42, 0.6); backdrop-filter: blur(4px); z-index: 1050;">
-      <div class="modal-dialog modal-dialog-centered" style="max-width: 400px; margin: auto;">
-        <div class="modal-content" style="padding: 2rem; text-align: center; border-radius: 8px;">
-          <div class="spinner-border text-primary" role="status" style="width: 2.5rem; height: 2.5rem; margin-bottom: 1rem;"></div>
-          <div style="font-weight: 600; color: #1e3a8a;">Завантаження незбережених змін...</div>
-        </div>
+    <div class="modal-overlay open" style="z-index: 1050; display: flex; position: fixed; inset: 0; background: rgba(15, 23, 42, 0.6); backdrop-filter: blur(4px); align-items: center; justify-content: center; padding: 1rem;" onclick="if(event.target===this)closeNzSyncModal()">
+      <div class="modal-card" style="max-width: 420px; width: 100%; text-align: center; padding: 2.25rem 1.5rem; border-radius: var(--radius-md); box-shadow: var(--shadow-lg); background: white;">
+        <div class="spinner-border text-primary" role="status" style="width: 2.5rem; height: 2.5rem; margin: 0 auto 1rem; color: var(--primary);"></div>
+        <div style="font-weight: 600; color: #1e3a8a; font-size: 1.05rem;">Завантаження незбережених змін...</div>
+        <div style="font-size: 0.85rem; color: #64748b; margin-top: 0.35rem;">Опитування локальних даних та nz.ua</div>
       </div>
     </div>
   `;
@@ -1137,3 +1136,41 @@ function escapeJournalText(value) {
   const entities = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
   return String(value == null ? '' : value).replace(/[&<>"']/g, char => entities[char]);
 }
+
+function toggleStudentIgnore(journalId, studentId, btn) {
+  if (btn) {
+    btn.disabled = true;
+    btn.style.opacity = '0.6';
+  }
+  const csrfToken = getCookie('schooljournal_csrftoken') || '';
+  fetch(`/journal/${journalId}/student/${studentId}/toggle-ignore/`, {
+    method: 'POST',
+    headers: {
+      'X-CSRFToken': csrfToken,
+      'Accept': 'application/json',
+      'X-Requested-With': 'XMLHttpRequest',
+    },
+  })
+    .then(function (response) {
+      if (!response.ok) {
+        throw new Error('Помилка сервера при зміні статусу учня');
+      }
+      return response.json();
+    })
+    .then(function (data) {
+      if (data.status === 'ok') {
+        showToast(data.message, 'success');
+        window.location.reload();
+      } else {
+        throw new Error(data.message || 'Не вдалося змінити статус');
+      }
+    })
+    .catch(function (err) {
+      showToast(err.message, 'danger');
+      if (btn) {
+        btn.disabled = false;
+        btn.style.opacity = '1';
+      }
+    });
+}
+

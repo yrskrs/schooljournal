@@ -58,6 +58,25 @@ class GradeAPIConnection(models.Model):
     def __str__(self):
         return self.name
 
+    @property
+    def masked_key(self):
+        key = (self.api_key or '').strip()
+        if len(key) <= 6:
+            return key or '—'
+        return f"...{key[-6:]}"
+
+    @property
+    def capabilities_description(self):
+        caps = self.roster_cache.get('capabilities', []) if isinstance(self.roster_cache, dict) else []
+        if 'journal_roster_import' in caps:
+            return 'може отримувати та передавати дані'
+        return 'може отримувати дані'
+
+    @property
+    def key_display_name(self):
+        source_title = self.name or self.get_source_display()
+        return f"{source_title} (Ключ: {self.masked_key}) — {self.capabilities_description}"
+
 
 class GradeStudentMapping(models.Model):
     connection = models.ForeignKey(GradeAPIConnection, on_delete=models.CASCADE, related_name='student_mappings')

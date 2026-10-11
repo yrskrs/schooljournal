@@ -341,9 +341,11 @@ class NZService:
                         break
 
             # items[2] = номер уроку
-            lesson_num = 1
-            if len(items) > 2 and items[2].isdigit():
-                lesson_num = int(items[2])
+            lesson_num = None
+            if len(items) > 2:
+                m_num = re.search(r'\d+', items[2])
+                if m_num:
+                    lesson_num = int(m_num.group(0))
 
             topic_txt = items[4] if len(items) > 4 else ''
             hw_txt = items[5] if len(items) > 5 else ''
@@ -375,6 +377,7 @@ class NZService:
         lessons_data = []
         current_month = None
         last_parsed_date = None
+        seen_date_numbers = set()
 
         for idx, cell in enumerate(header_pt_cells):
             col_idx = idx + 1
@@ -438,11 +441,23 @@ class NZService:
                 parsed_date = last_parsed_date
             if parsed_date:
                 last_parsed_date = parsed_date
+
+            parsed_num = hw_info.get('lesson_number')
+            if parsed_date:
+                if not parsed_num or (parsed_date, parsed_num) in seen_date_numbers:
+                    candidate = 1
+                    while (parsed_date, candidate) in seen_date_numbers:
+                        candidate += 1
+                    parsed_num = candidate
+                seen_date_numbers.add((parsed_date, parsed_num))
+            else:
+                parsed_num = parsed_num or 1
+
             lesson_obj = {
                 'col_index': col_idx,
                 'nz_schedule_id': sch_id,
                 'date': parsed_date,
-                'lesson_number': hw_info.get('lesson_number', 1),
+                'lesson_number': parsed_num,
                 'topic': hw_info.get('topic', ''),
                 'homework': hw_info.get('homework', ''),
                 'homework_due_date': hw_info.get('homework_due_date'),
@@ -692,10 +707,12 @@ class NZService:
 
             if lesson:
                 lesson.nz_schedule_id = sch_id or lesson.nz_schedule_id
+                occupied = local_journal.lessons.filter(date=l_date).exclude(pk=lesson.pk)
                 if lesson.date != l_date:
                     lesson.date = l_date
-                    occupied = local_journal.lessons.filter(date=l_date).exclude(pk=lesson.pk)
                     lesson.lesson_number = l_num if not occupied.filter(lesson_number=l_num).exists() else (occupied.aggregate(last=Max('lesson_number'))['last'] or 0) + 1
+                elif lesson.lesson_number != l_num and not occupied.filter(lesson_number=l_num).exists():
+                    lesson.lesson_number = l_num
                 if lesson.is_synced_to_nz:
                     lesson.topic = topic
                     lesson.homework = hw
@@ -880,7 +897,7 @@ class NZService:
             warning = self._homework_sync_warning(l)
             changes.append({
                 'type': 'lesson_topic',
-                'type_display': 'Тема/ДЗ',
+                'type_display': f'Тема/ДЗ (№{l.lesson_number})',
                 'object_id': l.id,
                 'student_name': '—',
                 'date': l.date.strftime('%d.%m.%Y'),
@@ -1006,6 +1023,10 @@ class NZService:
         payload['_csrf'] = token
         payload['OsvitaScheduleReal[lesson_topic]'] = lesson.topic
         payload['OsvitaScheduleReal[hometask]'] = lesson.homework or ''
+        for field_name in list(payload.keys()):
+            lower = field_name.lower()
+            if any(k in lower for k in ['lesson_num', 'lesson_number', 'lesson_order', 'num_lesson', 'lessonnum']):
+                payload[field_name] = str(lesson.lesson_number)
         payload.update(self._homework_target_fields(lesson, post_url, soup=form))
         return payload
 
@@ -1048,8 +1069,9 @@ class NZService:
 
     @staticmethod
     def _pending_cells(journal):
-        keys = set(Grade.objects.filter(lesson__journal=journal, is_synced_to_nz=False).values_list('lesson_id', 'student_id'))
-        keys.update(Attendance.objects.filter(lesson__journal=journal, is_synced_to_nz=False).values_list('lesson_id', 'student_id'))
+        ignored_student_ids = set(journal.ignored_students.values_list('pk', flat=True))
+        keys = set(Grade.objects.filter(lesson__journal=journal, is_synced_to_nz=False).exclude(student_id__in=ignored_student_ids).values_list('lesson_id', 'student_id'))
+        keys.update(Attendance.objects.filter(lesson__journal=journal, is_synced_to_nz=False).exclude(student_id__in=ignored_student_ids).values_list('lesson_id', 'student_id'))
         lesson_ids, student_ids = {k[0] for k in keys}, {k[1] for k in keys}
         grades = {(g.lesson_id, g.student_id): g for g in Grade.objects.filter(
             lesson_id__in=lesson_ids, student_id__in=student_ids).select_related('lesson', 'student')}
@@ -1099,7 +1121,7 @@ class NZService:
 
         # 1. Синхронізація тем уроків
         for l in unsynced_lessons:
-            item_desc = f"Тема уроку {l.date.strftime('%d.%m.%Y')}: «{l.topic}»"
+            item_desc = f"Тема уроку №{l.lesson_number} від {l.date.strftime('%d.%m.%Y')}: «{l.topic}»"
             if not l.nz_schedule_id:
                 error_count += 1
                 report_details.append({

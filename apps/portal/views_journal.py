@@ -148,6 +148,7 @@ def journal_detail(request, journal_id):
     students = list(journal_students(journal))
 
     # Формуємо інформацію про статус учня у класі
+    ignored_students_set = set(journal.ignored_students.values_list('pk', flat=True))
     student_rows = []
     displayed_student_number = 0
     for s in students:
@@ -160,6 +161,7 @@ def journal_detail(request, journal_id):
             'is_active': is_active_in_class,
             'status_note': status_note,
             'display_number': displayed_student_number,
+            'is_ignored_for_sync': s.pk in ignored_students_set,
         })
 
     # 4. Матриці оцінок, відвідування та підсумків
@@ -209,9 +211,13 @@ def journal_detail(request, journal_id):
         'nz_bound': bool(l.nz_schedule_id),
     } for l in all_lessons]
 
-    # Рахуємо несинхронізовані зміни з nz.ua для цього журналу
-    unsynced_grades_count = Grade.objects.filter(lesson__journal=journal, is_synced_to_nz=False, is_approved=True).count()
-    unsynced_attendances_count = Attendance.objects.filter(lesson__journal=journal, is_synced_to_nz=False).count()
+    # Рахуємо несинхронізовані зміни з nz.ua для цього журналу (без ігнорованих учнів)
+    unsynced_grades_count = Grade.objects.filter(
+        lesson__journal=journal, is_synced_to_nz=False, is_approved=True
+    ).exclude(student_id__in=ignored_students_set).count()
+    unsynced_attendances_count = Attendance.objects.filter(
+        lesson__journal=journal, is_synced_to_nz=False
+    ).exclude(student_id__in=ignored_students_set).count()
     unsynced_lessons_count = Lesson.objects.filter(journal=journal, is_synced_to_nz=False).count()
     unsynced_total = unsynced_grades_count + unsynced_attendances_count + unsynced_lessons_count
     nz_account = journal_nz_account(journal, request.user)
@@ -262,6 +268,7 @@ def journal_detail(request, journal_id):
             else LessonType.SEMESTER_1),
         'lessons': lessons,
         'student_rows': student_rows,
+        'ignored_student_ids': list(ignored_students_set),
         'grades': grades,
         'attendances': attendances,
         'summary_grades': summary_grades,
@@ -301,6 +308,12 @@ def update_grade(request, journal_id):
 
     lesson = get_object_or_404(Lesson, id=lesson_id, journal=journal)
     student = _student_for_journal(journal, student_id)
+
+    if journal.ignored_students.filter(pk=student.pk).exists():
+        return HttpResponse(
+            "<span class='text-danger fw-bold' title='Учень на сімейній формі навчання / ігнорується для синхронізації'>Заблоковано</span>",
+            status=400
+        )
 
     clean_val = raw_value.upper()
 
@@ -508,6 +521,10 @@ def update_attendance(request, journal_id):
 
     lesson = get_object_or_404(Lesson, id=lesson_id, journal=journal)
     student = _student_for_journal(journal, student_id)
+
+    if journal.ignored_students.filter(pk=student.pk).exists():
+        return HttpResponse('Учень на сімейній формі навчання / ігнорується для синхронізації.', status=400)
+
     if status_str not in Attendance.Status.values:
         return HttpResponse('Некоректний статус відвідування.', status=400)
 
@@ -586,6 +603,10 @@ def update_summary_grade(request, journal_id):
     raw_val = request.POST.get('value', '').strip()
 
     student = _student_for_journal(journal, student_id)
+
+    if journal.ignored_students.filter(pk=student.pk).exists():
+        return HttpResponse('Учень на сімейній формі навчання / ігнорується для синхронізації.', status=400)
+
     if grade_type not in SummaryGradeType.values or not _valid_grade(raw_val):
         return HttpResponse('Некоректна підсумкова оцінка.', status=400)
 
@@ -1024,3 +1045,41 @@ def topics_copy(request, journal_id):
     return render(request, 'portal/journal/topic_copy.html', {
         'journal': journal, 'form': form, 'rows': rows, 'preview_token': preview_token, 'counts': counts,
     })
+
+
+@login_required
+@require_POST
+def toggle_student_sync_ignore(request, journal_id, student_id):
+    """
+    Перемикання ігнорування учня для синхронізації (сімейна форма, за кордоном тощо).
+    Ігноровані учні виключаються з передачі списків, імпорту оцінок та вивантаження nz.ua,
+    а також захищені від випадкового виставлення оцінок.
+    """
+    journal = _get_journal_or_403(request.user, journal_id, write=True)
+    student = _student_for_journal(journal, student_id)
+    with transaction.atomic():
+        journal = Journal.objects.select_for_update().get(pk=journal.pk)
+        if journal.ignored_students.filter(pk=student.pk).exists():
+            journal.ignored_students.remove(student)
+            is_ignored = False
+            msg = f"Учня {student.get_short_name_ukr()} повернено до синхронізації та оцінювання."
+        else:
+            journal.ignored_students.add(student)
+            is_ignored = True
+            msg = f"Учня {student.get_short_name_ukr()} виключено із синхронізації (сімейна форма / за кордоном)."
+
+        AuditLog.objects.create(
+            school=journal.school,
+            user=request.user,
+            action=AuditLog.Action.UPDATE,
+            target_model='Journal',
+            target_id=str(journal.pk),
+            description=msg,
+            changes={'ignored_student_id': student.pk, 'is_ignored': is_ignored}
+        )
+
+    if request.headers.get('x-requested-with') == 'XMLHttpRequest' or 'application/json' in request.headers.get('Accept', ''):
+        return JsonResponse({'status': 'ok', 'is_ignored': is_ignored, 'message': msg})
+    messages.success(request, msg)
+    return redirect('portal:journal_detail', journal_id=journal.pk)
+

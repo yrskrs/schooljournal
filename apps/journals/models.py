@@ -87,6 +87,12 @@ class Journal(models.Model):
         related_name='owned_journals', verbose_name='Особистий акаунт nz.ua')
     local_profile = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True,
         related_name='linked_nz_journals', verbose_name='Додатковий локальний профіль')
+    ignored_students = models.ManyToManyField(
+        Student,
+        blank=True,
+        related_name='ignored_in_journals',
+        verbose_name="Ігноровані учні при синхронізації"
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

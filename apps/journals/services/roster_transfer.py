@@ -20,7 +20,8 @@ def roster_request(connection):
     origin = operate(lambda engine, store: engine.origin)
     namespace = UUID(origin)
     journal = connection.journal
-    students = list(journal_students(journal))
+    ignored_ids = set(journal.ignored_students.values_list('pk', flat=True))
+    students = [s for s in journal_students(journal) if s.pk not in ignored_ids]
     active = set(ClassEnrollment.objects.filter(student_class=journal.student_class, is_active=True).values_list('student_id', flat=True))
     # Mapping across services is explicit and stable; no nz.ua ID is required.
     refs = {str(uuid5(namespace, f'student:{s.pk}')): s for s in students}

@@ -4,7 +4,7 @@
 {% get_cell_sync_state grade attendance lesson as sync_state %}
 {% get_cell_version grade attendance as cell_version %}
 
-{% if can_edit and grade.is_approved != False %}
+{% if can_edit and grade.is_approved != False and not is_student_ignored and not student.id in ignored_student_ids %}
   <div class="journal-single-cell-wrap {{ sync_state.css }} {% if just_saved %}grade-saved{% endif %} {% if conflict_error %}grade-conflict{% endif %}"
        data-lesson-id="{{ lesson.id }}"
        data-student-id="{{ student.id }}"
@@ -34,10 +34,10 @@
     />
   </div>
 {% else %}
-  <div class="journal-single-cell-wrap {{ sync_state.css }}" title="{{ sync_state.label }}">
-    {% if sync_state %}<span class="cell-sync-marker" aria-label="{{ sync_state.label }}">{{ sync_state.symbol }}</span>{% endif %}
-    <span class="journal-cell-readonly {{ cell_css_class }}">
-      {{ display_val }}
+  <div class="journal-single-cell-wrap {{ sync_state.css }} {% if is_student_ignored or student.id in ignored_student_ids %}cell-ignored-student{% endif %}" title="{% if is_student_ignored or student.id in ignored_student_ids %}Учень ігнорується для синхронізації (сімейна форма / за кордоном). Оцінювання вимкнено.{% else %}{{ sync_state.label }}{% endif %}">
+    {% if sync_state and not is_student_ignored and not student.id in ignored_student_ids %}<span class="cell-sync-marker" aria-label="{{ sync_state.label }}">{{ sync_state.symbol }}</span>{% endif %}
+    <span class="journal-cell-readonly {{ cell_css_class }} {% if is_student_ignored or student.id in ignored_student_ids %}cell-readonly-ignored{% endif %}" {% if is_student_ignored or student.id in ignored_student_ids %}style="opacity: 0.35; cursor: not-allowed; font-style: italic;"{% endif %}>
+      {{ display_val|default:"—" }}
     </span>
     {% if grade.import_record %}<a class="cell-source-marker" href="{% url 'portal:external_grade_review' lesson.journal.id %}{% if grade.is_approved %}?all=1{% endif %}" title="Джерело: {{ grade.import_record.connection.name }}{% if not grade.is_approved %} · ШІ · попередня оцінка{% endif %}">{% if not grade.is_approved %}ШІ · ?{% else %}API{% if grade.import_record.is_ai %} · ШІ{% endif %}{% endif %}</a>{% endif %}
   </div>

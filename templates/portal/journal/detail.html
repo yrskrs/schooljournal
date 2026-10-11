@@ -222,27 +222,45 @@
       </thead>
       <tbody>
         {% for row in student_rows %}
-          <tr class="student-row" data-student-name="{{ row.student.get_full_name_ukr }}"{% if not row.is_active and not show_withdrawn %} hidden{% endif %}>
+          <tr class="student-row {% if row.is_ignored_for_sync %}row-student-ignored{% endif %}" data-student-name="{{ row.student.get_full_name_ukr }}" data-student-id="{{ row.student.id }}"{% if not row.is_active and not show_withdrawn %} hidden{% endif %}>
             <!-- Фіксований номер -->
             <td class="sticky-col-num" style="color: var(--text-muted); font-size: 0.8rem;">
               {{ row.display_number }}
             </td>
             <!-- Фіксований ПІБ -->
-            <td class="sticky-col-name" title="{{ row.student.get_full_name_ukr }}">
-              <span>{{ row.student.get_full_name_ukr }}</span>
-              {% if row.status_note %}
-                <span style="font-size: 0.75rem; color: var(--danger); font-style: italic;">
-                  {{ row.status_note }}
-                </span>
-              {% endif %}
+            <td class="sticky-col-name {% if row.is_ignored_for_sync %}student-col-ignored{% endif %}" title="{{ row.student.get_full_name_ukr }}">
+              <div style="display: flex; align-items: center; justify-content: space-between; gap: 0.35rem;">
+                <div>
+                  <span {% if row.is_ignored_for_sync %}style="color: var(--text-muted); text-decoration: line-through 1px;"{% endif %}>{{ row.student.get_full_name_ukr }}</span>
+                  {% if row.is_ignored_for_sync %}
+                    <span class="badge badge-warning" style="font-size: 0.68rem; padding: 1px 4px; background: #fff3cd; color: #856404; border-radius: 3px; display: inline-block; margin-left: 3px;" title="Учень на сімейній формі навчання / за кордоном. Виключений із синхронізації тестів, завдань та nz.ua">🚫 Сімейна форма</span>
+                  {% endif %}
+                  {% if row.status_note %}
+                    <span style="font-size: 0.75rem; color: var(--danger); font-style: italic;">
+                      {{ row.status_note }}
+                    </span>
+                  {% endif %}
+                </div>
+                {% if can_edit %}
+                  <div class="student-ignore-toggle-wrap">
+                    <button type="button"
+                            class="btn btn-sm {% if row.is_ignored_for_sync %}btn-outline-success{% else %}btn-outline-secondary{% endif %}"
+                            style="font-size: 0.7rem; padding: 1px 6px; line-height: 1.2; border-radius: 4px;"
+                            onclick="toggleStudentIgnore({{ journal.id }}, {{ row.student.id }}, this)"
+                            title="{% if row.is_ignored_for_sync %}Відновити синхронізацію та оцінювання для цього учня{% else %}Ігнорувати при синхронізації (сімейна форма / за кордоном). Учень не отримає завдань і тестів, виставлення оцінок блокується.{% endif %}">
+                      {% if row.is_ignored_for_sync %}✓ Відновити{% else %}🚫 Ігнорувати{% endif %}
+                    </button>
+                  </div>
+                {% endif %}
+              </div>
             </td>
 
             <!-- Клітинки уроків (єдина інтерактивна комірка) -->
             {% for l in lessons %}
               {% get_grade grades l.id row.student.id as student_grade %}
               {% get_attendance attendances l.id row.student.id as student_attendance %}
-              <td class="journal-cell-td {% if l.starts_month %}month-start{% endif %}" data-lesson-id="{{ l.id }}" data-student-id="{{ row.student.id }}">
-                {% include 'portal/journal/partials/grade_cell.html' with grade=student_grade attendance=student_attendance lesson=l student=row.student can_edit=can_edit %}
+              <td class="journal-cell-td {% if l.starts_month %}month-start{% endif %} {% if row.is_ignored_for_sync %}cell-student-ignored{% endif %}" data-lesson-id="{{ l.id }}" data-student-id="{{ row.student.id }}">
+                {% include 'portal/journal/partials/grade_cell.html' with grade=student_grade attendance=student_attendance lesson=l student=row.student can_edit=can_edit is_student_ignored=row.is_ignored_for_sync %}
               </td>
             {% empty %}
               <td style="color: var(--text-light);">—</td>
@@ -252,7 +270,7 @@
               {% get_summary_grade summary_grades row.student.id key as saved_summary %}
               <td>
                 {% if saved_summary %}<div class="journal-single-cell-wrap sync-local" title="Локальна підсумкова оцінка — не синхронізована з nz.ua"><span class="cell-sync-marker" aria-label="Локальна підсумкова оцінка">●</span>{% endif %}
-                {% if can_edit and saved_summary %}
+                {% if can_edit and saved_summary and not row.is_ignored_for_sync %}
                 <input type="text" name="value" class="grade-input" value="{{ saved_summary.value|default:'' }}" maxlength="5"
                   aria-label="{{ label }}: {{ row.student.get_full_name_ukr }}"
                   hx-post="{% url 'portal:update_summary_grade' journal_id=journal.id %}"

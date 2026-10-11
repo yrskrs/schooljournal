@@ -11,6 +11,8 @@ class ConnectSourceForm(forms.Form):
     connection_code = forms.CharField(label='Код підключення зі старої версії', required=False, max_length=5000,
         widget=forms.Textarea(attrs={'rows': 3, 'autocomplete': 'off', 'class': 'form-control'}))
     source = forms.ChoiceField(label='Що підключаємо', choices=list(SOURCES.items()), required=False)
+    key_name = forms.CharField(label='Назва ключа / підключення', required=False, max_length=100,
+        help_text='Наприклад: Мій ключ для тестів або Завдання школи.')
     site_url = forms.URLField(label='Адреса сайту тестів або завдань (IP і порт)', max_length=450, required=False,
         help_text='Вставте повну адресу, за якою відкриваєте джерело, наприклад http://192.168.10.25:8000. Вона має бути доступна серверу журналу.')
     api_key = forms.CharField(label='Ключ API', required=False, max_length=500,

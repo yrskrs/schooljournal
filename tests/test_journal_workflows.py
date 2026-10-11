@@ -900,3 +900,59 @@ class JournalWorkflowsTests(TestCase):
         self.assertTrue(grade.is_synced_to_nz)
         self.assertEqual(grade.nz_last_synced_value, '9')
         post.assert_not_called()
+
+    def test_toggle_student_ignore_and_block_grades(self):
+        toggle_url = reverse('portal:toggle_student_sync_ignore', kwargs={'journal_id': self.journal.pk, 'student_id': self.empty_student.pk})
+        resp = self.client.post(toggle_url, HTTP_X_REQUESTED_WITH='XMLHttpRequest')
+        self.assertEqual(resp.status_code, 200)
+        self.assertTrue(resp.json()['is_ignored'])
+        self.assertTrue(self.journal.ignored_students.filter(pk=self.empty_student.pk).exists())
+
+        # Attempt to enter grade should fail with 400
+        grade_url = reverse('portal:update_grade', kwargs={'journal_id': self.journal.pk})
+        resp_grade = self.client.post(grade_url, {'lesson_id': self.l1.pk, 'student_id': self.empty_student.pk, 'value': '10'})
+        self.assertEqual(resp_grade.status_code, 400)
+        self.assertFalse(Grade.objects.filter(lesson=self.l1, student=self.empty_student).exists())
+
+        # Attempt to enter attendance should fail with 400
+        att_url = reverse('portal:update_attendance', kwargs={'journal_id': self.journal.pk})
+        resp_att = self.client.post(att_url, {'lesson_id': self.l1.pk, 'student_id': self.empty_student.pk, 'status': 'ABSENT_UNEXCUSED'})
+        self.assertEqual(resp_att.status_code, 400)
+
+        # Attempt to enter summary grade should fail with 400
+        sum_url = reverse('portal:update_summary_grade', kwargs={'journal_id': self.journal.pk})
+        resp_sum = self.client.post(sum_url, {'student_id': self.empty_student.pk, 'grade_type': 'THEMATIC', 'value': '11'})
+        self.assertEqual(resp_sum.status_code, 400)
+
+        # Toggle back
+        resp = self.client.post(toggle_url, HTTP_X_REQUESTED_WITH='XMLHttpRequest')
+        self.assertEqual(resp.status_code, 200)
+        self.assertFalse(resp.json()['is_ignored'])
+        self.assertFalse(self.journal.ignored_students.filter(pk=self.empty_student.pk).exists())
+
+        # Now entering grade succeeds
+        resp_grade = self.client.post(grade_url, {'lesson_id': self.l1.pk, 'student_id': self.empty_student.pk, 'value': '10'})
+        self.assertEqual(resp_grade.status_code, 200)
+        self.assertTrue(Grade.objects.filter(lesson=self.l1, student=self.empty_student, value='10').exists())
+
+    def test_ignored_student_excluded_from_nz_pending_cells_and_roster(self):
+        from apps.journals.models import GradeAPIConnection
+        from apps.journals.services.roster_transfer import roster_request
+        # Create an unsynced grade for student
+        Grade.objects.create(lesson=self.l1, student=self.student, value='10', is_synced_to_nz=False)
+        pending_before = NZService._pending_cells(self.journal)
+        self.assertEqual(len(pending_before), 1)
+
+        # Ignore student
+        self.journal.ignored_students.add(self.student)
+
+        # NZ pending cells must exclude ignored student
+        pending_after = NZService._pending_cells(self.journal)
+        self.assertEqual(len(pending_after), 0)
+
+        # Roster request must exclude ignored student
+        conn = GradeAPIConnection.objects.create(journal=self.journal, contract_version=2, url='http://127.0.0.1:8000/api/v2/journal/grades/', api_key='test')
+        payload, refs = roster_request(conn)
+        student_ids_in_payload = [s['id'] for s in payload['students']]
+        self.assertNotIn(str(self.student.pk), [s.pk for s in refs.values()])
+
