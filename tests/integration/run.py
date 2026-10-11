@@ -19,7 +19,10 @@ CSRF_COOKIES={'work':'schoolwork2_csrftoken','journal':'schooljournal_csrftoken'
 
 
 def dc(*args):
-    return subprocess.run(COMMAND+list(args),check=True,capture_output=True,text=True,timeout=50).stdout
+    result=subprocess.run(COMMAND+list(args),capture_output=True,text=True,timeout=50)
+    if result.returncode:
+        raise RuntimeError(result.stdout + result.stderr)
+    return result.stdout
 
 def code(service, body):
     header=''

@@ -70,8 +70,15 @@ with SessionLocal() as db:
             assignment=int(code('work', f"from feed.models import Assignment;a=Assignment.objects.create(teacher_id=1,subject_id={subject_id},title='Самостійне завдання',due_date='2026-09-12',status=Assignment.STATUS_PUBLISHED);a.classes.add({class_id});print(a.pk)"))
             response=post('work',f'/assignment/{assignment}/submit/',{'full_name':'Коваленко Ірина','student_id':connections['work']['student'],'class_group':class_id,'comment_student':'Вигадана автономна відповідь','coauthor_ids':'[]'})
             assert response.status_code==200,response.text[:300]
-            code('work',f"from feed.models import Submission;from django.utils import timezone;s=Submission.objects.get(assignment_id={assignment});s.grade='10';s.graded_by_id=2;s.graded_at=timezone.now();s.save()")
-            log('work alone accepts the local class-linked pupil and stores a final assignment grade')
+            response=post('work',f'/assignment/{assignment}/submit/',{'full_name':'Коваленк Ін.','other_student':'on','class_group':class_id,'comment_student':'Відповідь учня поза списком','coauthor_ids':'[]'})
+            assert response.status_code==200,response.text[:300]
+            code('work',f"""from feed.models import Submission
+from django.utils import timezone
+rows=list(Submission.objects.filter(assignment_id={assignment}).order_by('pk'))
+assert len(rows)==2 and rows[0].student_id and rows[1].student_id is None
+for s in rows:
+ s.grade='10' if s.student_id else '7';s.graded_by_id=2;s.graded_at=timezone.now();s.save()""")
+            log('work alone saves the selected pupil and an unlisted typed name separately; no name merging or loss of the known pupil result')
             dc('start','test','journal')
             until(lambda:get('journal','/healthz/').status_code==200,'journal returns for explicit grade import')
             for source in ('schooltest','schoolwork'):
@@ -79,11 +86,11 @@ with SessionLocal() as db:
                 assert response.status_code==200
             state=json.loads(code('journal',f"from apps.journals.models import Grade,ExtraStudent,APIInboxResult;import json;print(json.dumps({{'grades':list(Grade.objects.filter(lesson__journal_id={journal_id}).order_by('lesson__date').values_list('value',flat=True)),'extras':list(ExtraStudent.objects.filter(connection__journal_id={journal_id}).values_list('name',flat=True)),'pending':APIInboxResult.objects.filter(connection__journal_id={journal_id},resolved=False).count()}}))"))
             assert state['grades']==['10','8'],state
-            assert 'Коваленк І.' in state['extras'] and state['pending']==1,state
+            assert set(state['extras'])=={'Коваленк І.','Коваленк Ін.'} and state['pending']==2,state
             response=get('journal',f'/journal/{journal_id}/api-inbox/')
             assert 'Коваленк І.' in response.text and 'Коваленко Ірина' in response.text
             soup=BeautifulSoup(response.text,'html.parser')
-            form=next(f for f in soup.select('form') if f.select_one('button[value=match]'))
+            form=next(f for f in soup.select('form') if f.select_one('button[value=match]') and 'Коваленк І.' in f.get_text())
             data={field['name']:field.get('value','') for field in form.select('input[name]')}
             data.update(action='match',student=next(o['value'] for o in form.select('option') if o.get_text()=='Коваленко Ірина'))
             assert post('journal',f'/journal/{journal_id}/api-inbox/',data).status_code==200
