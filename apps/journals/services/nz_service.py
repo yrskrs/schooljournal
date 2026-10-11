@@ -4,6 +4,7 @@ import re
 import json
 import time
 import hashlib
+from collections import defaultdict
 from datetime import datetime, date, timedelta
 from bs4 import BeautifulSoup
 import requests
@@ -432,21 +433,97 @@ class NZService:
             'лип': 7, 'серп': 8, 'вер': 9, 'жовт': 10, 'лист': 11, 'груд': 12
         }
 
-        # 1. Парсимо блок календарного плану та домашніх завдань (.homework-row)
+        # 1. Парсимо блок календарного плану та домашніх завдань (.homework-row або таблиця тем)
         hw_by_sch = {}
-        for r in soup.select('.homework-row'):
-            link = r.find('a', href=re.compile(r'schedule=(\d+)'))
-            if not link:
-                continue
-            sm = re.search(r'schedule=(\d+)', link['href'])
-            if not sm:
-                continue
-            sch_id = sm.group(1)
-            items = [it.get_text(' ', strip=True) for it in r.select('.homework__item')]
+        hw_by_date_and_num = {}
+        hw_by_date = defaultdict(list)
+        hw_list = []
 
-            # items[1] = дата (наприклад "7 вересня")
+        hw_rows = list(soup.select('.homework-row'))
+        if not hw_rows:
+            for tbl in soup.find_all('table'):
+                t_txt = tbl.get_text(' ', strip=True).lower()
+                if any(k in t_txt for k in ('домашнє завдання', 'зміст', 'тема уроку')):
+                    hw_rows.extend(tbl.find_all('tr'))
+                    if hw_rows:
+                        break
+
+        col_date = None
+        col_num = None
+        col_topic = None
+        col_hw = None
+        col_notes = None
+
+        header_row = None
+        for r in hw_rows:
+            r_classes = r.get('class', [])
+            if any('header' in c for c in r_classes) or r.find('th'):
+                header_row = r
+                break
+            cells = r.select('.homework__item') or r.find_all(['td', 'th'])
+            c_texts = [c.get_text(' ', strip=True).lower() for c in cells]
+            if any('дата' in t or 'date' in t for t in c_texts) and any(
+                k in t for t in c_texts for k in ('зміст', 'тема', 'домашнє', 'завдання', '№')
+            ):
+                header_row = r
+                break
+
+        if header_row:
+            h_cells = header_row.select('.homework__item') or header_row.find_all(['td', 'th'])
+            for idx, c in enumerate(h_cells):
+                h = c.get_text(' ', strip=True).lower()
+                if 'дата' in h or 'date' in h:
+                    col_date = idx
+                elif any(k in h for k in ('№', 'номер', 'number', 'уроку')):
+                    col_num = idx
+                elif any(k in h for k in ('зміст', 'тема', 'назва', 'topic', 'title')):
+                    col_topic = idx
+                elif any(k in h for k in ('домашнє', 'завдання', 'дз', 'homework', 'hometask')):
+                    col_hw = idx
+                elif any(k in h for k in ('заміна', 'приміт', 'нотат', 'notes', 'substitut')):
+                    col_notes = idx
+
+        for r in hw_rows:
+            if r is header_row:
+                continue
+            cells = r.select('.homework__item') or r.find_all(['td', 'th'])
+            if not cells:
+                continue
+            items = [it.get_text(' ', strip=True) for it in cells]
+            if not any(items):
+                continue
+            first_items_str = ' '.join(items).lower()
+            if ('дата' in first_items_str and ('тема' in first_items_str or 'зміст' in first_items_str or 'домашнє' in first_items_str)):
+                continue
+
+            c_date, c_num, c_topic, c_hw = col_date, col_num, col_topic, col_hw
+            if c_topic is None or c_hw is None:
+                if len(items) == 5:
+                    c_num, c_date, c_topic, c_hw = 0, 1, 2, 3
+                elif len(items) == 6:
+                    if not items[0] or r.find('a', href=re.compile(r'schedule=(\d+)')):
+                        c_num, c_date, c_topic, c_hw = None, 1, 2, 3
+                    else:
+                        c_num, c_date, c_topic, c_hw = 0, 1, 2, 3
+                elif len(items) >= 7:
+                    c_num, c_date, c_topic, c_hw = 2, 1, 4, 5
+                else:
+                    c_num = 0 if len(items) > 0 and items[0].isdigit() else None
+                    c_date = 1 if len(items) > 1 else 0
+                    c_topic = 2 if len(items) > 2 else None
+                    c_hw = 3 if len(items) > 3 else None
+
+            sch_id = ""
+            link = r.find('a', href=re.compile(r'schedule=(\d+)'))
+            if link:
+                sm = re.search(r'schedule=(\d+)', link['href'])
+                if sm:
+                    sch_id = sm.group(1)
+            if not sch_id:
+                sch_id = r.get('data-schedule') or r.get('data-schedule-id') or ""
+
             d_obj = None
-            date_text = items[1] if len(items) > 1 else ''
+            date_text = items[c_date] if c_date is not None and c_date < len(items) else ''
             dm_match = re.search(r'(\d{1,2})\s+([а-яА-Яіїєґ]+)', date_text.lower())
             if dm_match:
                 d_day = int(dm_match.group(1))
@@ -459,32 +536,49 @@ class NZService:
                         except ValueError:
                             pass
                         break
+            if not d_obj and date_text:
+                dot_match = re.search(r'(\d{1,2})\.(\d{1,2})(?:\.(\d{2,4}))?', date_text)
+                if dot_match:
+                    d_day = int(dot_match.group(1))
+                    mo = int(dot_match.group(2))
+                    y = int(dot_match.group(3)) if dot_match.group(3) else (base_year if mo >= 8 else base_year + 1)
+                    if y < 100:
+                        y += 2000
+                    try:
+                        d_obj = datetime(y, mo, d_day).date()
+                    except ValueError:
+                        pass
 
-            # items[2] = номер уроку
             lesson_num = None
-            if len(items) > 2:
-                m_num = re.search(r'\d+', items[2])
+            if c_num is not None and c_num < len(items):
+                m_num = re.search(r'\d+', items[c_num])
                 if m_num:
                     lesson_num = int(m_num.group(0))
 
-            topic_txt = items[4] if len(items) > 4 else ''
-            hw_txt = items[5] if len(items) > 5 else ''
-            # NZ renders the due date as a prefix inside the homework cell.
-            # It is metadata, not part of the text to send back to the editor.
+            topic_txt = items[c_topic] if c_topic is not None and c_topic < len(items) else ''
+            hw_txt = items[c_hw] if c_hw is not None and c_hw < len(items) else ''
+
             due_date = None
-            due_match = re.match(r'^на\s+(\d{1,2})\s+([а-яіїєґ]+)(?:\s+(\d{4}))?(?:\s*[:—-])?\s*', hw_txt, re.I)
+            due_match = re.match(r'^на\s+(?:(\d{1,2})\s+([а-яіїєґ]+)(?:\s+(\d{4}))?|(\d{1,2})\.(\d{1,2})(?:\.(\d{2,4}))?)(?:\s*[:—-])?\s*', hw_txt, re.I)
             if due_match:
                 due_date = self._parse_lesson_date(due_match.group(0), base_year)
                 if due_date:
                     hw_txt = hw_txt[due_match.end():]
 
-            hw_by_sch[sch_id] = {
+            entry = {
                 'date': d_obj,
                 'lesson_number': lesson_num,
                 'topic': topic_txt,
                 'homework': hw_txt,
                 'homework_due_date': due_date,
             }
+            if sch_id:
+                hw_by_sch[sch_id] = entry
+            if d_obj and lesson_num:
+                hw_by_date_and_num[(d_obj, lesson_num)] = entry
+            if d_obj:
+                hw_by_date[d_obj].append(entry)
+            hw_list.append(entry)
 
         # 2. Заголовки колонок уроків (thead tr td.pt-point)
         header_pt_cells = table.select('thead tr td.pt-point')
@@ -562,6 +656,13 @@ class NZService:
             if parsed_date:
                 last_parsed_date = parsed_date
 
+            # Якщо hw_info ще не знайдено за sch_id, шукаємо за датою або порядком
+            if not hw_info:
+                if parsed_date and hw_by_date.get(parsed_date):
+                    hw_info = hw_by_date[parsed_date][0]
+                elif idx < len(hw_list):
+                    hw_info = hw_list[idx]
+
             parsed_num = hw_info.get('lesson_number')
             if parsed_date:
                 if not parsed_num or (parsed_date, parsed_num) in seen_date_numbers:
@@ -572,6 +673,10 @@ class NZService:
                 seen_date_numbers.add((parsed_date, parsed_num))
             else:
                 parsed_num = parsed_num or 1
+
+            # Уточнений пошук hw_info за парою (дата, номер), якщо є
+            if parsed_date and (parsed_date, parsed_num) in hw_by_date_and_num:
+                hw_info = hw_by_date_and_num[(parsed_date, parsed_num)]
 
             lesson_obj = {
                 'col_index': col_idx,
@@ -968,6 +1073,11 @@ class NZService:
                     lesson.homework_for_next_lesson = False
                     lesson.lesson_type = l_info.get('lesson_type', lesson.lesson_type)
                 else:
+                    if not lesson.homework and hw:
+                        lesson.homework = hw
+                        lesson.homework_due_date = l_info.get('homework_due_date')
+                    if not lesson.topic and topic:
+                        lesson.topic = topic
                     stats['local_changes_preserved'] += 1
                 if sem:
                     lesson.semester = sem
@@ -1222,6 +1332,7 @@ class NZService:
         month_names = {'січ': 1, 'лют': 2, 'бер': 3, 'квіт': 4, 'трав': 5, 'черв': 6,
                        'лип': 7, 'серп': 8, 'вер': 9, 'жовт': 10, 'лист': 11, 'груд': 12}
         words = re.search(r'\b(\d{1,2})\s+([а-яіїєґ]+)(?:\s+(\d{4}))?', text.lower())
+        short_num = re.search(r'\b(\d{1,2})\.(\d{1,2})\b', text)
         try:
             if iso:
                 return date(*map(int, iso.groups()))
@@ -1233,6 +1344,11 @@ class NZService:
                 if month:
                     year = int(words[3]) if words[3] else base_year + (month < 8)
                     return date(year, month, int(words[1]))
+            if short_num:
+                day, month = map(int, short_num.groups())
+                if 1 <= month <= 12 and 1 <= day <= 31:
+                    year = base_year + (month < 8)
+                    return date(year, month, day)
         except ValueError:
             return None
         return None

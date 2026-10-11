@@ -282,3 +282,43 @@ class TopicImportAndReloadTests(TestCase):
         with self.assertRaises(ValueError):
             delete_local_journal(self.journal, self.teacher)
         self.assertTrue(Journal.objects.filter(pk=self.journal.pk).exists())
+
+    def test_import_topics_with_nz_ua_column_headers_csv(self):
+        csv_content = (
+            "№;Дата;Зміст;Домашнє завдання;Заміна\n"
+            "1;2026-09-05;Тема з колонки Зміст;Опрацювати розділ 1;Заміна\n"
+        ).encode('utf-8-sig')
+        rows = TopicImportService.parse_file(io.BytesIO(csv_content), 'topics.csv')
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]['title'], 'Тема з колонки Зміст')
+        self.assertEqual(rows[0]['homework'], 'Опрацювати розділ 1')
+        self.assertEqual(rows[0]['notes'], 'Заміна')
+        self.assertEqual(rows[0]['date'], '2026-09-05')
+
+        preview = TopicImportService.validate_and_preview(rows, self.journal)
+        self.assertEqual(preview['valid_rows'], 1)
+        res = TopicImportService.execute_import(preview['preview_data'], self.journal, user=self.teacher)
+        self.l1.refresh_from_db()
+        self.assertEqual(self.l1.topic, 'Тема з колонки Зміст')
+        self.assertEqual(self.l1.homework, 'Опрацювати розділ 1')
+        self.assertEqual(self.l1.notes, 'Заміна')
+
+    def test_import_topics_with_nz_ua_column_headers_html_xls(self):
+        html_xls = (
+            "<html><body><table>"
+            "<tr><th>№</th><th>Дата</th><th>Зміст</th><th>Домашнє завдання</th><th>Заміна</th></tr>"
+            "<tr><td>1</td><td>05.09.2026</td><td>Алгоритми та структури</td><td>Завдання 3 на с. 45</td><td></td></tr>"
+            "</table></body></html>"
+        ).encode('utf-8')
+        rows = TopicImportService.parse_file(io.BytesIO(html_xls), 'topics.xls')
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]['title'], 'Алгоритми та структури')
+        self.assertEqual(rows[0]['date'], '05.09.2026')
+
+        preview = TopicImportService.validate_and_preview(rows, self.journal)
+        self.assertEqual(preview['valid_rows'], 1)
+        self.assertEqual(preview['preview_data'][0]['date'], '2026-09-05')
+        TopicImportService.execute_import(preview['preview_data'], self.journal, user=self.teacher)
+        self.l1.refresh_from_db()
+        self.assertEqual(self.l1.topic, 'Алгоритми та структури')
+        self.assertEqual(self.l1.homework, 'Завдання 3 на с. 45')

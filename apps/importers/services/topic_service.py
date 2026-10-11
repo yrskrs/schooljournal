@@ -1,8 +1,10 @@
 import csv
 import datetime
 import io
+import re
 from collections import Counter, defaultdict
 
+from bs4 import BeautifulSoup
 import openpyxl
 from openpyxl.styles import Alignment, Font, PatternFill
 from django.db import transaction
@@ -53,8 +55,35 @@ class TopicImportService:
         return output.getvalue(), 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
 
     @classmethod
+    def _parse_html_table(cls, content):
+        if not content:
+            return []
+        if isinstance(content, str):
+            decoded = content
+        else:
+            for encoding in ('utf-8-sig', 'utf-8', 'cp1251', 'windows-1251'):
+                try:
+                    decoded = content.decode(encoding)
+                    break
+                except UnicodeDecodeError:
+                    continue
+            else:
+                decoded = content.decode('utf-8', errors='ignore')
+        soup = BeautifulSoup(decoded, 'html.parser')
+        table = soup.find('table')
+        if not table:
+            return []
+        raw_rows = []
+        for tr in table.find_all('tr'):
+            cells = tr.find_all(['th', 'td'])
+            if cells:
+                raw_rows.append([c.get_text(' ', strip=True) for c in cells])
+        return raw_rows
+
+    @classmethod
     def parse_file(cls, file_obj, filename):
-        if filename.lower().endswith('.csv'):
+        ext = filename.lower()
+        if ext.endswith('.csv'):
             content = file_obj.read()
             for encoding in ('utf-8-sig', 'cp1251'):
                 try:
@@ -69,14 +98,25 @@ class TopicImportService:
             except csv.Error:
                 dialect = csv.excel
             raw_rows = list(csv.reader(io.StringIO(decoded), dialect))
-        elif filename.lower().endswith('.xlsx'):
-            wb = openpyxl.load_workbook(file_obj, data_only=True, read_only=True)
-            try:
-                raw_rows = list(wb.active.iter_rows(values_only=True))
-            finally:
-                wb.close()
+        elif ext.endswith(('.xlsx', '.xls', '.html', '.htm')):
+            raw_rows = []
+            if ext.endswith('.xlsx'):
+                try:
+                    wb = openpyxl.load_workbook(file_obj, data_only=True, read_only=True)
+                    try:
+                        raw_rows = list(wb.active.iter_rows(values_only=True))
+                    finally:
+                        wb.close()
+                except Exception:
+                    file_obj.seek(0)
+                    raw_rows = cls._parse_html_table(file_obj.read())
+            else:
+                content = file_obj.read()
+                raw_rows = cls._parse_html_table(content)
+                if not raw_rows:
+                    raise ValueError('Не вдалося розпізнати таблицю у файлі XLS/HTML.')
         else:
-            raise ValueError('Підтримуються лише XLSX та CSV.')
+            raise ValueError('Підтримуються лише XLSX, XLS та CSV.')
         if not raw_rows:
             return []
         header_map = cls._map_headers([str(c or '').strip() for c in raw_rows[0]])
@@ -114,28 +154,56 @@ class TopicImportService:
                 key = 'topic_number'
             elif any(k in h for k in ('тип', 'type')):
                 key = 'lesson_type'
-            elif any(k in h for k in ('тема', 'назва', 'topic', 'title')):
+            elif any(k in h for k in ('тема', 'назва', 'topic', 'title', 'зміст', 'content')):
                 key = 'title'
             elif any(k in h for k in ('дата', 'число', 'date')):
                 key = 'date'
             elif any(k in h for k in ('дз', 'домашнє', 'завдання', 'homework')):
                 key = 'homework'
-            elif any(k in h for k in ('приміт', 'нотат', 'notes')):
+            elif any(k in h for k in ('приміт', 'нотат', 'notes', 'заміна', 'substitut')):
                 key = 'notes'
             else:
                 continue
             mapping[key] = index
         if mapping['title'] is None:
-            raise ValueError('У файлі немає колонки «Тема уроку». Завантажте шаблон.')
+            raise ValueError('У файлі немає колонки «Тема уроку» (або «Зміст»). Завантажте шаблон.')
         return mapping
 
     @staticmethod
-    def _parse_date(value):
+    def _parse_date(value, base_year=None):
         if not value:
             return None
+        value = str(value).strip()
         for fmt in ('%Y-%m-%d', '%d.%m.%Y', '%d/%m/%Y', '%Y.%m.%d', '%d-%m-%Y'):
             try:
                 return datetime.datetime.strptime(value, fmt).date()
+            except ValueError:
+                pass
+        ukr_months = {
+            'січ': 1, 'лют': 2, 'бер': 3, 'квіт': 4, 'трав': 5, 'черв': 6,
+            'лип': 7, 'серп': 8, 'вер': 9, 'жовт': 10, 'лист': 11, 'груд': 12
+        }
+        wm = re.search(r'(\d{1,2})\s+([а-яА-Яіїєґ]+)(?:\s+(\d{4}))?', value.lower())
+        if wm:
+            day = int(wm.group(1))
+            m_txt = wm.group(2)
+            mo = next((m for pfx, m in ukr_months.items() if m_txt.startswith(pfx)), None)
+            if mo:
+                yr = int(wm.group(3)) if wm.group(3) else (base_year or datetime.date.today().year)
+                if not wm.group(3) and base_year:
+                    yr = base_year if mo >= 8 else base_year + 1
+                try:
+                    return datetime.date(yr, mo, day)
+                except ValueError:
+                    pass
+        dm = re.search(r'^(\d{1,2})[./](\d{1,2})(?:[./](\d{2,4}))?$', value)
+        if dm and base_year:
+            day, mo = int(dm.group(1)), int(dm.group(2))
+            yr = int(dm.group(3)) if dm.group(3) else (base_year if mo >= 8 else base_year + 1)
+            if yr < 100:
+                yr += 2000
+            try:
+                return datetime.date(yr, mo, day)
             except ValueError:
                 pass
         try:
@@ -176,10 +244,10 @@ class TopicImportService:
                     item[key] = value
                 except ValueError:
                     item[key] = None
-                    errors.append(f'Некоректне значення «{key}»: потрібне додатне ціле число.')
             if item['journal_id'] and item['journal_id'] != journal.pk:
                 errors.append('Файл належить іншому журналу. Завантажте дані цього журналу.')
-            lesson_date = cls._parse_date(item['date'])
+            base_year = journal.academic_year.start_date.year if journal.academic_year else None
+            lesson_date = cls._parse_date(item['date'], base_year=base_year)
             if item['date'] and lesson_date is None:
                 errors.append('Некоректна дата. Використовуйте РРРР-ММ-ДД або ДД.ММ.РРРР.')
             if lesson_date and not journal.academic_year.start_date <= lesson_date <= journal.academic_year.end_date:
