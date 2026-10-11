@@ -1121,7 +1121,8 @@ class NZService:
         unsynced_lessons = list(
             Lesson.objects.filter(
                 journal=journal,
-                is_synced_to_nz=False
+                is_synced_to_nz=False,
+                is_ignored_for_nz=False
             )
         )
 
@@ -1316,9 +1317,9 @@ class NZService:
         return data.get('success') is True or data.get('status') in (True, 'success', 'ok') or data.get('result') is True
 
     def pending_changes_fingerprint(self, journal):
-        lessons = list(journal.lessons.filter(is_synced_to_nz=False).order_by('pk').values())
+        lessons = list(journal.lessons.filter(is_synced_to_nz=False, is_ignored_for_nz=False).order_by('pk').values())
         targets = []
-        for lesson in journal.lessons.filter(is_synced_to_nz=False).order_by('pk'):
+        for lesson in journal.lessons.filter(is_synced_to_nz=False, is_ignored_for_nz=False).order_by('pk'):
             due = lesson.get_homework_due_lesson()
             targets.append((lesson.pk, due.pk if due else None, due.nz_schedule_id if due else '',
                             str(due.date) if due else '', due.lesson_number if due else None))
@@ -1332,13 +1333,17 @@ class NZService:
     @staticmethod
     def _pending_cells(journal):
         ignored_student_ids = set(journal.ignored_students.values_list('pk', flat=True))
-        keys = set(Grade.objects.filter(lesson__journal=journal, is_synced_to_nz=False).exclude(student_id__in=ignored_student_ids).values_list('lesson_id', 'student_id'))
-        keys.update(Attendance.objects.filter(lesson__journal=journal, is_synced_to_nz=False).exclude(student_id__in=ignored_student_ids).values_list('lesson_id', 'student_id'))
+        keys = set(Grade.objects.filter(
+            lesson__journal=journal, is_synced_to_nz=False, is_ignored_for_nz=False
+        ).exclude(student_id__in=ignored_student_ids).values_list('lesson_id', 'student_id'))
+        keys.update(Attendance.objects.filter(
+            lesson__journal=journal, is_synced_to_nz=False, is_ignored_for_nz=False
+        ).exclude(student_id__in=ignored_student_ids).values_list('lesson_id', 'student_id'))
         lesson_ids, student_ids = {k[0] for k in keys}, {k[1] for k in keys}
         grades = {(g.lesson_id, g.student_id): g for g in Grade.objects.filter(
-            lesson_id__in=lesson_ids, student_id__in=student_ids).select_related('lesson', 'student')}
+            lesson_id__in=lesson_ids, student_id__in=student_ids, is_ignored_for_nz=False).select_related('lesson', 'student')}
         attendances = {(a.lesson_id, a.student_id): a for a in Attendance.objects.filter(
-            lesson_id__in=lesson_ids, student_id__in=student_ids).select_related('lesson', 'student')}
+            lesson_id__in=lesson_ids, student_id__in=student_ids, is_ignored_for_nz=False).select_related('lesson', 'student')}
         cells = []
         for key in sorted(keys):
             grade, attendance = grades.get(key), attendances.get(key)
@@ -1363,7 +1368,8 @@ class NZService:
         unsynced_lessons = list(
             Lesson.objects.filter(
                 journal=journal,
-                is_synced_to_nz=False
+                is_synced_to_nz=False,
+                is_ignored_for_nz=False
             )
         )
 

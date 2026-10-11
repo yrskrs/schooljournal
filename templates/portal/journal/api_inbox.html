@@ -2,24 +2,175 @@
 {% block title %}Позакласні учні та результати{% endblock %}
 {% block content %}
 <div class="schedule-page integration-page">
-  <div class="schedule-page-header"><div><h1>Позакласні учні та результати</h1><p>{{ journal.student_class.name }} · {{ journal.subject.name }}</p></div><a class="btn btn-outline-primary" href="{% url 'portal:journal_detail' journal.pk %}">До журналу</a></div>
+  <div class="schedule-page-header">
+    <div>
+      <h1>Позакласні учні та результати</h1>
+      <p>{{ journal.student_class.name }} · {{ journal.subject.name }}</p>
+    </div>
+    <div style="display: flex; gap: 0.5rem; align-items: center;">
+      {% if extra_journal %}
+        <a class="btn btn-success" href="{% url 'portal:journal_detail' extra_journal.pk %}">📘 Журнал позакласних учнів</a>
+      {% endif %}
+      <a class="btn btn-outline-primary" href="{% url 'portal:journal_detail' journal.pk %}">До журналу</a>
+    </div>
+  </div>
+
+  {% if extra_journal %}
+    <div class="alert alert-info" style="display: flex; justify-content: space-between; align-items: center; background: #f0fdf4; border: 1px solid #86efac; color: #166534; padding: 0.75rem 1rem; border-radius: 8px; margin-bottom: 1rem;">
+      <div>
+        <strong>Окремий журнал для позакласних учнів:</strong> для учнів, залишених позакласними, створено окрему таблицю ({{ extra_journal.student_class.name }} · {{ extra_journal.subject.name }}).
+      </div>
+      <a class="btn btn-sm btn-success" href="{% url 'portal:journal_detail' extra_journal.pk %}">Відкрити журнал позакласних &rarr;</a>
+    </div>
+  {% endif %}
+
   <p>Тут зберігаються учні джерел, яких ще немає серед підтверджених учнів класу, та результати, що потребують рішення. Вони не додаються до класу й не вивантажуються в nz.ua автоматично. Джерело має власну базу й продовжує працювати без журналу.</p>
-  <p>Якщо учень ввів ім’я з помилкою або скороченням, оберіть справжнього учня після перевірки. Це збереже оригінальне ім’я й історію роботи.</p>
-  <h2>Позакласні учні</h2><p><a href="{% if show_all %}?{% else %}?all=1{% endif %}">{% if show_all %}Лише без відповідності{% else %}Також показати підтверджені відповідності{% endif %}</a></p>
-  {% for extra in extra_page %}<article class="schedule-card"><h3>{{ extra.name }}</h3><p>{{ extra.connection.get_source_display }}{% if extra.matched_student %} · Підтверджено: {{ extra.matched_student.get_full_name_ukr }}{% endif %}</p>
-    {% if extra.suggestions %}<p>Схожі імена, які варто перевірити: {{ extra.suggestions|join:', ' }}.</p>{% endif %}
-    {% for result in extra.recent_results %}<p>{{ result.payload.date }} · {{ result.payload.title }} · {{ result.payload.value }}{% if result.reason %} — {{ result.reason }}{% endif %}</p>{% empty %}<p>Оцінок ще не отримано.</p>{% endfor %}
-    {% if can_edit %}<form method="post">{% csrf_token %}<input type="hidden" name="extra_id" value="{{ extra.pk }}"><input type="hidden" name="version" value="{{ extra.updated_at|date:'c' }}"><label>Це учень мого класу: <select name="student"><option value="">Залишити позакласним</option>{% for student in students %}<option value="{{ student.pk }}" {% if extra.matched_student_id == student.pk %}selected{% endif %}>{{ student.get_full_name_ukr }}</option>{% endfor %}</select></label> <button class="btn btn-primary" name="action" value="match">Підтвердити відповідність</button></form>{% endif %}
-  </article>{% empty %}<p>Позакласних учнів немає.</p>{% endfor %}
-  {% if extra_page.has_other_pages %}<p>{% if extra_page.has_previous %}<a href="?page={{ extra_page.previous_page_number }}{% if show_all %}&amp;all=1{% endif %}">Попередні учні</a>{% endif %} {{ extra_page.number }} / {{ extra_page.paginator.num_pages }} {% if extra_page.has_next %}<a href="?page={{ extra_page.next_page_number }}{% if show_all %}&amp;all=1{% endif %}">Наступні учні</a>{% endif %}</p>{% endif %}
+  <p>Якщо учень ввів ім’я з помилкою або скороченням, оберіть справжнього учня після перевірки. Якщо учень не належить до класу, оберіть <strong>«Залишити позакласним»</strong> — для нього автоматично буде створено окремий журнал.</p>
+
+  <h2>Позакласні учні</h2>
+  <p><a href="{% if show_all %}?{% else %}?all=1{% endif %}">{% if show_all %}Лише без відповідності{% else %}Також показати підтверджені відповідності{% endif %}</a></p>
+
+  {% for extra in extra_page %}
+    <article class="schedule-card">
+      <h3>{{ extra.name }}</h3>
+      <p>{{ extra.connection.get_source_display }}{% if extra.matched_student %} · Підтверджено: {{ extra.matched_student.get_full_name_ukr }}{% endif %}</p>
+      {% if extra.suggestions %}<p>Схожі імена, які варто перевірити: {{ extra.suggestions|join:', ' }}.</p>{% endif %}
+
+      {% for result in extra.recent_results %}
+        <div style="display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; margin-bottom: 0.35rem;">
+          <span>{{ result.payload.date }} · {{ result.payload.title }} · <strong>{{ result.payload.value }}</strong>{% if result.reason %} — {{ result.reason }}{% endif %}</span>
+          {% if can_edit %}
+            <form method="post" style="display: inline; margin: 0;">
+              {% csrf_token %}
+              <input type="hidden" name="result_id" value="{{ result.pk }}">
+              <button class="btn btn-outline-secondary btn-sm" name="action" value="ignore_result" style="font-size: 0.75rem; padding: 1px 6px;" title="Ігнорувати запис або оцінку за цю дату ({{ result.payload.date }})">
+                🚫 Ігнорувати за {{ result.payload.date }}
+              </button>
+            </form>
+          {% endif %}
+        </div>
+      {% empty %}
+        <p>Оцінок ще не отримано.</p>
+      {% endfor %}
+
+      {% if can_edit %}
+        <form method="post" style="margin-top: 0.75rem;">
+          {% csrf_token %}
+          <input type="hidden" name="extra_id" value="{{ extra.pk }}">
+          <input type="hidden" name="version" value="{{ extra.updated_at|date:'c' }}">
+          <label>Це учень мого класу: 
+            <select name="student">
+              <option value="">Залишити позакласним (створить окремий журнал)</option>
+              {% for student in students %}
+                <option value="{{ student.pk }}" {% if extra.matched_student_id == student.pk %}selected{% endif %}>{{ student.get_full_name_ukr }}</option>
+              {% endfor %}
+            </select>
+          </label> 
+          <button class="btn btn-primary" name="action" value="match">Підтвердити відповідність</button>
+        </form>
+      {% endif %}
+    </article>
+  {% empty %}
+    <p>Позакласних учнів немає.</p>
+  {% endfor %}
+
+  {% if extra_page.has_other_pages %}
+    <p>
+      {% if extra_page.has_previous %}<a href="?page={{ extra_page.previous_page_number }}{% if show_all %}&amp;all=1{% endif %}">Попередні учні</a>{% endif %}
+      {{ extra_page.number }} / {{ extra_page.paginator.num_pages }}
+      {% if extra_page.has_next %}<a href="?page={{ extra_page.next_page_number }}{% if show_all %}&amp;all=1{% endif %}">Наступні учні</a>{% endif %}
+    </p>
+  {% endif %}
+
   <h2>Результати, що потребують рішення</h2>
-  {% for result in result_page %}<article class="schedule-card"><h3>{{ result.payload.student_name|default:result.extra_student.name }} · {{ result.payload.value }}</h3><p>{{ result.payload.date }} · {{ result.payload.title }} · {{ result.connection.get_source_display }}</p><p role="status">{{ result.reason }}</p>
-    {% if can_edit %}<form method="post">{% csrf_token %}<input type="hidden" name="result_id" value="{{ result.pk }}"><input type="hidden" name="version" value="{{ result.updated_at|date:'c' }}">
-      <label>Урок на цю дату: <select name="lesson"><option value="">Визначити за датою</option>{% for lesson in result.lessons %}<option value="{{ lesson.pk }}">№{{ lesson.lesson_number }} · {{ lesson.topic }}</option>{% endfor %}</select></label>
-      <button class="btn btn-primary" name="action" value="apply_saved">Додати збережений результат до журналу</button>
-    </form>{% endif %}
-    <p>Якщо уроку немає, створіть його в журналі на дату роботи. Нуль, дробові, рівневі оцінки та інші шкали потребують ручного рішення; автоматично приймаються лише готові цілі 1–12 зі шкали 12.</p>
-  </article>{% empty %}<p>Немає результатів, що потребують рішення.</p>{% endfor %}
-  {% if result_page.has_other_pages %}<p>{% if result_page.has_previous %}<a href="?results_page={{ result_page.previous_page_number }}">Попередні результати</a>{% endif %} {{ result_page.number }} / {{ result_page.paginator.num_pages }} {% if result_page.has_next %}<a href="?results_page={{ result_page.next_page_number }}">Наступні результати</a>{% endif %}</p>{% endif %}
+  {% for result in result_page %}
+    <article class="schedule-card">
+      <h3>{{ result.payload.student_name|default:result.extra_student.name }} · {{ result.payload.value }}</h3>
+      <p>{{ result.payload.date }} · {{ result.payload.title }} · {{ result.connection.get_source_display }}</p>
+      <p role="status">{{ result.reason }}</p>
+      {% if can_edit %}
+        <form method="post" style="display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center;">
+          {% csrf_token %}
+          <input type="hidden" name="result_id" value="{{ result.pk }}">
+          <input type="hidden" name="version" value="{{ result.updated_at|date:'c' }}">
+          <label style="margin: 0;">Урок на цю дату: 
+            <select name="lesson">
+              <option value="">Визначити за датою</option>
+              {% for lesson in result.lessons %}
+                <option value="{{ lesson.pk }}">№{{ lesson.lesson_number }} · {{ lesson.topic }}</option>
+              {% endfor %}
+            </select>
+          </label>
+          <button class="btn btn-primary" name="action" value="apply_saved">Додати збережений результат до журналу</button>
+          <button class="btn btn-outline-secondary" name="action" value="ignore_result" title="Ігнорувати цей запис або оцінку за {{ result.payload.date }}">
+            🚫 Ігнорувати за {{ result.payload.date }}
+          </button>
+        </form>
+      {% endif %}
+      <p style="font-size: 0.85rem; color: var(--text-muted); margin-top: 0.5rem;">
+        Якщо уроку немає, створіть його в журналі на дату роботи. Нуль, дробові, рівневі оцінки та інші шкали потребують ручного рішення; автоматично приймаються лише готові цілі 1–12 зі шкали 12.
+      </p>
+    </article>
+  {% empty %}
+    <p>Немає результатів, що потребують рішення.</p>
+  {% endfor %}
+
+  {% if result_page.has_other_pages %}
+    <p>
+      {% if result_page.has_previous %}<a href="?results_page={{ result_page.previous_page_number }}">Попередні результати</a>{% endif %}
+      {{ result_page.number }} / {{ result_page.paginator.num_pages }}
+      {% if result_page.has_next %}<a href="?results_page={{ result_page.next_page_number }}">Наступні результати</a>{% endif %}
+    </p>
+  {% endif %}
+
+  <!-- Секція ігнорованих записів -->
+  <details class="schedule-card" id="ignoredResultsDetails" style="margin-top: 1.5rem; border-left: 4px solid #64748b;" open>
+    <summary style="font-size: 1.15rem; font-weight: 700; cursor: pointer; color: #334155;">
+      🚫 Ігноровані записи та оцінки ({{ ignored_results|length }})
+    </summary>
+    <p style="margin-top: 0.5rem; font-size: 0.85rem; color: var(--text-muted);">
+      Тут зберігаються записи та оцінки за конкретні дати, які ви ігнорували. Ви можете будь-коли переглянути їх або відновити до журналу.
+    </p>
+    {% if ignored_results %}
+      <div style="overflow-x: auto;">
+        <table class="table" style="width: 100%; font-size: 0.85rem; margin-top: 0.75rem; border-collapse: collapse;">
+          <thead>
+            <tr style="background: #f1f5f9; text-align: left; color: #475569;">
+              <th style="padding: 0.6rem 0.75rem;">Учень</th>
+              <th style="padding: 0.6rem 0.75rem;">Дата роботи</th>
+              <th style="padding: 0.6rem 0.75rem;">Назва роботи</th>
+              <th style="padding: 0.6rem 0.75rem;">Оцінка</th>
+              <th style="padding: 0.6rem 0.75rem;">Час ігнорування</th>
+              {% if can_edit %}<th style="padding: 0.6rem 0.75rem;">Дія</th>{% endif %}
+            </tr>
+          </thead>
+          <tbody>
+            {% for item in ignored_results %}
+              <tr style="border-top: 1px solid #e2e8f0;">
+                <td style="padding: 0.6rem 0.75rem; font-weight: 600;">{{ item.payload.student_name|default:item.extra_student.name }}</td>
+                <td style="padding: 0.6rem 0.75rem;">{{ item.payload.date }}</td>
+                <td style="padding: 0.6rem 0.75rem;">{{ item.payload.title }}</td>
+                <td style="padding: 0.6rem 0.75rem; font-weight: 700; color: #dc2626;">{{ item.payload.value }}</td>
+                <td style="padding: 0.6rem 0.75rem; color: #64748b;">{{ item.ignored_at|date:"d.m.Y H:i"|default:"—" }}</td>
+                {% if can_edit %}
+                  <td style="padding: 0.6rem 0.75rem;">
+                    <form method="post" style="margin: 0; display: inline;">
+                      {% csrf_token %}
+                      <input type="hidden" name="result_id" value="{{ item.pk }}">
+                      <button class="btn btn-outline-primary btn-sm" name="action" value="unignore_result" style="font-size: 0.78rem; padding: 2px 8px;">
+                        ✓ Відновити
+                      </button>
+                    </form>
+                  </td>
+                {% endif %}
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      <p style="margin-top: 0.5rem; color: var(--text-muted);">Немає ігнорованих записів.</p>
+    {% endif %}
+  </details>
 </div>
 {% endblock %}

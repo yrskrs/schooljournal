@@ -1,12 +1,15 @@
+import datetime as dt
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.db import transaction
 from django.shortcuts import get_object_or_404, redirect, render
 from django.core.exceptions import PermissionDenied
 from django.core.paginator import Paginator
+from django.utils import timezone
 from django.views.decorators.http import require_http_methods
 
-from apps.journals.models import ExtraStudent, APIInboxResult, Journal
+from apps.curriculum.models import StudentClass, Student, ClassEnrollment
+from apps.journals.models import ExtraStudent, APIInboxResult, Journal, Lesson, Grade
 from apps.journals.services.assessment import journal_students
 from apps.journals.services.external_grades import import_grade_records, ExternalAPIError
 from apps.portal.permissions import has_journal_access
@@ -35,13 +38,100 @@ def api_inbox(request, journal_id):
                     student = journal_students(journal).filter(pk=int(choice)).first() if str(choice or '').isdigit() else None
                     if choice and not student:
                         raise ExternalAPIError('Оберіть учня саме цього журналу.')
-                    if extra.matched_student_id and extra.matched_student_id != (student.pk if student else None):
-                        ids = extra.results.values_list('external_id', flat=True)
-                        if extra.connection.records.filter(external_id__in=ids).exists():
-                            raise ExternalAPIError('Відповідність уже має імпортовану історію. Переприв’язування заборонено.')
-                    extra.matched_student = student
-                    extra.save(update_fields=['matched_student', 'updated_at'])
-                    messages.success(request, 'Відповідність збережено. Для оцінок натисніть синхронізацію або «Додати збережений результат».')
+
+                    if choice:
+                        if extra.matched_student_id and extra.matched_student_id != student.pk:
+                            ids = extra.results.values_list('external_id', flat=True)
+                            if extra.connection.records.filter(external_id__in=ids).exists():
+                                raise ExternalAPIError('Відповідність уже має імпортовану історію. Переприв’язування заборонено.')
+                        extra.matched_student = student
+                        extra.save(update_fields=['matched_student', 'updated_at'])
+                        messages.success(request, 'Відповідність збережено. Для оцінок натисніть синхронізацію або «Додати збережений результат».')
+                    else:
+                        # Вчитель обрав пункт «Залишити позакласним»: створюємо окремий журнал (таблицю) для цих учнів
+                        extra_class_name = f"{journal.student_class.name} (Позакласні)"
+                        extra_class, _ = StudentClass.objects.get_or_create(
+                            school=journal.school,
+                            academic_year=journal.academic_year,
+                            name=extra_class_name,
+                            defaults={
+                                'grade_level': journal.student_class.grade_level,
+                                'letter': 'ПК',
+                            }
+                        )
+                        extra_journal, _ = Journal.objects.get_or_create(
+                            school=journal.school,
+                            academic_year=journal.academic_year,
+                            student_class=extra_class,
+                            subject=journal.subject,
+                            defaults={
+                                'teacher': journal.teacher,
+                            }
+                        )
+                        names = extra.name.strip().split(None, 1)
+                        last_name = names[0]
+                        first_name = names[1] if len(names) > 1 else ''
+                        ext_student, _ = Student.objects.get_or_create(
+                            school=journal.school,
+                            last_name=last_name,
+                            first_name=first_name or last_name,
+                            defaults={'notes': f'Позакласний учень ({journal.student_class.name})'}
+                        )
+                        ClassEnrollment.objects.get_or_create(
+                            student=ext_student,
+                            student_class=extra_class,
+                            defaults={'is_active': True}
+                        )
+                        # Переносимо результати учня в окремий журнал позакласних
+                        for res in extra.results.filter(resolved=False, is_ignored=False):
+                            payload = res.payload
+                            d_str = payload.get('date')
+                            val = payload.get('value')
+                            if d_str and val is not None:
+                                try:
+                                    lesson_date = dt.date.fromisoformat(d_str)
+                                    lesson, _ = Lesson.objects.get_or_create(
+                                        journal=extra_journal,
+                                        date=lesson_date,
+                                        defaults={
+                                            'lesson_number': 1,
+                                            'topic': payload.get('title') or 'Позакласна робота',
+                                        }
+                                    )
+                                    Grade.objects.get_or_create(
+                                        lesson=lesson,
+                                        student=ext_student,
+                                        defaults={'value': str(val), 'is_approved': True}
+                                    )
+                                    res.resolved = True
+                                    res.save(update_fields=['resolved', 'updated_at'])
+                                except Exception:
+                                    pass
+
+                        extra.matched_student = None
+                        extra.save(update_fields=['matched_student', 'updated_at'])
+                        messages.success(
+                            request,
+                            f'Учня «{extra.name}» залишено позакласним та створено окремий журнал «{extra_journal.student_class.name}».'
+                        )
+                elif action == 'ignore_result':
+                    result = get_object_or_404(APIInboxResult.objects.select_for_update(),
+                        pk=request.POST.get('result_id') if str(request.POST.get('result_id', '')).isdigit() else 0,
+                        connection__journal=journal)
+                    result.is_ignored = True
+                    result.resolved = True
+                    result.ignored_at = timezone.now()
+                    result.save(update_fields=['is_ignored', 'resolved', 'ignored_at', 'updated_at'])
+                    messages.success(request, f"Запис за {result.payload.get('date', 'цю дату')} переміщено в ігноровані.")
+                elif action == 'unignore_result':
+                    result = get_object_or_404(APIInboxResult.objects.select_for_update(),
+                        pk=request.POST.get('result_id') if str(request.POST.get('result_id', '')).isdigit() else 0,
+                        connection__journal=journal)
+                    result.is_ignored = False
+                    result.resolved = False
+                    result.ignored_at = None
+                    result.save(update_fields=['is_ignored', 'resolved', 'ignored_at', 'updated_at'])
+                    messages.success(request, f"Запис за {result.payload.get('date', 'цю дату')} повернуто з ігнорованих.")
                 elif action == 'apply_saved':
                     result = get_object_or_404(APIInboxResult.objects.select_for_update(),
                         pk=request.POST.get('result_id') if str(request.POST.get('result_id', '')).isdigit() else 0,
@@ -66,6 +156,7 @@ def api_inbox(request, journal_id):
         except ExternalAPIError as error:
             messages.error(request, str(error))
         return redirect('portal:api_inbox', journal_id=journal.pk)
+
     students = list(journal_students(journal))
     extras = ExtraStudent.objects.filter(connection__journal=journal).select_related('connection', 'matched_student')
     if request.GET.get('all') != '1':
@@ -73,11 +164,34 @@ def api_inbox(request, journal_id):
     page = Paginator(extras, 50).get_page(request.GET.get('page'))
     for extra in page:
         extra.suggestions = [s.get_full_name_ukr() for s in students if similar(extra.name, s.get_full_name_ukr())][:5]
-        extra.recent_results = list(extra.results.order_by('-updated_at')[:5])
-    inbox = APIInboxResult.objects.filter(connection__journal=journal, resolved=False).select_related('connection', 'extra_student')
+        extra.recent_results = list(extra.results.filter(is_ignored=False).order_by('-updated_at')[:5])
+
+    inbox = APIInboxResult.objects.filter(
+        connection__journal=journal, resolved=False, is_ignored=False
+    ).select_related('connection', 'extra_student')
     result_page = Paginator(inbox, 50).get_page(request.GET.get('results_page'))
     for result in result_page:
         result.lessons = list(journal.lessons.filter(date=result.payload.get('date')))
-    return render(request, 'portal/journal/api_inbox.html', {'journal': journal, 'extra_page': page,
-        'result_page': result_page, 'students': students, 'show_all': request.GET.get('all') == '1',
-        'can_edit': has_journal_access(request.user, journal, write=True)})
+
+    ignored_results = APIInboxResult.objects.filter(
+        connection__journal=journal, is_ignored=True
+    ).select_related('connection', 'extra_student').order_by('-ignored_at', '-updated_at')
+
+    extra_journal = Journal.objects.filter(
+        school=journal.school,
+        academic_year=journal.academic_year,
+        student_class__name=f"{journal.student_class.name} (Позакласні)",
+        subject=journal.subject,
+        teacher=journal.teacher,
+    ).first()
+
+    return render(request, 'portal/journal/api_inbox.html', {
+        'journal': journal,
+        'extra_page': page,
+        'result_page': result_page,
+        'ignored_results': ignored_results,
+        'extra_journal': extra_journal,
+        'students': students,
+        'show_all': request.GET.get('all') == '1',
+        'can_edit': has_journal_access(request.user, journal, write=True)
+    })

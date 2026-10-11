@@ -144,6 +144,8 @@ class APIInboxResult(models.Model):
     payload = models.JSONField(default=dict)
     reason = models.CharField(max_length=500, blank=True)
     resolved = models.BooleanField(default=False)
+    is_ignored = models.BooleanField(default=False, verbose_name="Ігноровано")
+    ignored_at = models.DateTimeField(null=True, blank=True, verbose_name="Час ігнорування")
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:

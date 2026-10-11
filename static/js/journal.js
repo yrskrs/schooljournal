@@ -959,6 +959,45 @@ function closeNzSyncModal() {
   }
 }
 
+function ignoreNzRecord(journalId, itemType, objectId, btnElement) {
+  if (btnElement) {
+    btnElement.disabled = true;
+    btnElement.textContent = '...';
+  }
+  const formData = new FormData();
+  formData.append('item_type', itemType);
+  formData.append('object_id', objectId);
+
+  fetch(`/journal/${journalId}/nz/ignore-change/`, {
+    method: 'POST',
+    headers: {
+      'X-CSRFToken': getCookie('schooljournal_csrftoken'),
+      'X-Requested-With': 'XMLHttpRequest'
+    },
+    body: formData
+  })
+    .then(function (res) {
+      return res.json().then(function (data) {
+        return { ok: res.ok, data: data };
+      });
+    })
+    .then(function (resObj) {
+      if (resObj.ok && resObj.data.status === 'ok') {
+        showToast(resObj.data.message || 'Запис ігноровано при вивантаженні', 'success');
+        openNzSyncModal(journalId);
+      } else {
+        throw new Error(resObj.data.message || 'Помилка при ігноруванні запису');
+      }
+    })
+    .catch(function (err) {
+      if (btnElement) {
+        btnElement.disabled = false;
+        btnElement.textContent = '🚫 Ігнорувати запис';
+      }
+      showToast('Помилка: ' + err.message, 'danger');
+    });
+}
+
 function pullNzJournal(journalId) {
   const btn = document.getElementById('btnNzPull');
   const modalPullBtn = document.getElementById('nzModalPullBtn');
@@ -1219,4 +1258,28 @@ function toggleStudentIgnore(journalId, studentId, btn) {
       }
     });
 }
+
+function toggleStudentActionMenu(event, menuId) {
+  if (event) {
+    event.stopPropagation();
+  }
+  const menu = document.getElementById(menuId);
+  const isShown = menu && menu.style.display === 'block';
+  closeAllStudentActionMenus();
+  if (menu && !isShown) {
+    menu.style.display = 'block';
+  }
+}
+
+function closeAllStudentActionMenus() {
+  document.querySelectorAll('.student-action-dropdown').forEach(function(el) {
+    el.style.display = 'none';
+  });
+}
+
+document.addEventListener('click', function(e) {
+  if (!e.target.closest('.student-action-menu-wrap')) {
+    closeAllStudentActionMenus();
+  }
+});
 

@@ -212,6 +212,10 @@ class Lesson(models.Model):
         default=False,
         verbose_name="Синхронізовано з nz.ua"
     )
+    is_ignored_for_nz = models.BooleanField(
+        default=False,
+        verbose_name="Ігнорувати для nz.ua"
+    )
     nz_last_synced_topic = models.CharField(
         max_length=255,
         blank=True,
@@ -307,6 +311,10 @@ class Grade(models.Model):
     is_synced_to_nz = models.BooleanField(
         default=False,
         verbose_name="Синхронізовано з nz.ua"
+    )
+    is_ignored_for_nz = models.BooleanField(
+        default=False,
+        verbose_name="Ігнорувати для nz.ua"
     )
     nz_last_synced_value = models.CharField(
         max_length=10,
@@ -441,6 +449,10 @@ class Attendance(models.Model):
     is_synced_to_nz = models.BooleanField(
         default=False,
         verbose_name="Синхронізовано з nz.ua"
+    )
+    is_ignored_for_nz = models.BooleanField(
+        default=False,
+        verbose_name="Ігнорувати для nz.ua"
     )
     nz_last_synced_status = models.CharField(
         max_length=20,

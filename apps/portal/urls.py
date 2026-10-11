@@ -43,6 +43,7 @@ urlpatterns = [
 
     # Кабінет вчителя
     path('teacher-portal/', views_teacher.teacher_dashboard, name='teacher_dashboard'),
+    path('teacher-portal/update-class-order/', views_teacher.update_class_order, name='update_class_order'),
     path('teacher-portal/schedule/', views_schedule.weekly_schedule, name='weekly_schedule'),
     path('teacher-portal/lesson-times/', views_schedule.lesson_times, name='lesson_times'),
     path('teacher-portal/api-keys/', views_connection_setup.teacher_api_keys, name='teacher_api_keys'),
@@ -72,6 +73,7 @@ urlpatterns = [
     path('journal/<int:journal_id>/nz/import/', views_nz.nz_journal_import_view, name='nz_journal_import_for_journal'),
     path('journal/<int:journal_id>/nz/preview/', views_nz.nz_sync_preview_view, name='nz_sync_preview'),
     path('journal/<int:journal_id>/nz/sync/', views_nz.nz_sync_execute_view, name='nz_sync_execute'),
+    path('journal/<int:journal_id>/nz/ignore-change/', views_nz.nz_ignore_change_view, name='nz_ignore_change'),
     path('journal/<int:journal_id>/nz/history/', views_nz.nz_sync_history_view, name='nz_sync_history'),
 
     # Імпорт та експорт

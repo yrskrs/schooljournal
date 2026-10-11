@@ -137,6 +137,7 @@
                   <th style="padding: 0.6rem 0.85rem; font-weight: 600;">Було на nz.ua</th>
                   <th style="padding: 0.6rem 0.85rem; font-weight: 600;">Буде записано</th>
                   <th style="padding: 0.6rem 0.85rem; font-weight: 600;">Статус</th>
+                  <th style="padding: 0.6rem 0.85rem; font-weight: 600;">Дія</th>
                 </tr>
               </thead>
               <tbody>
@@ -173,6 +174,14 @@
                       {% else %}
                         <span style="color: #dc2626; font-size: 0.8rem;" title="{{ item.warning }}">&#9888; {{ item.warning }}</span>
                       {% endif %}
+                    </td>
+                    <td style="padding: 0.6rem 0.85rem; white-space: nowrap;">
+                      <button type="button" class="btn btn-outline-secondary btn-sm"
+                              style="font-size: 0.75rem; padding: 2px 7px;"
+                              onclick="ignoreNzRecord({{ journal.id }}, '{{ item.type }}', {{ item.object_id }}, this)"
+                              title="Ігнорувати запис при вивантаженні в nz.ua (не вважатиметься невивантаженою зміною, якщо nz.ua заблокував редагування оцінок)">
+                        🚫 Ігнорувати запис
+                      </button>
                     </td>
                   </tr>
                 {% endfor %}

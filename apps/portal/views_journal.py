@@ -211,14 +211,14 @@ def journal_detail(request, journal_id):
         'nz_bound': bool(l.nz_schedule_id),
     } for l in all_lessons]
 
-    # Рахуємо несинхронізовані зміни з nz.ua для цього журналу (без ігнорованих учнів)
+    # Рахуємо несинхронізовані зміни з nz.ua для цього журналу (без ігнорованих учнів та ігнорованих записів)
     unsynced_grades_count = Grade.objects.filter(
-        lesson__journal=journal, is_synced_to_nz=False, is_approved=True
+        lesson__journal=journal, is_synced_to_nz=False, is_approved=True, is_ignored_for_nz=False
     ).exclude(student_id__in=ignored_students_set).count()
     unsynced_attendances_count = Attendance.objects.filter(
-        lesson__journal=journal, is_synced_to_nz=False
+        lesson__journal=journal, is_synced_to_nz=False, is_ignored_for_nz=False
     ).exclude(student_id__in=ignored_students_set).count()
-    unsynced_lessons_count = Lesson.objects.filter(journal=journal, is_synced_to_nz=False).count()
+    unsynced_lessons_count = Lesson.objects.filter(journal=journal, is_synced_to_nz=False, is_ignored_for_nz=False).count()
     unsynced_total = unsynced_grades_count + unsynced_attendances_count + unsynced_lessons_count
     nz_account = journal_nz_account(journal, request.user)
     calculation_date = max(journal.academic_year.start_date, min(timezone.localdate(), journal.academic_year.end_date))
@@ -245,10 +245,20 @@ def journal_detail(request, journal_id):
             year_number = journal.academic_year.start_date.year if month_number >= journal.academic_year.start_date.month else journal.academic_year.end_date.year
         integration_start = max(integration_start, datetime.date(year_number, month_number, 1))
         integration_end = min(integration_end, datetime.date(year_number, month_number, calendar.monthrange(year_number, month_number)[1]))
+
+    extra_journal = Journal.objects.filter(
+        school=journal.school,
+        academic_year=journal.academic_year,
+        student_class__name=f"{journal.student_class.name} (Позакласні)",
+        subject=journal.subject,
+        teacher=journal.teacher,
+    ).first()
+
     context = {
         'integration_date_from': integration_start.isoformat(),
         'integration_date_to': integration_end.isoformat(),
         'journal': journal,
+        'extra_journal': extra_journal,
         'can_edit': can_edit,
         'show_withdrawn': show_withdrawn,
         'semesters': semesters,

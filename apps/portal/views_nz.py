@@ -14,7 +14,7 @@ from django.views.decorators.debug import sensitive_post_parameters
 
 from apps.portal.permissions import has_journal_access
 from apps.curriculum.models import AcademicYear, StudentClass, Subject, TeacherAssignment
-from apps.journals.models import Journal, NZAccount, NZSyncLog
+from apps.journals.models import Journal, Lesson, Grade, Attendance, NZAccount, NZSyncLog
 from apps.journals.services.nz_service import NZService, NZServiceError, NZAuthError
 from apps.accounts.personal import journal_nz_account
 
@@ -451,4 +451,52 @@ def nz_sync_history_view(request, journal_id):
     return render(request, 'portal/nz/sync_history.html', {
         'journal': journal,
         'logs': logs,
+    })
+
+
+@login_required
+@require_POST
+def nz_ignore_change_view(request, journal_id):
+    """
+    Ігнорування конкретної локальної зміни (оцінка / відвідування / тема уроку)
+    при вивантаженні в nz.ua. Використовується, коли зміни за минулі дати заблоковані на nz.ua.
+    """
+    journal = get_object_or_404(Journal, id=journal_id)
+    if not has_journal_access(request.user, journal, write=True):
+        return JsonResponse({'status': 'error', 'message': 'Доступ заборонено'}, status=403)
+
+    item_type = request.POST.get('item_type')
+    object_id = request.POST.get('object_id')
+
+    if not object_id or not str(object_id).isdigit():
+        return JsonResponse({'status': 'error', 'message': 'Некоректний ID об’єкта'}, status=400)
+
+    object_id = int(object_id)
+    unignore = request.POST.get('unignore') in ['1', 'true', 'True', True]
+
+    if item_type == 'grade':
+        record = get_object_or_404(Grade, id=object_id, lesson__journal=journal)
+        record.is_ignored_for_nz = not unignore
+        record.is_synced_to_nz = not unignore
+        record.save(update_fields=['is_ignored_for_nz', 'is_synced_to_nz', 'updated_at'])
+    elif item_type == 'attendance':
+        record = get_object_or_404(Attendance, id=object_id, lesson__journal=journal)
+        record.is_ignored_for_nz = not unignore
+        record.is_synced_to_nz = not unignore
+        record.save(update_fields=['is_ignored_for_nz', 'is_synced_to_nz', 'updated_at'])
+    elif item_type == 'lesson_topic':
+        record = get_object_or_404(Lesson, id=object_id, journal=journal)
+        record.is_ignored_for_nz = not unignore
+        record.is_synced_to_nz = not unignore
+        record.save(update_fields=['is_ignored_for_nz', 'is_synced_to_nz', 'updated_at'])
+    else:
+        return JsonResponse({'status': 'error', 'message': 'Невідомий тип запису'}, status=400)
+
+    action_word = "повернуто до вивантаження" if unignore else "ігноровано для вивантаження"
+    return JsonResponse({
+        'status': 'ok',
+        'message': f"Запис успішно {action_word}.",
+        'item_type': item_type,
+        'object_id': object_id,
+        'is_ignored_for_nz': not unignore,
     })

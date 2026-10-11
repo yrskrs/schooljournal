@@ -33,6 +33,9 @@
         <a class="btn btn-outline-primary btn-sm" href="{% url 'portal:journal_integrations' journal.id %}">Профілі та API</a>
         <a class="btn btn-outline-primary btn-sm" href="{% url 'portal:external_grade_review' journal.id %}">Оцінки з робіт{% if external_review_count %} ({{ external_review_count }}){% endif %}</a>
         <a class="btn btn-outline-primary btn-sm" href="{% url 'portal:api_inbox' journal.id %}">Позакласні учні та результати</a>
+        {% if extra_journal %}
+          <a class="btn btn-outline-success btn-sm" href="{% url 'portal:journal_detail' extra_journal.id %}">📘 Журнал позакласних учнів</a>
+        {% endif %}
         <a class="btn btn-outline-primary btn-sm" href="{% url 'portal:nz_sync_history' journal.id %}">Історія та помилки nz.ua</a>
         <form method="post" action="{% url 'portal:pull_source_grades' journal.id 'schooltest' %}">{% csrf_token %}
           <input type="hidden" name="date_from" value="{{ integration_date_from }}"><input type="hidden" name="date_to" value="{{ integration_date_to }}">
@@ -223,9 +226,38 @@
       <tbody>
         {% for row in student_rows %}
           <tr class="student-row {% if row.is_ignored_for_sync %}row-student-ignored{% endif %}" data-student-name="{{ row.student.get_full_name_ukr }}" data-student-id="{{ row.student.id }}"{% if not row.is_active and not show_withdrawn %} hidden{% endif %}>
-            <!-- Фіксований номер -->
-            <td class="sticky-col-num" style="color: var(--text-muted); font-size: 0.8rem;">
-              {{ row.display_number }}
+            <!-- Фіксований номер зі списком дій -->
+            <td class="sticky-col-num" style="color: var(--text-muted); font-size: 0.8rem; position: relative;">
+              {% if can_edit %}
+                <div class="student-action-menu-wrap" style="position: relative; display: inline-block;">
+                  <button type="button" class="btn btn-link btn-sm student-number-btn"
+                          onclick="toggleStudentActionMenu(event, 'studentMenu_{{ row.student.id }}')"
+                          title="Натисніть на номер для відкриття меню дій над учнем"
+                          style="padding: 1px 4px; text-decoration: none; color: inherit; font-size: 0.82rem; font-weight: 600; cursor: pointer; border-radius: 3px; display: inline-flex; align-items: center; gap: 2px;">
+                    <span>{{ row.display_number }}</span>
+                    <span style="font-size: 0.6rem; opacity: 0.6;">▾</span>
+                  </button>
+                  <div id="studentMenu_{{ row.student.id }}" class="student-action-dropdown"
+                       style="display: none; position: absolute; top: 100%; left: 0; z-index: 1060; min-width: 210px; background: #ffffff; border: 1px solid var(--border); border-radius: var(--radius-sm); box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05); padding: 0.35rem 0; text-align: left;">
+                    <div style="padding: 0.35rem 0.75rem; font-size: 0.75rem; font-weight: 700; color: var(--text-muted); border-bottom: 1px solid #f1f5f9;">
+                      {{ row.student.get_short_name_ukr }} (№{{ row.display_number }})
+                    </div>
+                    <button type="button"
+                            class="student-action-item"
+                            style="width: 100%; padding: 0.5rem 0.75rem; background: transparent; border: none; text-align: left; font-size: 0.82rem; cursor: pointer; display: flex; align-items: center; gap: 0.5rem; color: {% if row.is_ignored_for_sync %}#16a34a{% else %}#dc2626{% endif %};"
+                            onclick="toggleStudentIgnore({{ journal.id }}, {{ row.student.id }}, this)"
+                            title="{% if row.is_ignored_for_sync %}Відновити синхронізацію та оцінювання для цього учня{% else %}Ігнорувати при синхронізації (сімейна форма / за кордоном). Учень не отримає завдань і тестів, виставлення оцінок блокується.{% endif %}">
+                      {% if row.is_ignored_for_sync %}
+                        ✓ Відновити синхронізацію
+                      {% else %}
+                        🚫 Ігнорувати при синхронізації
+                      {% endif %}
+                    </button>
+                  </div>
+                </div>
+              {% else %}
+                {{ row.display_number }}
+              {% endif %}
             </td>
             <!-- Фіксований ПІБ -->
             <td class="sticky-col-name {% if row.is_ignored_for_sync %}student-col-ignored{% endif %}" title="{{ row.student.get_full_name_ukr }}">
@@ -241,17 +273,6 @@
                     </span>
                   {% endif %}
                 </div>
-                {% if can_edit %}
-                  <div class="student-ignore-toggle-wrap">
-                    <button type="button"
-                            class="btn btn-sm {% if row.is_ignored_for_sync %}btn-outline-success{% else %}btn-outline-secondary{% endif %}"
-                            style="font-size: 0.7rem; padding: 1px 6px; line-height: 1.2; border-radius: 4px;"
-                            onclick="toggleStudentIgnore({{ journal.id }}, {{ row.student.id }}, this)"
-                            title="{% if row.is_ignored_for_sync %}Відновити синхронізацію та оцінювання для цього учня{% else %}Ігнорувати при синхронізації (сімейна форма / за кордоном). Учень не отримає завдань і тестів, виставлення оцінок блокується.{% endif %}">
-                      {% if row.is_ignored_for_sync %}✓ Відновити{% else %}🚫 Ігнорувати{% endif %}
-                    </button>
-                  </div>
-                {% endif %}
               </div>
             </td>
 

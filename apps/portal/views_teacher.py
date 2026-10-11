@@ -1,8 +1,12 @@
+from collections import OrderedDict
+import json
 from django.shortcuts import render, redirect, get_object_or_404
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.core.exceptions import PermissionDenied
 from django.db import IntegrityError
+from django.http import JsonResponse
+from apps.accounts.models import TeacherProfile
 from apps.curriculum.models import TeacherAssignment, AcademicYear, StudentClass, Subject
 from apps.journals.models import Journal, Lesson, Grade, Attendance, AuditLog
 from apps.portal.permissions import get_user_journals
@@ -50,13 +54,36 @@ def teacher_dashboard(request):
     nz_account = getattr(request.user, 'nz_account', None)
     for j in my_journals:
         j.unsynced_count = (
-            Grade.objects.filter(lesson__journal=j, is_synced_to_nz=False).count() +
-            Attendance.objects.filter(lesson__journal=j, is_synced_to_nz=False).count() +
-            Lesson.objects.filter(journal=j, is_synced_to_nz=False).count()
+            Grade.objects.filter(lesson__journal=j, is_synced_to_nz=False, is_ignored_for_nz=False).count() +
+            Attendance.objects.filter(lesson__journal=j, is_synced_to_nz=False, is_ignored_for_nz=False).count() +
+            Lesson.objects.filter(journal=j, is_synced_to_nz=False, is_ignored_for_nz=False).count()
         )
+
+    # Групування журналів за блоками класів із можливістю впорядкування
+    profile, _ = TeacherProfile.objects.get_or_create(user=request.user)
+    saved_order = profile.class_order or []
+
+    class_groups = OrderedDict()
+    for j in my_journals:
+        sc = j.student_class
+        if sc.id not in class_groups:
+            class_groups[sc.id] = {
+                'student_class': sc,
+                'journals': [],
+            }
+        class_groups[sc.id]['journals'].append(j)
+
+    def class_sort_key(item):
+        cid, data = item
+        if cid in saved_order:
+            return (0, saved_order.index(cid))
+        return (1, data['student_class'].grade_level, data['student_class'].name)
+
+    class_blocks = [data for _, data in sorted(class_groups.items(), key=class_sort_key)]
 
     context = {
         'my_journals': my_journals,
+        'class_blocks': class_blocks,
         'override_journals': override_journals,
         'assignments': assignments,
         'uncreated_assignments': uncreated_assignments,
@@ -64,6 +91,25 @@ def teacher_dashboard(request):
         'nz_account': nz_account,
     }
     return render(request, 'portal/teacher/dashboard.html', context)
+
+
+@login_required
+def update_class_order(request):
+    """Оновлення послідовності розміщення блоків класів у кабінеті вчителя."""
+    if request.method != 'POST':
+        return JsonResponse({'status': 'error', 'message': 'Метод не підтримується'}, status=405)
+
+    profile, _ = TeacherProfile.objects.get_or_create(user=request.user)
+    try:
+        data = json.loads(request.body.decode('utf-8'))
+        class_ids = data.get('class_ids', [])
+    except Exception:
+        class_ids = request.POST.getlist('class_ids[]') or request.POST.getlist('class_ids')
+
+    valid_ids = [int(cid) for cid in class_ids if str(cid).isdigit()]
+    profile.class_order = valid_ids
+    profile.save(update_fields=['class_order'])
+    return JsonResponse({'status': 'ok', 'class_order': valid_ids})
 
 
 @login_required
