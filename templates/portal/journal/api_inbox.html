@@ -26,6 +26,7 @@
 
   <p>Тут зберігаються учні джерел, яких ще немає серед підтверджених учнів класу, та результати, що потребують рішення. Вони не додаються до класу й не вивантажуються в nz.ua автоматично. Джерело має власну базу й продовжує працювати без журналу.</p>
   <p>Якщо учень ввів ім’я з помилкою або скороченням, оберіть справжнього учня після перевірки. Якщо учень не належить до класу, оберіть <strong>«Залишити позакласним»</strong> — для нього автоматично буде створено окремий журнал.</p>
+  <p><strong>«Ігнорувати за дату»</strong> прибирає лише цей результат із черги. Якщо інших активних результатів учня немає, його картка зіставлення теж зникає. Запис зберігається нижче в ігнорованих і не імпортується повторно, доки ви не натиснете «Відновити».</p>
 
   <h2>Позакласні учні</h2>
   <p><a href="{% if show_all %}?{% else %}?all=1{% endif %}">{% if show_all %}Лише без відповідності{% else %}Також показати підтверджені відповідності{% endif %}</a></p>
@@ -43,6 +44,7 @@
             <form method="post" style="display: inline; margin: 0;">
               {% csrf_token %}
               <input type="hidden" name="result_id" value="{{ result.pk }}">
+              <input type="hidden" name="version" value="{{ result.updated_at|date:'c' }}">
               <button class="btn btn-outline-secondary btn-sm" name="action" value="ignore_result" style="font-size: 0.75rem; padding: 1px 6px;" title="Ігнорувати запис або оцінку за цю дату ({{ result.payload.date }})">
                 🚫 Ігнорувати за {{ result.payload.date }}
               </button>
@@ -85,7 +87,7 @@
   <h2>Результати, що потребують рішення</h2>
   {% for result in result_page %}
     <article class="schedule-card">
-      <h3>{{ result.payload.student_name|default:result.extra_student.name }} · {{ result.payload.value }}</h3>
+      <h3>{% firstof result.payload.student_name result.extra_student.name 'Учень' %} · {{ result.payload.value }}</h3>
       <p>{{ result.payload.date }} · {{ result.payload.title }} · {{ result.connection.get_source_display }}</p>
       <p role="status">{{ result.reason }}</p>
       {% if can_edit %}
@@ -126,7 +128,7 @@
   <!-- Секція ігнорованих записів -->
   <details class="schedule-card" id="ignoredResultsDetails" style="margin-top: 1.5rem; border-left: 4px solid #64748b;" open>
     <summary style="font-size: 1.15rem; font-weight: 700; cursor: pointer; color: #334155;">
-      🚫 Ігноровані записи та оцінки ({{ ignored_results|length }})
+      🚫 Ігноровані записи та оцінки ({{ ignored_results.paginator.count }})
     </summary>
     <p style="margin-top: 0.5rem; font-size: 0.85rem; color: var(--text-muted);">
       Тут зберігаються записи та оцінки за конкретні дати, які ви ігнорували. Ви можете будь-коли переглянути їх або відновити до журналу.
@@ -147,7 +149,7 @@
           <tbody>
             {% for item in ignored_results %}
               <tr style="border-top: 1px solid #e2e8f0;">
-                <td style="padding: 0.6rem 0.75rem; font-weight: 600;">{{ item.payload.student_name|default:item.extra_student.name }}</td>
+                <td style="padding: 0.6rem 0.75rem; font-weight: 600;">{% firstof item.payload.student_name item.extra_student.name 'Учень' %}</td>
                 <td style="padding: 0.6rem 0.75rem;">{{ item.payload.date }}</td>
                 <td style="padding: 0.6rem 0.75rem;">{{ item.payload.title }}</td>
                 <td style="padding: 0.6rem 0.75rem; font-weight: 700; color: #dc2626;">{{ item.payload.value }}</td>
@@ -157,6 +159,7 @@
                     <form method="post" style="margin: 0; display: inline;">
                       {% csrf_token %}
                       <input type="hidden" name="result_id" value="{{ item.pk }}">
+                      <input type="hidden" name="version" value="{{ item.updated_at|date:'c' }}">
                       <button class="btn btn-outline-primary btn-sm" name="action" value="unignore_result" style="font-size: 0.78rem; padding: 2px 8px;">
                         ✓ Відновити
                       </button>
@@ -168,6 +171,13 @@
           </tbody>
         </table>
       </div>
+      {% if ignored_results.has_other_pages %}
+        <p>
+          {% if ignored_results.has_previous %}<a href="?ignored_page={{ ignored_results.previous_page_number }}{% if show_all %}&amp;all=1{% endif %}#ignoredResultsDetails">Попередні ігноровані</a>{% endif %}
+          {{ ignored_results.number }} / {{ ignored_results.paginator.num_pages }}
+          {% if ignored_results.has_next %}<a href="?ignored_page={{ ignored_results.next_page_number }}{% if show_all %}&amp;all=1{% endif %}#ignoredResultsDetails">Наступні ігноровані</a>{% endif %}
+        </p>
+      {% endif %}
     {% else %}
       <p style="margin-top: 0.5rem; color: var(--text-muted);">Немає ігнорованих записів.</p>
     {% endif %}

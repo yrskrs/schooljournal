@@ -42,7 +42,7 @@ elements.createLessonForm = { reset() { elements.plan_topic_id_input.value = '';
 elements.editLessonForm = { getAttribute: () => '/journal/10/lesson/0/edit/' };
 const context = {
   document: { addEventListener() {}, getElementById: id => elements[id] || null },
-  Option, console, setTimeout() {}, window: {},
+  Option, console, setTimeout() {}, window: { addEventListener() {} },
   URLSearchParams,
 };
 vm.createContext(context);

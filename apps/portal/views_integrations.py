@@ -195,7 +195,7 @@ def pull_external_grades(request, journal_id, connection_id):
             rows = fetch_grade_payload(connection, start, end)
             log = import_grade_records(connection, rows, request.user, start, end)
             counts = log.counts
-            messages.success(request, f"Додано: {counts['added']}; оновлено: {counts['updated']}; очікують схвалення: {counts['pending']}; конфлікти: {counts['conflicts']}; без змін: {counts['unchanged']}; помилки: {counts['errors']}.")
+            messages.success(request, f"Додано: {counts['added']}; оновлено: {counts['updated']}; очікують схвалення: {counts['pending']}; конфлікти: {counts['conflicts']}; без змін: {counts['unchanged']}; ігноровано: {counts.get('ignored', 0)}; помилки: {counts['errors']}.")
         except ExternalAPIError as error:
             GradePullLog.objects.create(connection=connection, user=request.user,
                 counts={'errors': 1}, errors=[{'message': str(error)}])
@@ -226,7 +226,7 @@ def pull_source_grades(request, journal_id, source):
             rows = fetch_grade_payload(connection, start, end)
             log = import_grade_records(connection, rows, request.user, start, end)
             counts = log.counts
-            messages.success(request, f"{connection.name}: додано {counts['added']}, оновлено {counts['updated']}, без змін {counts['unchanged']}, конфлікти {counts['conflicts']}, помилки {counts['errors']}.")
+            messages.success(request, f"{connection.name}: додано {counts['added']}, оновлено {counts['updated']}, без змін {counts['unchanged']}, ігноровано {counts.get('ignored', 0)}, конфлікти {counts['conflicts']}, помилки {counts['errors']}.")
         except ExternalAPIError as error:
             GradePullLog.objects.create(connection=connection, user=request.user,
                 counts={'errors': 1}, errors=[{'message': str(error)}])

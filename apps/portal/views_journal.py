@@ -1069,6 +1069,8 @@ def toggle_student_sync_ignore(request, journal_id, student_id):
     student = _student_for_journal(journal, student_id)
     with transaction.atomic():
         journal = Journal.objects.select_for_update().get(pk=journal.pk)
+        if not has_journal_access(request.user, journal, write=True):
+            raise PermissionDenied('Доступ до журналу змінився.')
         if journal.ignored_students.filter(pk=student.pk).exists():
             journal.ignored_students.remove(student)
             is_ignored = False

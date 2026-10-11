@@ -80,6 +80,9 @@ class NewJournalFeaturesTests(TestCase):
         resp = self.client.get(url)
         self.assertContains(resp, 'Ігноровані записи та оцінки (1)')
         self.assertContains(resp, 'Відновити')
+        self.assertEqual(list(resp.context['extra_page']), [])
+        self.assertEqual(list(resp.context['result_page']), [])
+        self.assertNotContains(resp, 'Підтвердити відповідність')
 
         # Відновлюємо запис з ігнорованих
         resp = self.client.post(url, {'action': 'unignore_result', 'result_id': result.pk})
@@ -264,4 +267,5 @@ class NewJournalFeaturesTests(TestCase):
         # Номер містить інтерактивну кнопку меню
         self.assertContains(resp, 'student-number-btn')
         self.assertContains(resp, 'toggleStudentActionMenu')
-        self.assertContains(resp, 'Ігнорувати при синхронізації')
+        self.assertContains(resp, 'Ігноровано (сімейна форма)')
+        self.assertContains(resp, 'role="menuitemcheckbox" aria-checked="false"')

@@ -2,10 +2,12 @@ import datetime as dt
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.db import transaction
+from django.db.models import Exists, OuterRef, Q
 from django.shortcuts import get_object_or_404, redirect, render
 from django.core.exceptions import PermissionDenied
 from django.core.paginator import Paginator
 from django.utils import timezone
+from django.utils.dateparse import parse_datetime
 from django.views.decorators.http import require_http_methods
 
 from apps.curriculum.models import StudentClass, Student, ClassEnrollment
@@ -15,6 +17,15 @@ from apps.journals.services.external_grades import import_grade_records, Externa
 from apps.portal.permissions import has_journal_access
 from apps.portal.views_journal import _get_journal_or_403
 from school_sync.journal_roster import similar
+
+
+def _same_revision(updated_at, submitted):
+    """Templates localize date:c; compare instants rather than ISO strings."""
+    try:
+        value = parse_datetime(submitted or '')
+    except (TypeError, ValueError):
+        return False
+    return value is not None and timezone.is_aware(value) and value == updated_at
 
 
 @login_required
@@ -32,7 +43,7 @@ def api_inbox(request, journal_id):
                     extra = get_object_or_404(ExtraStudent.objects.select_for_update(),
                         pk=request.POST.get('extra_id') if str(request.POST.get('extra_id', '')).isdigit() else 0,
                         connection__journal=journal)
-                    if extra.updated_at.isoformat() != request.POST.get('version'):
+                    if not _same_revision(extra.updated_at, request.POST.get('version')):
                         raise ExternalAPIError('Ім’я оновилося після перегляду. Перевірте його ще раз.')
                     choice = request.POST.get('student')
                     student = journal_students(journal).filter(pk=int(choice)).first() if str(choice or '').isdigit() else None
@@ -118,6 +129,8 @@ def api_inbox(request, journal_id):
                     result = get_object_or_404(APIInboxResult.objects.select_for_update(),
                         pk=request.POST.get('result_id') if str(request.POST.get('result_id', '')).isdigit() else 0,
                         connection__journal=journal)
+                    if request.POST.get('version') and not _same_revision(result.updated_at, request.POST['version']):
+                        raise ExternalAPIError('Результат змінився після перегляду. Оновіть сторінку.')
                     result.is_ignored = True
                     result.resolved = True
                     result.ignored_at = timezone.now()
@@ -127,6 +140,8 @@ def api_inbox(request, journal_id):
                     result = get_object_or_404(APIInboxResult.objects.select_for_update(),
                         pk=request.POST.get('result_id') if str(request.POST.get('result_id', '')).isdigit() else 0,
                         connection__journal=journal)
+                    if request.POST.get('version') and not _same_revision(result.updated_at, request.POST['version']):
+                        raise ExternalAPIError('Результат змінився після перегляду. Оновіть сторінку.')
                     result.is_ignored = False
                     result.resolved = False
                     result.ignored_at = None
@@ -136,7 +151,9 @@ def api_inbox(request, journal_id):
                     result = get_object_or_404(APIInboxResult.objects.select_for_update(),
                         pk=request.POST.get('result_id') if str(request.POST.get('result_id', '')).isdigit() else 0,
                         connection__journal=journal)
-                    if result.updated_at.isoformat() != request.POST.get('version'):
+                    if result.is_ignored:
+                        raise ExternalAPIError('Цей результат ігноровано. Спочатку відновіть його зі списку ігнорованих.')
+                    if not _same_revision(result.updated_at, request.POST.get('version')):
                         raise ExternalAPIError('Результат змінився після перегляду. Оновіть сторінку.')
                     payload = dict(result.payload)
                     lesson_id = request.POST.get('lesson')
@@ -158,13 +175,24 @@ def api_inbox(request, journal_id):
         return redirect('portal:api_inbox', journal_id=journal.pk)
 
     students = list(journal_students(journal))
+    show_all = request.GET.get('all') == '1'
+    visible_results = APIInboxResult.objects.filter(extra_student=OuterRef('pk'), is_ignored=False)
+    if not show_all:
+        visible_results = visible_results.filter(resolved=False)
     extras = ExtraStudent.objects.filter(connection__journal=journal).select_related('connection', 'matched_student')
-    if request.GET.get('all') != '1':
+    extras = extras.annotate(
+        has_results=Exists(APIInboxResult.objects.filter(extra_student=OuterRef('pk'))),
+        has_visible_results=Exists(visible_results),
+    ).filter(Q(has_results=False) | Q(has_visible_results=True))
+    if not show_all:
         extras = extras.filter(matched_student__isnull=True)
     page = Paginator(extras, 50).get_page(request.GET.get('page'))
     for extra in page:
         extra.suggestions = [s.get_full_name_ukr() for s in students if similar(extra.name, s.get_full_name_ukr())][:5]
-        extra.recent_results = list(extra.results.filter(is_ignored=False).order_by('-updated_at')[:5])
+        results = extra.results.filter(is_ignored=False)
+        if not show_all:
+            results = results.filter(resolved=False)
+        extra.recent_results = list(results.order_by('-updated_at')[:5])
 
     inbox = APIInboxResult.objects.filter(
         connection__journal=journal, resolved=False, is_ignored=False
@@ -176,6 +204,7 @@ def api_inbox(request, journal_id):
     ignored_results = APIInboxResult.objects.filter(
         connection__journal=journal, is_ignored=True
     ).select_related('connection', 'extra_student').order_by('-ignored_at', '-updated_at')
+    ignored_results = Paginator(ignored_results, 50).get_page(request.GET.get('ignored_page'))
 
     extra_journal = Journal.objects.filter(
         school=journal.school,

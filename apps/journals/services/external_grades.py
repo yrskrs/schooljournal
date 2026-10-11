@@ -106,7 +106,7 @@ def import_grade_records(connection, rows, user, date_from, date_to):
         identifier = str(getattr(student, connection.student_identifier) or '')
         if identifier:
             students.setdefault(identifier, []).append(student)
-    counts = {'applied': 0, 'added': 0, 'updated': 0, 'pending': 0, 'conflicts': 0, 'unchanged': 0, 'errors': 0}
+    counts = {'applied': 0, 'added': 0, 'updated': 0, 'pending': 0, 'conflicts': 0, 'unchanged': 0, 'ignored': 0, 'errors': 0}
     errors = []
     seen = set()
     if not isinstance(rows, list) or len(rows) > (50000 if connection.contract_version == 2 else 1000):
@@ -118,8 +118,22 @@ def import_grade_records(connection, rows, user, date_from, date_to):
                 raise ValueError('Очікується об’єкт оцінки.')
             source_payload = {}
             if connection.contract_version == 2:
-                from .api_inbox import keep_result
+                from .api_inbox import keep_result, resolve_student
                 inbox = keep_result(connection, row, date_from, date_to)
+                if inbox.is_ignored:
+                    counts['ignored'] += 1
+                    continue
+                if ignored_student_ids:
+                    try:
+                        mapped_student_id = resolve_student(connection, row)
+                    except ValueError:
+                        mapped_student_id = None
+                    if mapped_student_id in ignored_student_ids:
+                        inbox.resolved = True
+                        inbox.reason = 'Учня ігноровано в цьому журналі (сімейна форма).'
+                        inbox.save(update_fields=['resolved', 'reason'])
+                        counts['ignored'] += 1
+                        continue
                 from .school_api import normalize_v2_grade
                 row, source_payload = normalize_v2_grade(connection, row)
             raw_id = row.get('id') if connection.contract_version == 2 else json_field(row, connection.id_key)
@@ -131,6 +145,10 @@ def import_grade_records(connection, rows, user, date_from, date_to):
             seen.add(external_id)
             if connection.contract_version == 2:
                 if row.get('student_id') in ignored_student_ids:
+                    inbox.resolved = True
+                    inbox.reason = 'Учня ігноровано в цьому журналі (сімейна форма).'
+                    inbox.save(update_fields=['resolved', 'reason'])
+                    counts['ignored'] += 1
                     continue
                 candidates = [student for student in journal_students(journal)
                     if student.pk == row['student_id']]
@@ -142,6 +160,7 @@ def import_grade_records(connection, rows, user, date_from, date_to):
                     ignored_matches = [s for s in journal_students(journal)
                         if s.pk in ignored_student_ids and str(getattr(s, connection.student_identifier) or '') == raw_student_id]
                     if ignored_matches:
+                        counts['ignored'] += 1
                         continue
             if len(candidates) != 1:
                 raise ValueError('ID учня відсутній у журналі або не є унікальним.')

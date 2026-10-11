@@ -227,30 +227,32 @@
         {% for row in student_rows %}
           <tr class="student-row {% if row.is_ignored_for_sync %}row-student-ignored{% endif %}" data-student-name="{{ row.student.get_full_name_ukr }}" data-student-id="{{ row.student.id }}"{% if not row.is_active and not show_withdrawn %} hidden{% endif %}>
             <!-- Фіксований номер зі списком дій -->
-            <td class="sticky-col-num" style="color: var(--text-muted); font-size: 0.8rem; position: relative;">
+            <td class="sticky-col-num" style="color: var(--text-muted); font-size: 0.8rem;">
               {% if can_edit %}
                 <div class="student-action-menu-wrap" style="position: relative; display: inline-block;">
                   <button type="button" class="btn btn-link btn-sm student-number-btn"
                           onclick="toggleStudentActionMenu(event, 'studentMenu_{{ row.student.id }}')"
+                          aria-controls="studentMenu_{{ row.student.id }}" aria-expanded="false" aria-haspopup="menu"
                           title="Натисніть на номер для відкриття меню дій над учнем"
                           style="padding: 1px 4px; text-decoration: none; color: inherit; font-size: 0.82rem; font-weight: 600; cursor: pointer; border-radius: 3px; display: inline-flex; align-items: center; gap: 2px;">
                     <span>{{ row.display_number }}</span>
                     <span style="font-size: 0.6rem; opacity: 0.6;">▾</span>
                   </button>
-                  <div id="studentMenu_{{ row.student.id }}" class="student-action-dropdown"
-                       style="display: none; position: absolute; top: 100%; left: 0; z-index: 1060; min-width: 210px; background: #ffffff; border: 1px solid var(--border); border-radius: var(--radius-sm); box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05); padding: 0.35rem 0; text-align: left;">
+                  <div id="studentMenu_{{ row.student.id }}" class="student-action-dropdown" role="menu"
+                       aria-label="Дії над учнем" style="display: none;">
                     <div style="padding: 0.35rem 0.75rem; font-size: 0.75rem; font-weight: 700; color: var(--text-muted); border-bottom: 1px solid #f1f5f9;">
                       {{ row.student.get_short_name_ukr }} (№{{ row.display_number }})
                     </div>
                     <button type="button"
                             class="student-action-item"
+                            role="menuitemcheckbox" aria-checked="{{ row.is_ignored_for_sync|yesno:'true,false' }}"
                             style="width: 100%; padding: 0.5rem 0.75rem; background: transparent; border: none; text-align: left; font-size: 0.82rem; cursor: pointer; display: flex; align-items: center; gap: 0.5rem; color: {% if row.is_ignored_for_sync %}#16a34a{% else %}#dc2626{% endif %};"
                             onclick="toggleStudentIgnore({{ journal.id }}, {{ row.student.id }}, this)"
-                            title="{% if row.is_ignored_for_sync %}Відновити синхронізацію та оцінювання для цього учня{% else %}Ігнорувати при синхронізації (сімейна форма / за кордоном). Учень не отримає завдань і тестів, виставлення оцінок блокується.{% endif %}">
+                            title="{% if row.is_ignored_for_sync %}Відновити синхронізацію та оцінювання для цього учня{% else %}Позначити як ігнорованого в цьому журналі (сімейна форма / за кордоном). Імпорт і вивантаження оцінок та ручне оцінювання вимикаються. Учень і наявні оцінки зберігаються.{% endif %}">
                       {% if row.is_ignored_for_sync %}
-                        ✓ Відновити синхронізацію
+                        ✓ Ігноровано (сімейна форма) — відновити
                       {% else %}
-                        🚫 Ігнорувати при синхронізації
+                        ☐ Ігноровано (сімейна форма)
                       {% endif %}
                     </button>
                   </div>
@@ -265,7 +267,7 @@
                 <div>
                   <span {% if row.is_ignored_for_sync %}style="color: var(--text-muted); text-decoration: line-through 1px;"{% endif %}>{{ row.student.get_full_name_ukr }}</span>
                   {% if row.is_ignored_for_sync %}
-                    <span class="badge badge-warning" style="font-size: 0.68rem; padding: 1px 4px; background: #fff3cd; color: #856404; border-radius: 3px; display: inline-block; margin-left: 3px;" title="Учень на сімейній формі навчання / за кордоном. Виключений із синхронізації тестів, завдань та nz.ua">🚫 Сімейна форма</span>
+                    <span class="badge badge-warning" style="font-size: 0.68rem; padding: 1px 4px; background: #fff3cd; color: #856404; border-radius: 3px; display: inline-block; margin-left: 3px;" title="Ігнорування діє лише в цьому журналі. Учня та його наявні оцінки збережено.">🚫 Ігноровано · сімейна форма</span>
                   {% endif %}
                   {% if row.status_note %}
                     <span style="font-size: 0.75rem; color: var(--danger); font-style: italic;">

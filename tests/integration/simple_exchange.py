@@ -95,7 +95,47 @@ for s in rows:
             data.update(action='match',student=next(o['value'] for o in form.select('option') if o.get_text()=='Коваленко Ірина'))
             assert post('journal',f'/journal/{journal_id}/api-inbox/',data).status_code==200
             assert code('journal',f'from apps.journals.models import Grade;print(Grade.objects.filter(lesson__journal_id={journal_id}).count())')=='2'
+            assert code('journal',f"from apps.journals.models import ExtraStudent;print(ExtraStudent.objects.get(connection__journal_id={journal_id},name='Коваленк І.').matched_student_id is not None)") == 'True'
             log('separate buttons recover accumulated dates and grades; typo stays in an extra list until explicit teacher matching, which never imports automatically')
+            inbox_path = f'/journal/{journal_id}/api-inbox/'
+            response = get('journal', inbox_path)
+            soup = BeautifulSoup(response.text, 'html.parser')
+            work_card = next(a for a in soup.select('article') if a.find('h3').get_text(strip=True) == 'Коваленк Ін.')
+            form = work_card.select_one('form:has(button[value=ignore_result])')
+            data = {field['name']: field.get('value', '') for field in form.select('input[name]')}
+            data['action'] = 'ignore_result'
+            result_id = int(data['result_id'])
+            response = post('journal', inbox_path, data)
+            assert response.status_code == 200
+            soup = BeautifulSoup(response.text, 'html.parser')
+            assert not any(a.find('h3').get_text(strip=True) == 'Коваленк Ін.' for a in soup.select('article'))
+            assert soup.select_one(f'#ignoredResultsDetails input[value="{result_id}"]')
+            code('work', f"from feed.models import Submission;from django.utils import timezone;s=Submission.objects.get(assignment_id={assignment},student_id=None);s.grade='9';s.graded_at=timezone.now();s.save()")
+            response = post('journal', f'/journal/{journal_id}/sync/schoolwork/', {'date_from':'2026-09-01','date_to':'2026-10-31'})
+            assert response.status_code == 200
+            state = json.loads(code('journal', f"from apps.journals.models import APIInboxResult,Grade,GradePullLog;import json;r=APIInboxResult.objects.get(pk={result_id});print(json.dumps({{'ignored':r.is_ignored,'resolved':r.resolved,'value':r.payload['value'],'grades':Grade.objects.filter(lesson__journal_id={journal_id}).count(),'skipped':GradePullLog.objects.filter(connection_id={connections['work']['id']}).latest('pk').counts.get('ignored')}}))"))
+            assert state == {'ignored':True,'resolved':True,'value':'9','grades':2,'skipped':1}, state
+            response = get('journal', inbox_path)
+            soup = BeautifulSoup(response.text, 'html.parser')
+            form = soup.select_one(f'#ignoredResultsDetails input[name=result_id][value="{result_id}"]').find_parent('form')
+            data = {field['name']:field.get('value','') for field in form.select('input[name]')}
+            data['action'] = 'unignore_result'
+            response = post('journal', inbox_path, data)
+            assert response.status_code == 200
+            assert any(a.find('h3').get_text(strip=True) == 'Коваленк Ін.' for a in BeautifulSoup(response.text,'html.parser').select('article'))
+            assert code('journal', f'from apps.journals.models import Grade;print(Grade.objects.filter(lesson__journal_id={journal_id}).count())') == '2'
+            log('HTTP ignore removes the matching card, survives a source correction and another pull; restore returns it without automatic grade writes')
+            pupil_id = int(code('journal', f'from apps.journals.models import Journal;from apps.journals.services.assessment import journal_students;print(journal_students(Journal.objects.get(pk={journal_id})).get().pk)'))
+            toggle_path = f'/journal/{journal_id}/student/{pupil_id}/toggle-ignore/'
+            response = post('journal', toggle_path, {})
+            assert response.status_code == 200 and 'Ігноровано · сімейна форма' in response.text
+            assert 'role="menuitemcheckbox" aria-checked="true"' in response.text
+            for source in ('schooltest','schoolwork'):
+                assert post('journal', f'/journal/{journal_id}/sync/{source}/', {'date_from':'2026-09-01','date_to':'2026-10-31'}).status_code == 200
+            assert code('journal', f'from apps.journals.models import Grade;print(Grade.objects.filter(lesson__journal_id={journal_id}).count())') == '2'
+            response = post('journal', toggle_path, {})
+            assert response.status_code == 200 and 'Ігноровано · сімейна форма' not in response.text
+            log('HTTP pupil-number action enables and restores family status; both source pulls leave existing grades intact')
             before=code('journal',f"from apps.journals.models import Grade,ExtraStudent,APIInboxResult;print((Grade.objects.filter(lesson__journal_id={journal_id}).count(),ExtraStudent.objects.filter(connection__journal_id={journal_id}).count(),APIInboxResult.objects.filter(connection__journal_id={journal_id}).count()))")
             dc('restart','test','work','journal')
             until(lambda:get('journal','/healthz/').status_code==200,'simple connections survive restart')

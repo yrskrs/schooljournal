@@ -1267,19 +1267,48 @@ function toggleStudentActionMenu(event, menuId) {
   const isShown = menu && menu.style.display === 'block';
   closeAllStudentActionMenus();
   if (menu && !isShown) {
+    const trigger = event.currentTarget;
+    // A sticky cell creates its own stacking context, and the table scroll
+    // clips descendants. Place the menu outside both before positioning it.
+    document.body.appendChild(menu);
+    menu.studentMenuTrigger = trigger;
     menu.style.display = 'block';
+    trigger.setAttribute('aria-expanded', 'true');
+    const rect = trigger.getBoundingClientRect();
+    const margin = 8;
+    menu.style.maxHeight = `${Math.max(0, window.innerHeight - margin * 2)}px`;
+    const width = menu.offsetWidth;
+    const height = menu.offsetHeight;
+    menu.style.left = `${Math.max(margin, Math.min(rect.left, window.innerWidth - width - margin))}px`;
+    const top = rect.bottom + height + margin <= window.innerHeight ? rect.bottom : rect.top - height;
+    menu.style.top = `${Math.max(margin, top)}px`;
+    const firstAction = menu.querySelector('button');
+    if (firstAction) firstAction.focus();
   }
 }
 
-function closeAllStudentActionMenus() {
+function closeAllStudentActionMenus(restoreFocus = false) {
   document.querySelectorAll('.student-action-dropdown').forEach(function(el) {
+    const wasShown = el.style.display === 'block';
     el.style.display = 'none';
+    if (el.studentMenuTrigger) {
+      el.studentMenuTrigger.setAttribute('aria-expanded', 'false');
+      if (wasShown && restoreFocus) el.studentMenuTrigger.focus();
+    }
   });
 }
 
 document.addEventListener('click', function(e) {
-  if (!e.target.closest('.student-action-menu-wrap')) {
+  if (!e.target.closest('.student-action-menu-wrap') && !e.target.closest('.student-action-dropdown')) {
     closeAllStudentActionMenus();
   }
 });
+
+document.addEventListener('keydown', function(e) {
+  if (e.key === 'Escape') closeAllStudentActionMenus(true);
+});
+document.addEventListener('scroll', function(e) {
+  if (!e.target.closest || !e.target.closest('.student-action-dropdown')) closeAllStudentActionMenus();
+}, true);
+window.addEventListener('resize', function() { closeAllStudentActionMenus(); });
 
