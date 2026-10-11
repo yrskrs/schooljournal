@@ -381,29 +381,7 @@ class NZService:
             logger.debug(f"fetch_lesson_schedule_details error for schedule {nz_schedule_id}: {e}")
             return {}
 
-    def fetch_journal_data(self, nz_journal_id: str, nz_subgroup_id: str = "", html_content: str = None) -> dict:
-        """
-        Завантажити та розпарсити повний вміст журналу з nz.ua:
-        - Список учнів (nz_student_id, ПІБ)
-        - Список проведених уроків/колонок (nz_schedule_id, date, lesson_number, topic, homework)
-        - Оцінки та відвідування (schedule_id, student_id -> mark_value / symbol)
-        - Розклад дзвінків (buzzers)
-        """
-        if html_content:
-            raw_html = html_content
-            self.extract_csrf(raw_html)
-        else:
-            url = f"{self.BASE_URL}/journal/index?journal={nz_journal_id}"
-            if nz_subgroup_id:
-                url += f"&subgroup={nz_subgroup_id}"
-
-            resp = self.session.get(url, timeout=20)
-            if resp.status_code != 200 or "/login" in resp.url or 'LoginForm' in resp.text:
-                raise NZAuthError("Сесія nz.ua недійсна.")
-
-            self.extract_csrf(resp.text)
-            raw_html = resp.text
-
+    def _parse_single_journal_page(self, raw_html: str, nz_journal_id: str) -> dict:
         soup = BeautifulSoup(raw_html, 'html.parser')
 
         table = soup.select_one('table.point-table')
@@ -412,13 +390,6 @@ class NZService:
 
         # 0.5. Парсимо дзвінки (buzzers)
         buzzers = self._parse_buzzers(soup)
-        if not buzzers and not html_content and self.session and self.session.cookies.get('PHPSESSID'):
-            try:
-                resp_add = self.session.get(f"{self.BASE_URL}/journal/add-edit-lesson?journal={nz_journal_id}", timeout=10)
-                if resp_add.status_code == 200 and '/login' not in str(resp_add.url):
-                    buzzers = self._parse_buzzers(resp_add.text)
-            except Exception:
-                pass
 
         # 0. Визначаємо базовий навчальний рік із селектора семестрів або поточної дати
         base_year = timezone.now().year
@@ -735,34 +706,6 @@ class NZService:
                         les['lesson_time'] = b_info['start_time']
                         break
 
-        # Якщо сесія активна онлайн — завантажуємо розклад уроків
-        if not html_content and self.session and self.session.cookies.get('PHPSESSID'):
-            schedule_cache = {}
-            for les in lessons_data:
-                s_id = les.get('nz_schedule_id')
-                if not s_id or les.get('lesson_time'):
-                    continue
-                wday = les['date'].weekday() if les.get('date') else None
-                if wday in schedule_cache:
-                    cached = schedule_cache[wday]
-                    les['buzzer_id'] = cached.get('buzzer_id', '')
-                    les['lesson_number'] = cached.get('lesson_number', les['lesson_number'])
-                    les['lesson_time'] = cached.get('lesson_time')
-                    continue
-                dtl = self.fetch_lesson_schedule_details(nz_journal_id, s_id)
-                if dtl and dtl.get('buzzer'):
-                    b = dtl['buzzer']
-                    les['buzzer_id'] = b['buzzer_id']
-                    les['lesson_number'] = b['number']
-                    les['lesson_time'] = b['start_time']
-                    if wday is not None:
-                        schedule_cache[wday] = {
-                            'buzzer_id': b['buzzer_id'],
-                            'lesson_number': b['number'],
-                            'lesson_time': b['start_time'],
-                        }
-                    if dtl.get('buzzers') and not buzzers:
-                        buzzers = dtl['buzzers']
 
         # 3. Список учнів та оцінки
         students_data = []
@@ -824,6 +767,155 @@ class NZService:
             'lessons': lessons_data,
             'marks': marks_data,
             'base_year': base_year,
+            'buzzers': buzzers,
+        }
+
+    def fetch_journal_data(self, nz_journal_id: str, nz_subgroup_id: str = "", html_content: str = None) -> dict:
+        """
+        Завантажити та розпарсити повний вміст журналу з nz.ua:
+        - Список учнів (nz_student_id, ПІБ)
+        - Список проведених уроків/колонок (nz_schedule_id, date, lesson_number, topic, homework)
+        - Оцінки та відвідування (schedule_id, student_id -> mark_value / symbol)
+        - Розклад дзвінків (buzzers)
+        Автоматично обробляє всі сторінки (пагінацію) журналу на nz.ua.
+        """
+        if html_content:
+            self.extract_csrf(html_content)
+            return self._parse_single_journal_page(html_content, nz_journal_id)
+
+        url = f"{self.BASE_URL}/journal/index?journal={nz_journal_id}"
+        if nz_subgroup_id:
+            url += f"&subgroup={nz_subgroup_id}"
+
+        resp = self.session.get(url, timeout=20)
+        if resp.status_code != 200 or "/login" in resp.url or 'LoginForm' in resp.text:
+            raise NZAuthError("Сесія nz.ua недійсна.")
+
+        self.extract_csrf(resp.text)
+        initial_soup = BeautifulSoup(resp.text, 'html.parser')
+
+        # Визначаємо наявність пагінації сторінок на nz.ua
+        page_links = initial_soup.find_all('a', href=re.compile(r'[?&]page=(\d+)'))
+        pages = set()
+        for a in page_links:
+            m = re.search(r'[?&]page=(\d+)', a['href'])
+            if m:
+                pages.add(int(m.group(1)))
+
+        active_page = 1
+        act = initial_soup.select_one('ul.pagination li.active a, .pagination .active a')
+        if act:
+            m = re.search(r'[?&]page=(\d+)', act.get('href', ''))
+            if m:
+                active_page = int(m.group(1))
+            elif act.get('data-page') and act['data-page'].isdigit():
+                active_page = int(act['data-page']) + 1
+
+        all_page_numbers = list(range(1, max(pages) + 1)) if pages else [1]
+
+        if len(all_page_numbers) == 1:
+            data = self._parse_single_journal_page(resp.text, nz_journal_id)
+            students_data = data['students']
+            lessons_data = data['lessons']
+            marks_data = data['marks']
+            buzzers = data['buzzers']
+            base_year = data['base_year']
+        else:
+            students_data = []
+            seen_students = set()
+            lessons_data = []
+            seen_lessons = set()
+            marks_data = []
+            seen_marks = set()
+            buzzers = {}
+            base_year = None
+
+            for p in all_page_numbers:
+                if p == active_page:
+                    p_html = resp.text
+                else:
+                    p_url = f"{self.BASE_URL}/journal/index?journal={nz_journal_id}&page={p}"
+                    if nz_subgroup_id:
+                        p_url += f"&subgroup={nz_subgroup_id}"
+                    p_resp = self.session.get(p_url, timeout=20)
+                    if p_resp.status_code != 200 or '/login' in str(p_resp.url):
+                        continue
+                    p_html = p_resp.text
+
+                try:
+                    p_data = self._parse_single_journal_page(p_html, nz_journal_id)
+                except Exception:
+                    continue
+
+                if base_year is None:
+                    base_year = p_data.get('base_year')
+                buzzers.update(p_data.get('buzzers', {}))
+
+                for st in p_data.get('students', []):
+                    st_key = st.get('nz_student_id') or st.get('name')
+                    if st_key and st_key not in seen_students:
+                        seen_students.add(st_key)
+                        students_data.append(st)
+
+                for les in p_data.get('lessons', []):
+                    les_key = les.get('nz_schedule_id') or (les.get('date'), les.get('lesson_number'))
+                    if les_key and les_key not in seen_lessons:
+                        seen_lessons.add(les_key)
+                        lessons_data.append(les)
+
+                for m in p_data.get('marks', []):
+                    m_key = (m.get('nz_student_id'), m.get('nz_schedule_id'), m.get('date'), m.get('lesson_number'))
+                    if m_key not in seen_marks:
+                        seen_marks.add(m_key)
+                        marks_data.append(m)
+
+            for idx, l in enumerate(lessons_data, 1):
+                l['col_index'] = idx
+
+        # 0.5. Парсимо дзвінки (buzzers), якщо ще не визначено
+        if not buzzers and self.session and self.session.cookies.get('PHPSESSID'):
+            try:
+                resp_add = self.session.get(f"{self.BASE_URL}/journal/add-edit-lesson?journal={nz_journal_id}", timeout=10)
+                if resp_add.status_code == 200 and '/login' not in str(resp_add.url):
+                    buzzers = self._parse_buzzers(resp_add.text)
+            except Exception:
+                pass
+
+        # Якщо сесія активна онлайн — завантажуємо розклад уроків
+        if self.session and self.session.cookies.get('PHPSESSID'):
+            schedule_cache = {}
+            for les in lessons_data:
+                s_id = les.get('nz_schedule_id')
+                if not s_id or les.get('lesson_time'):
+                    continue
+                wday = les['date'].weekday() if les.get('date') else None
+                if wday in schedule_cache:
+                    cached = schedule_cache[wday]
+                    les['buzzer_id'] = cached.get('buzzer_id', '')
+                    les['lesson_number'] = cached.get('lesson_number', les['lesson_number'])
+                    les['lesson_time'] = cached.get('lesson_time')
+                    continue
+                dtl = self.fetch_lesson_schedule_details(nz_journal_id, s_id)
+                if dtl and dtl.get('buzzer'):
+                    b = dtl['buzzer']
+                    les['buzzer_id'] = b['buzzer_id']
+                    les['lesson_number'] = b['number']
+                    les['lesson_time'] = b['start_time']
+                    if wday is not None:
+                        schedule_cache[wday] = {
+                            'buzzer_id': b['buzzer_id'],
+                            'lesson_number': b['number'],
+                            'lesson_time': b['start_time'],
+                        }
+                    if dtl.get('buzzers') and not buzzers:
+                        buzzers = dtl['buzzers']
+
+        return {
+            'nz_journal_id': nz_journal_id,
+            'students': students_data,
+            'lessons': lessons_data,
+            'marks': marks_data,
+            'base_year': base_year or timezone.now().year,
             'buzzers': buzzers,
         }
 

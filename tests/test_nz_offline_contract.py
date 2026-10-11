@@ -637,3 +637,76 @@ class NZOfflineContractTests(TestCase):
         self.assertEqual(self.l1.homework, 'Домашнє з сайту')
         self.assertEqual(self.l1.homework_due_date, dt.date(2026, 9, 12))
 
+    def test_pagination_fetches_and_merges_all_pages(self):
+        page2_html = """<!doctype html><html><head><meta name="csrf-token" content="token"></head><body>
+        <select id="semester"><option selected>I семестр 2026/2027</option></select>
+        <ul class="pagination">
+            <li><a href="/journal/index?journal=7001&amp;page=1">1</a></li>
+            <li class="active"><a href="/journal/index?journal=7001&amp;page=2">2</a></li>
+        </ul>
+        <table class="point-table" id="journalList">
+            <thead><tr><td></td><td class="pt-theme"></td>
+            <td class="pt-point"><a href="/journal/add-edit-lesson?schedule=2002&amp;journal=7001">14</a><span class="pt-month">Жовт.</span></td>
+            </tr></thead>
+            <tbody><tr><td>1</td><td class="pt-theme" data-student-id="9001">Учень Тест</td>
+            <td class="pt-point"><input class="mark-cell" data-mark-id="22" value="11"></td>
+            </tr></tbody>
+        </table>
+        <div class="homework-row homework-row--header">
+            <div class="homework__item"></div><div class="homework__item">Дата</div><div class="homework__item">№ уроку</div>
+            <div class="homework__item">Дистанційне завдання</div><div class="homework__item">Тема уроку</div>
+            <div class="homework__item">Домашнє завдання</div><div class="homework__item">Заміна</div>
+        </div>
+        <div class="homework-row">
+            <div class="homework__item"><a href="/journal/add-edit-home-task?schedule=2002&amp;journal=7001">Редагувати</a></div>
+            <div class="homework__item">14 жовтня</div><div class="homework__item">2</div><div class="homework__item"></div>
+            <div class="homework__item">Тема другої сторінки</div>
+            <div class="homework__item">на 21 жовтня</div><div class="homework__item">ДЗ другої сторінки</div><div class="homework__item"></div>
+        </div>
+        </body></html>"""
+
+        page1_html = """<!doctype html><html><head><meta name="csrf-token" content="token"></head><body>
+        <select id="semester"><option selected>I семестр 2026/2027</option></select>
+        <ul class="pagination">
+            <li class="active"><a href="/journal/index?journal=7001&amp;page=1">1</a></li>
+            <li><a href="/journal/index?journal=7001&amp;page=2">2</a></li>
+        </ul>
+        <table class="point-table" id="journalList">
+            <thead><tr><td></td><td class="pt-theme"></td>
+            <td class="pt-point"><a href="/journal/add-edit-lesson?schedule=2001&amp;journal=7001">7</a><span class="pt-month">Вер.</span></td>
+            </tr></thead>
+            <tbody><tr><td>1</td><td class="pt-theme" data-student-id="9001">Учень Тест</td>
+            <td class="pt-point"><input class="mark-cell" data-mark-id="11" value="10"></td>
+            </tr></tbody>
+        </table>
+        <div class="homework-row homework-row--header">
+            <div class="homework__item"></div><div class="homework__item">Дата</div><div class="homework__item">№ уроку</div>
+            <div class="homework__item">Дистанційне завдання</div><div class="homework__item">Тема уроку</div>
+            <div class="homework__item">Домашнє завдання</div><div class="homework__item">Заміна</div>
+        </div>
+        <div class="homework-row">
+            <div class="homework__item"><a href="/journal/add-edit-home-task?schedule=2001&amp;journal=7001">Редагувати</a></div>
+            <div class="homework__item">7 вересня</div><div class="homework__item">1</div><div class="homework__item"></div>
+            <div class="homework__item">Тема першої сторінки</div>
+            <div class="homework__item">на 14 вересня</div><div class="homework__item">ДЗ першої сторінки</div><div class="homework__item"></div>
+        </div>
+        </body></html>"""
+
+        service = NZService()
+        def mock_get(url, **kwargs):
+            m = MagicMock(status_code=200, url=url)
+            if 'page=1' in url:
+                m.text = page1_html
+            else:
+                m.text = page2_html
+            return m
+
+        with patch.object(service.session, 'get', side_effect=mock_get):
+            data = service.fetch_journal_data('7001')
+            self.assertEqual(len(data['lessons']), 2)
+            self.assertEqual(data['lessons'][0]['nz_schedule_id'], '2001')
+            self.assertEqual(data['lessons'][0]['homework'], 'ДЗ першої сторінки')
+            self.assertEqual(data['lessons'][1]['nz_schedule_id'], '2002')
+            self.assertEqual(data['lessons'][1]['homework'], 'ДЗ другої сторінки')
+            self.assertEqual(len(data['marks']), 2)
+
