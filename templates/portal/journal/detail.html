@@ -255,6 +255,14 @@
                         ☐ Ігноровано (сімейна форма)
                       {% endif %}
                     </button>
+                    {% if extra_parent %}
+                      <form method="post" action="{% url 'portal:delete_extracurricular_student' journal.id row.student.id %}" onsubmit="return confirm('Видалити цього позакласного учня та всі його оцінки в окремому журналі? Дію буде записано в історії.');">
+                        {% csrf_token %}
+                        <input type="hidden" name="confirm_delete" value="on">
+                        <input type="hidden" name="version" value="{{ row.student.updated_at|date:'c' }}">
+                        <button class="student-action-item" role="menuitem" type="submit">Видалити позакласного учня та оцінки</button>
+                      </form>
+                    {% endif %}
                   </div>
                 </div>
               {% else %}

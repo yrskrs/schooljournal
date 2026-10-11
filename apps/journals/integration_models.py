@@ -130,11 +130,25 @@ class ExtraStudent(models.Model):
     external_key = models.CharField(max_length=200)
     name = models.CharField(max_length=200)
     matched_student = models.ForeignKey('curriculum.Student', on_delete=models.PROTECT, null=True, blank=True)
+    separate_student = models.OneToOneField('curriculum.Student', on_delete=models.PROTECT,
+        null=True, blank=True, related_name='api_extra_identity')
+    separate_journal = models.ForeignKey('journals.Journal', on_delete=models.PROTECT,
+        null=True, blank=True, related_name='separate_api_students')
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
         constraints = [models.UniqueConstraint(fields=['connection', 'external_key'], name='extra_student_identity_unique')]
         ordering = ['name', 'pk']
+
+
+class DeletedAPIIdentity(models.Model):
+    """Minimal local tombstone: no name or grade payload is retained here."""
+    connection = models.ForeignKey(GradeAPIConnection, on_delete=models.CASCADE, related_name='deleted_identities')
+    external_key = models.CharField(max_length=200)
+    deleted_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=['connection', 'external_key'], name='deleted_api_identity_unique')]
 
 
 class APIInboxResult(models.Model):

@@ -113,6 +113,7 @@ def import_grade_records(connection, rows, user, date_from, date_to):
         raise ExternalAPIError('Завелика або некоректна відповідь API.')
     for index, row in enumerate(rows, 1):
         inbox = None
+        target_journal = journal
         try:
             if not isinstance(row, dict):
                 raise ValueError('Очікується об’єкт оцінки.')
@@ -120,9 +121,18 @@ def import_grade_records(connection, rows, user, date_from, date_to):
             if connection.contract_version == 2:
                 from .api_inbox import keep_result, resolve_student
                 inbox = keep_result(connection, row, date_from, date_to)
-                if inbox.is_ignored:
+                if inbox is None or inbox.is_ignored:
                     counts['ignored'] += 1
                     continue
+                if inbox.extra_student and inbox.extra_student.separate_journal_id:
+                    target_journal = Journal.objects.select_for_update().get(pk=inbox.extra_student.separate_journal_id)
+                    if not has_journal_access(user, target_journal, write=True):
+                        raise ValueError('Немає права редагувати окремий журнал позакласного учня.')
+                    if target_journal.ignored_students.filter(pk=inbox.extra_student.separate_student_id).exists():
+                        inbox.resolved, inbox.reason = True, 'Учня ігноровано в окремому журналі (сімейна форма).'
+                        inbox.save(update_fields=['resolved', 'reason'])
+                        counts['ignored'] += 1
+                        continue
                 if ignored_student_ids:
                     try:
                         mapped_student_id = resolve_student(connection, row)
@@ -150,7 +160,7 @@ def import_grade_records(connection, rows, user, date_from, date_to):
                     inbox.save(update_fields=['resolved', 'reason'])
                     counts['ignored'] += 1
                     continue
-                candidates = [student for student in journal_students(journal)
+                candidates = [student for student in journal_students(target_journal)
                     if student.pk == row['student_id']]
             else:
                 raw_student_id = str(json_field(row, connection.student_key))
@@ -174,7 +184,7 @@ def import_grade_records(connection, rows, user, date_from, date_to):
                 raise ValueError('Дата має бути у форматі YYYY-MM-DD.') from None
             if not date_from <= date <= date_to or not journal.academic_year.start_date <= date <= journal.academic_year.end_date:
                 raise ValueError('Дата оцінки поза вибраним періодом / навчальним роком.')
-            lessons = journal.lessons.filter(date=date).exclude(lesson_type__in=SUMMARY_TYPES)
+            lessons = target_journal.lessons.filter(date=date).exclude(lesson_type__in=SUMMARY_TYPES)
             number = row.get('lesson_number') if connection.contract_version == 2 else json_field(row, connection.lesson_key)
             if number is not None:
                 if isinstance(number, bool) or not str(number).isdigit() or int(number) < 1:
@@ -258,6 +268,8 @@ def review_external_grade(record_id, journal, user, action, version, replace=Fal
     if not has_journal_access(user, journal, write=True):
         raise ExternalAPIError('Немає права редагувати цей журнал.')
     record = ExternalGrade.objects.select_for_update().get(pk=record_id, connection__journal=journal)
+    if not has_journal_access(user, record.lesson.journal, write=True):
+        raise ExternalAPIError('Немає права редагувати журнал цієї оцінки.')
     if record.updated_at.isoformat() != version:
         raise ExternalAPIError('Оцінка змінилася після перегляду. Оновіть сторінку.')
     if action not in ('approve', 'reject') or record.status not in (ExternalGrade.Status.PENDING, ExternalGrade.Status.CONFLICT):

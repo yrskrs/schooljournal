@@ -25,7 +25,8 @@
   {% endif %}
 
   <p>Тут зберігаються учні джерел, яких ще немає серед підтверджених учнів класу, та результати, що потребують рішення. Вони не додаються до класу й не вивантажуються в nz.ua автоматично. Джерело має власну базу й продовжує працювати без журналу.</p>
-  <p>Якщо учень ввів ім’я з помилкою або скороченням, оберіть справжнього учня після перевірки. Якщо учень не належить до класу, оберіть <strong>«Залишити позакласним»</strong> — для нього автоматично буде створено окремий журнал.</p>
+  <p>Для імені з помилкою оберіть справжнього учня класу й натисніть <strong>«Підтвердити відповідність»</strong>. Для справжнього учня поза класом натисніть окрему кнопку <strong>«Залишити позакласним»</strong>. Оцінки додавайте окремою кнопкою; підтвердження імені оцінок не змінює.</p>
+  <p><strong>«Видалити позакласний запис»</strong> прибирає його та збережені результати назавжди в цьому журналі. Видалений запис не повернеться після синхронізації. Профіль і роботи на сайті джерела видаляйте окремо на тому сайті. Учні основного класу та їхні вже імпортовані оцінки зберігаються.</p>
   <p><strong>«Ігнорувати за дату»</strong> прибирає лише цей результат із черги. Якщо інших активних результатів учня немає, його картка зіставлення теж зникає. Запис зберігається нижче в ігнорованих і не імпортується повторно, доки ви не натиснете «Відновити».</p>
 
   <h2>Позакласні учні</h2>
@@ -35,6 +36,7 @@
     <article class="schedule-card">
       <h3>{{ extra.name }}</h3>
       <p>{{ extra.connection.get_source_display }}{% if extra.matched_student %} · Підтверджено: {{ extra.matched_student.get_full_name_ukr }}{% endif %}</p>
+      {% if extra.separate_student %}<p role="status">✓ Залишено позакласним: <a href="{% url 'portal:journal_detail' extra.separate_journal_id %}">{{ extra.separate_journal.student_class.name }}</a>.</p>{% endif %}
       {% if extra.suggestions %}<p>Схожі імена, які варто перевірити: {{ extra.suggestions|join:', ' }}.</p>{% endif %}
 
       {% for result in extra.recent_results %}
@@ -56,13 +58,14 @@
       {% endfor %}
 
       {% if can_edit %}
+        {% if not extra.separate_student %}
         <form method="post" style="margin-top: 0.75rem;">
           {% csrf_token %}
           <input type="hidden" name="extra_id" value="{{ extra.pk }}">
           <input type="hidden" name="version" value="{{ extra.updated_at|date:'c' }}">
           <label>Це учень мого класу: 
-            <select name="student">
-              <option value="">Залишити позакласним (створить окремий журнал)</option>
+            <select name="student" required>
+              <option value="__choose__" disabled {% if not extra.matched_student_id %}selected{% endif %}>Оберіть справжнього учня класу</option>
               {% for student in students %}
                 <option value="{{ student.pk }}" {% if extra.matched_student_id == student.pk %}selected{% endif %}>{{ student.get_full_name_ukr }}</option>
               {% endfor %}
@@ -70,6 +73,25 @@
           </label> 
           <button class="btn btn-primary" name="action" value="match">Підтвердити відповідність</button>
         </form>
+        {% if not extra.matched_student %}
+          <form method="post" style="margin-top: 0.5rem;">
+            {% csrf_token %}
+            <input type="hidden" name="extra_id" value="{{ extra.pk }}">
+            <input type="hidden" name="version" value="{{ extra.updated_at|date:'c' }}">
+            <button class="btn btn-outline-primary" name="action" value="keep_separate">Залишити позакласним</button>
+          </form>
+        {% endif %}
+        {% endif %}
+        <details style="margin-top: 0.75rem;">
+          <summary>Видалити позакласний запис</summary>
+          <form method="post" style="margin-top: 0.5rem;">
+            {% csrf_token %}
+            <input type="hidden" name="extra_id" value="{{ extra.pk }}">
+            <input type="hidden" name="version" value="{{ extra.updated_at|date:'c' }}">
+            <label><input type="checkbox" name="confirm_delete" required> Видалити цей запис та всі його збережені результати. {% if extra.separate_student %}Також видалити його профіль і оцінки в окремому журналі.{% else %}Оцінки підтвердженого учня основного класу збережуться.{% endif %}</label>
+            <button class="btn btn-danger" name="action" value="delete_extra">Видалити назавжди</button>
+          </form>
+        </details>
       {% endif %}
     </article>
   {% empty %}
@@ -89,6 +111,7 @@
     <article class="schedule-card">
       <h3>{% firstof result.payload.student_name result.extra_student.name 'Учень' %} · {{ result.payload.value }}</h3>
       <p>{{ result.payload.date }} · {{ result.payload.title }} · {{ result.connection.get_source_display }}</p>
+      {% if result.target_journal.pk != journal.pk %}<p>Оцінку буде додано до <a href="{% url 'portal:journal_detail' result.target_journal.pk %}">окремого журналу позакласних учнів</a>. Урок на дату роботи створіть у ньому.</p>{% endif %}
       <p role="status">{{ result.reason }}</p>
       {% if can_edit %}
         <form method="post" style="display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center;">
@@ -124,6 +147,14 @@
       {% if result_page.has_next %}<a href="?results_page={{ result_page.next_page_number }}">Наступні результати</a>{% endif %}
     </p>
   {% endif %}
+
+  <details class="schedule-card" style="margin-top: 1rem;">
+    <summary>Історія відповідностей та видалень</summary>
+    {% for log in decision_logs %}
+      <p>{{ log.timestamp|date:'d.m.Y H:i' }} · {{ log.user.get_full_name_ukr|default:'Користувач' }} · {{ log.description }}</p>
+    {% empty %}<p>Дій ще немає.</p>{% endfor %}
+    <p>Показано останні 20 дій цього журналу. Повний аудит доступний адміністратору.</p>
+  </details>
 
   <!-- Секція ігнорованих записів -->
   <details class="schedule-card" id="ignoredResultsDetails" style="margin-top: 1.5rem; border-left: 4px solid #64748b;" open>

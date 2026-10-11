@@ -32,7 +32,7 @@ class IgnoreRegressionTests(TestCase):
             response = self.client.get(self.inbox_url() + query)
             self.assertEqual(list(response.context['extra_page']), [])
             self.assertEqual(list(response.context['result_page']), [])
-            self.assertNotContains(response, 'Підтвердити відповідність')
+            self.assertNotContains(response, 'value="match"')
             self.assertEqual(list(response.context['ignored_results']), [result])
         self.assertEqual(ExtraStudent.objects.count(), 1)
         self.ignore(result, action='unignore_result')

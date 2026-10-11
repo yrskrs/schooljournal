@@ -82,7 +82,7 @@ class NewJournalFeaturesTests(TestCase):
         self.assertContains(resp, 'Відновити')
         self.assertEqual(list(resp.context['extra_page']), [])
         self.assertEqual(list(resp.context['result_page']), [])
-        self.assertNotContains(resp, 'Підтвердити відповідність')
+        self.assertNotContains(resp, 'value="match"')
 
         # Відновлюємо запис з ігнорованих
         resp = self.client.post(url, {'action': 'unignore_result', 'result_id': result.pk})
@@ -130,12 +130,11 @@ class NewJournalFeaturesTests(TestCase):
         self.assertIsNotNone(ext_student)
         self.assertTrue(ClassEnrollment.objects.filter(student=ext_student, student_class=extra_class).exists())
 
-        # Перевіряємо що оцінка та урок перенесені до окремого журналу
-        lesson = Lesson.objects.filter(journal=extra_journal, date=date(2026, 9, 20)).first()
-        self.assertIsNotNone(lesson)
-        grade = Grade.objects.filter(lesson=lesson, student=ext_student).first()
-        self.assertIsNotNone(grade)
-        self.assertEqual(grade.value, '11')
+        # Підтвердження списку не імпортує оцінок: для цього є окрема явна дія.
+        self.assertFalse(Grade.objects.filter(student=ext_student).exists())
+        self.assertFalse(Lesson.objects.filter(journal=extra_journal).exists())
+        extra.refresh_from_db()
+        self.assertEqual(extra.separate_student_id, ext_student.pk)
 
         # Перевіряємо посилання на окремий журнал на сторінці api_inbox та detail
         resp_inbox = self.client.get(url)

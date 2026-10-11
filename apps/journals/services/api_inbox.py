@@ -1,6 +1,6 @@
 """Keep unmapped identities and unusable grades without changing class lists."""
 import datetime as dt
-from apps.journals.models import APIInboxResult, ExtraStudent
+from apps.journals.models import APIInboxResult, ExtraStudent, DeletedAPIIdentity
 
 
 def student_key(row):
@@ -33,6 +33,8 @@ def keep_result(connection, row, start, end):
     if not start <= date <= end or not connection.journal.academic_year.start_date <= date <= connection.journal.academic_year.end_date:
         raise ValueError('Дата результату поза періодом цього журналу.')
     identity = student_key(row)
+    if DeletedAPIIdentity.objects.filter(connection=connection, external_key=identity).exists():
+        return None
     prior = APIInboxResult.objects.filter(connection=connection, external_id=str(raw_id)).first()
     from .school_api import _timestamp, check_revision
     _timestamp(row.get('updated_at'))
@@ -40,7 +42,7 @@ def keep_result(connection, row, start, end):
         check_revision(prior.payload, row)
         if student_key(prior.payload) != identity or prior.payload.get('date') != row.get('date'):
             raise ValueError('Джерело змінило учня або дату відомого результату. Історію збережено.')
-    extra = None
+    extra = ExtraStudent.objects.filter(connection=connection, external_key=identity).first()
     if not connection.student_mappings.filter(external_id=identity).exists():
         name = row.get('student_name')
         if not isinstance(name, str) or not name.strip():
@@ -56,12 +58,15 @@ def keep_result(connection, row, start, end):
 
 def resolve_student(connection, row):
     identity = student_key(row)
+    extra = ExtraStudent.objects.filter(connection=connection, external_key=identity).first()
+    if extra:
+        if extra.separate_student_id:
+            return extra.separate_student_id
+        if extra.matched_student_id:
+            return extra.matched_student_id
     mapping = connection.student_mappings.filter(external_id=identity).first()
     if mapping:
         return mapping.student_id
-    extra = ExtraStudent.objects.filter(connection=connection, external_key=identity).first()
-    if extra and extra.matched_student_id:
-        return extra.matched_student_id
     name = (row.get('student_name') or (extra.name if extra else 'Учень'))[:200]
     raise ValueError(f'«{name}»: позакласний учень або помилка в імені. Відкрийте «Позакласні учні та результати» й підтвердьте відповідність, якщо це учень вашого класу.')
 
@@ -70,10 +75,12 @@ def keep_roster_extras(connection):
     for row in connection.roster_cache.get('students', []):
         if row['class_id'] != connection.source_class_id:
             continue
+        if connection.deleted_identities.filter(external_key=row['id']).exists():
+            continue
         mapping = connection.student_mappings.filter(external_id=row['id']).first()
         extra = ExtraStudent.objects.filter(connection=connection, external_key=row['id']).first()
         if mapping:
-            if extra and not extra.matched_student_id:
+            if extra and not extra.matched_student_id and not extra.separate_student_id:
                 extra.matched_student = mapping.student
                 extra.save(update_fields=['matched_student', 'updated_at'])
         elif extra is None:

@@ -2,6 +2,7 @@ from django.urls import path
 from . import views_integrations
 from . import views_connection_setup
 from . import views_api_inbox
+from . import views_extra_students
 from school_sync import django_backend as roster_views
 from . import views_public
 from django.shortcuts import redirect
@@ -55,6 +56,7 @@ urlpatterns = [
     path('journal/<int:journal_id>/', views_journal.journal_detail, name='journal_detail'),
     path('journal/<int:journal_id>/grade/update/', views_journal.update_grade, name='update_grade'),
     path('journal/<int:journal_id>/student/<int:student_id>/toggle-ignore/', views_journal.toggle_student_sync_ignore, name='toggle_student_sync_ignore'),
+    path('journal/<int:journal_id>/student/<int:student_id>/delete-extra/', views_extra_students.delete_extracurricular_student, name='delete_extracurricular_student'),
     path('journal/<int:journal_id>/attendance/update/', views_journal.update_attendance, name='update_attendance'),
     path('journal/<int:journal_id>/summary-grade/update/', views_journal.update_summary_grade, name='update_summary_grade'),
     path('journal/<int:journal_id>/lesson/create/', views_journal.lesson_create, name='lesson_create'),

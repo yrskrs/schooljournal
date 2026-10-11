@@ -20,6 +20,7 @@ from apps.journals.models import (
 )
 from apps.portal.forms_journal import LessonForm, LessonCreateForm, SummaryColumnForm, AssessmentForm, TopicCopyForm
 from apps.journals.services.topic_copy import numbered_lessons, preview_topic_copy, apply_topic_copy
+from apps.journals.services.extra_students import extra_parent
 from apps.journals.services.scheduling import (
     next_lesson_number, insert_day_slot, set_homework_target, swap_topics, reorder_plan_topic,
     lesson_occurrence_dates, copy_repeated_homework, SUMMARY_TYPES,
@@ -259,6 +260,7 @@ def journal_detail(request, journal_id):
         'integration_date_to': integration_end.isoformat(),
         'journal': journal,
         'extra_journal': extra_journal,
+        'extra_parent': extra_parent(journal),
         'can_edit': can_edit,
         'show_withdrawn': show_withdrawn,
         'semesters': semesters,
