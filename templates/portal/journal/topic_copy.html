@@ -1,51 +1,300 @@
 {% extends 'base.html' %}
-{% block title %}Копіювання тем між класами | Журнал{% endblock %}
+{% block title %}Копіювання та синхронізація тем між класами | Журнал{% endblock %}
 {% block content %}
 <div class="calendar-card assessment-card">
-  <h1>Копіювати теми з іншого класу</h1>
-  <p>У журнал: <strong>{{ journal.student_class.name }} · {{ journal.subject.name }}</strong></p>
-  <p class="text-muted">Виберіть журнал-джерело й номери уроків. Наприклад, теми №1–10 класу А можна перенести на уроки №1–10 класу Б, навіть якщо вони проходять в інші дні.</p>
-  <p class="text-muted">Для уроків використовується порядковий номер за весь журнал; підсумкові колонки пропускаються. Фільтри місяця й семестру на копіювання не впливають. Для плану використовується його номер теми; пропуски номерів зберігаються.</p>
-  <form method="post" id="topicCopyForm">
-    {% csrf_token %}
-    {{ form.non_field_errors }}
-    <div class="assessment-fields">
-      {% for field in form %}
-        <div class="form-group">
-          {% if field.field.widget.input_type == 'checkbox' %}
-            <label for="{{ field.id_for_label }}">{{ field }} {{ field.label }}</label>
-          {% else %}
-            <label class="form-label" for="{{ field.id_for_label }}">{{ field.label }}</label>{{ field }}
-          {% endif %}
-          {{ field.errors }}
-        </div>
-      {% endfor %}
+  <div style="display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 1rem; margin-bottom: 1.25rem;">
+    <div>
+      <h1 style="margin-bottom: 0.25rem;">Копіювання та синхронізація тем між класами</h1>
+      <p style="margin: 0; color: var(--text-muted);">
+        Журнал: <strong>{{ journal.student_class.name }} · {{ journal.subject.name }} · {{ journal.academic_year.name }}</strong>
+      </p>
     </div>
-    <p class="text-muted">Кожен клас зберігає власні дати, типи наявних уроків, оцінки та відвідування. Копія в календарний план додається без дат. Якщо копіюєте ДЗ, переноситься його текст; дата виконання залишається вибором цього класу. Уже проведені теми плану пропускаються.</p>
-    <button type="submit" name="action" value="preview" class="btn btn-primary">Переглянути відповідність</button>
-    <a href="{% url 'portal:journal_detail' journal_id=journal.id %}" class="btn btn-secondary">До журналу</a>
-    {% if rows != None %}
-      <input type="hidden" name="preview_token" value="{{ preview_token }}">
-      <p class="assessment-preview">Додати: {{ counts.create }} · Оновити: {{ counts.update }} · Пропустити: {{ counts.skip }}</p>
-      <div class="table-responsive assessment-preview">
-        <table class="calendar-table">
-          <thead><tr><th>№ джерела</th><th>№ у цьому класі</th><th>Поточна тема</th><th>Тема з джерела</th><th>Дія</th></tr></thead>
-          <tbody>
-          {% for row in rows %}
-            <tr>
-              <td>{{ row.source_number }}</td><td>{{ row.target_number }}</td>
-              <td>{{ row.old_title|default:'—' }}{% if form.include_homework.value %}<small class="homework-target-label">ДЗ: {{ row.old_homework|default:'—' }}</small>{% endif %}</td>
-              <td>{{ row.new_title }}{% if form.include_homework.value %}<small class="homework-target-label">ДЗ: {{ row.new_homework|default:'—' }}</small>{% endif %}</td>
-              <td>{{ row.status_label }}</td>
-            </tr>
-          {% endfor %}
-          </tbody>
-        </table>
+    <a href="{% url 'portal:journal_detail' journal_id=journal.id %}" class="btn btn-secondary">
+      ← Повернутися до журналу
+    </a>
+  </div>
+
+  <!-- Перемикач режимів -->
+  <div class="mode-tabs" style="display: flex; gap: 0.5rem; margin-bottom: 1.5rem; border-bottom: 2px solid var(--border); padding-bottom: 0.5rem;">
+    <button type="button" id="tabSyncBtn" class="btn {% if mode != 'manual' %}btn-primary{% else %}btn-outline-primary{% endif %}" onclick="switchTopicMode('sync')">
+      🔄 Автоматична синхронізація за номерами уроків
+    </button>
+    <button type="button" id="tabManualBtn" class="btn {% if mode == 'manual' %}btn-primary{% else %}btn-outline-primary{% endif %}" onclick="switchTopicMode('manual')">
+      ⚙️ Ручне копіювання за діапазоном
+    </button>
+  </div>
+
+  <!-- РЕЖИМ 1: АВТОМАТИЧНА СИНХРОНІЗАЦІЯ ЗА НОМЕРАМИ -->
+  <div id="syncModeSection" style="display: {% if mode != 'manual' %}block{% else %}none{% endif %};">
+    <div style="background: var(--primary-light, #eff6ff); border: 1px solid #bfdbfe; border-radius: var(--radius-md, 8px); padding: 1rem; margin-bottom: 1.25rem;">
+      <p style="margin: 0; font-size: 0.95rem; color: #1e40af;">
+        <strong>Синхронізація календарних:</strong> оберіть інший клас того самого предмета для автоматичного зіставлення уроків за їх порядковими номерами (№ 1, 2, 3...).
+        Система порівняє записи, покаже що вже є, а чого не вистачає. Якщо в джерелі записано більше тем (наприклад, 20 уроків), а в цільовому класі менше (наприклад, 19) — відсутні теми автоматично додаються до календарного плану цільового класу.
+      </p>
+    </div>
+
+    <form method="post" id="calendarSyncForm">
+      {% csrf_token %}
+      <input type="hidden" name="mode" value="sync">
+      {{ sync_form.non_field_errors }}
+
+      <div style="background: white; border: 1px solid var(--border); border-radius: var(--radius-md); padding: 1.25rem; margin-bottom: 1.25rem;">
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 1.25rem; align-items: start;">
+          <div class="form-group">
+            <label class="form-label" for="{{ sync_form.other_journal.id_for_label }}">
+              <strong>{{ sync_form.other_journal.label }}</strong>
+            </label>
+            {{ sync_form.other_journal }}
+            {{ sync_form.other_journal.errors }}
+          </div>
+
+          <div class="form-group">
+            <label class="form-label"><strong>{{ sync_form.direction.label }}</strong></label>
+            <div style="display: flex; flex-direction: column; gap: 0.5rem; margin-top: 0.25rem;">
+              {% for radio in sync_form.direction %}
+                <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer;">
+                  {{ radio.tag }} {{ radio.choice_label }}
+                </label>
+              {% endfor %}
+            </div>
+            <button type="button" class="btn btn-sm btn-outline-secondary" id="btnSwapDirection" onclick="toggleSyncDirection()" style="margin-top: 0.5rem;">
+              ⇄ Поміняти напрямок
+            </button>
+            <span id="dirArrowText" style="margin-left: 0.5rem; font-size: 0.85rem; font-weight: 600; color: var(--primary);"></span>
+            {{ sync_form.direction.errors }}
+          </div>
+        </div>
+
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 1rem; margin-top: 1.25rem; padding-top: 1rem; border-top: 1px solid var(--border);">
+          <div class="form-group">
+            <label for="{{ sync_form.include_homework.id_for_label }}" style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer;">
+              {{ sync_form.include_homework }} {{ sync_form.include_homework.label }}
+            </label>
+            {{ sync_form.include_homework.errors }}
+          </div>
+          <div class="form-group">
+            <label for="{{ sync_form.replace_existing.id_for_label }}" style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer;">
+              {{ sync_form.replace_existing }} {{ sync_form.replace_existing.label }}
+            </label>
+            {{ sync_form.replace_existing.errors }}
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="{{ sync_form.sync_mode.id_for_label }}">{{ sync_form.sync_mode.label }}</label>
+            {{ sync_form.sync_mode }}
+            {{ sync_form.sync_mode.errors }}
+          </div>
+        </div>
+
+        <div style="margin-top: 1.25rem;">
+          <button type="submit" name="action" value="preview" class="btn btn-primary btn-lg">
+            🔍 Порівняти календарні плани
+          </button>
+        </div>
       </div>
-      {% if counts.create or counts.update %}
-        <button type="submit" name="action" value="save" class="btn btn-primary">Зберегти теми локально</button>
+
+      {% if mode != 'manual' and rows != None %}
+        <input type="hidden" name="preview_token" value="{{ preview_token }}">
+        <div class="sync-summary-card" style="margin: 1.5rem 0; padding: 1.25rem; background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: var(--radius-md);">
+          <div style="font-weight: 700; font-size: 1.1rem; color: #166534; margin-bottom: 0.5rem;">
+            📊 Результат аналізу та порівняння:
+          </div>
+          <div style="color: #1f2937; margin-bottom: 0.5rem; font-size: 1rem;">
+            Джерело: <strong>{{ source.student_class.name }}</strong> ({{ stats.source_total }} уроків) ➔
+            Ціль: <strong>{{ target.student_class.name }}</strong> ({{ stats.target_total }} уроків).
+          </div>
+          <div style="display: flex; gap: 0.75rem; flex-wrap: wrap; margin-top: 0.75rem;">
+            <span style="background: #10b981; color: white; padding: 4px 12px; border-radius: 9999px; font-size: 0.9rem; font-weight: 600;">
+              ➕ Додати відсутніх тем у план: {{ counts.create }}
+            </span>
+            <span style="background: #f59e0b; color: white; padding: 4px 12px; border-radius: 9999px; font-size: 0.9rem; font-weight: 600;">
+              🔄 Оновити тем / ДЗ: {{ counts.update }}
+            </span>
+            <span style="background: #6b7280; color: white; padding: 4px 12px; border-radius: 9999px; font-size: 0.9rem; font-weight: 600;">
+              ⏸ Без змін: {{ counts.skip }}
+            </span>
+          </div>
+        </div>
+
+        <div class="table-responsive assessment-preview" style="margin-top: 1.25rem;">
+          <table class="calendar-table" style="width: 100%; border-collapse: collapse;">
+            <thead>
+              <tr>
+                <th style="width: 70px; text-align: center;">№ уроку</th>
+                <th>Тема в джерелі ({{ source.student_class.name }})</th>
+                <th>Поточний стан у цілі ({{ target.student_class.name }})</th>
+                <th style="width: 250px;">Запланована дія</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for row in rows %}
+                <tr style="border-bottom: 1px solid var(--border);">
+                  <td style="font-weight: 700; text-align: center;">№{{ row.number }}</td>
+                  <td>
+                    {% if row.source_title %}
+                      <div><strong>{{ row.source_title }}</strong></div>
+                      {% if sync_form.include_homework.value and row.source_homework %}
+                        <small class="homework-target-label" style="display: block; color: #0284c7; margin-top: 3px;">
+                          📝 ДЗ: {{ row.source_homework }}
+                        </small>
+                      {% endif %}
+                    {% else %}
+                      <span class="text-muted">—</span>
+                    {% endif %}
+                  </td>
+                  <td>
+                    {% if row.old_title %}
+                      <div>{{ row.old_title }}</div>
+                      {% if sync_form.include_homework.value and row.old_homework %}
+                        <small class="homework-target-label" style="display: block; color: #64748b; margin-top: 3px;">
+                          📝 ДЗ: {{ row.old_homework }}
+                        </small>
+                      {% endif %}
+                    {% else %}
+                      <span class="text-muted" style="font-style: italic;">Відсутній запис</span>
+                    {% endif %}
+                  </td>
+                  <td>
+                    {% if row.status == 'create' %}
+                      <span style="display: inline-block; background: #ecfdf5; color: #065f46; border: 1px solid #a7f3d0; border-radius: 6px; padding: 4px 8px; font-weight: 600; font-size: 0.85rem;">
+                        ➕ {{ row.status_label }}
+                      </span>
+                    {% elif row.status == 'update' %}
+                      <span style="display: inline-block; background: #fffbeb; color: #92400e; border: 1px solid #fde68a; border-radius: 6px; padding: 4px 8px; font-weight: 600; font-size: 0.85rem;">
+                        🔄 {{ row.status_label }}
+                      </span>
+                    {% else %}
+                      <span style="display: inline-block; background: #f3f4f6; color: #4b5563; border: 1px solid #e5e7eb; border-radius: 6px; padding: 4px 8px; font-size: 0.85rem;">
+                        {{ row.status_label }}
+                      </span>
+                    {% endif %}
+                  </td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+
+        {% if counts.create or counts.update %}
+          <div style="margin-top: 1.5rem; display: flex; gap: 1rem; align-items: center; flex-wrap: wrap;">
+            <button type="submit" name="action" value="save" class="btn btn-success btn-lg" style="background: #16a34a; border-color: #15803d; font-weight: 600;">
+              ✓ Погодити та застосувати синхронізацію
+            </button>
+            <a href="{% url 'portal:journal_detail' journal_id=journal.id %}" class="btn btn-secondary">
+              Скасувати
+            </a>
+          </div>
+        {% else %}
+          <div style="margin-top: 1.5rem; padding: 1rem; background: #ecfdf5; border: 1px solid #a7f3d0; border-radius: 8px; color: #065f46; font-weight: 600;">
+            ✓ Усі теми та домашні завдання в обох класах повністю збігаються. Зміни не потрібні.
+          </div>
+        {% endif %}
       {% endif %}
-    {% endif %}
-  </form>
+    </form>
+  </div>
+
+  <!-- РЕЖИМ 2: РУЧНЕ КОПІЮВАННЯ ЗА ДІАПАЗОНОМ (ІСНУЮЧА СИСТЕМА) -->
+  <div id="manualModeSection" style="display: {% if mode == 'manual' %}block{% else %}none{% endif %};">
+    <p class="text-muted">Виберіть журнал-джерело й номери уроків. Наприклад, теми №1–10 класу А можна перенести на уроки №1–10 класу Б, навіть якщо вони проходять в інші дні.</p>
+    <p class="text-muted">Для уроків використовується порядковий номер за весь журнал; підсумкові колонки пропускаються. Фільтри місяця й семестру на копіювання не впливають. Для плану використовується його номер теми; пропуски номерів зберігаються.</p>
+    <form method="post" id="topicCopyForm">
+      {% csrf_token %}
+      <input type="hidden" name="mode" value="manual">
+      {{ manual_form.non_field_errors }}
+      <div class="assessment-fields">
+        {% for field in manual_form %}
+          <div class="form-group">
+            {% if field.field.widget.input_type == 'checkbox' %}
+              <label for="{{ field.id_for_label }}">{{ field }} {{ field.label }}</label>
+            {% else %}
+              <label class="form-label" for="{{ field.id_for_label }}">{{ field.label }}</label>{{ field }}
+            {% endif %}
+            {{ field.errors }}
+          </div>
+        {% endfor %}
+      </div>
+      <p class="text-muted">Кожен клас зберігає власні дати, типи наявних уроків, оцінки та відвідування. Копія в календарний план додається без дат. Якщо копіюєте ДЗ, переноситься його текст; дата виконання залишається вибором цього класу. Уже проведені теми плану пропускаються.</p>
+      <button type="submit" name="action" value="preview" class="btn btn-primary">Переглянути відповідність</button>
+      <a href="{% url 'portal:journal_detail' journal_id=journal.id %}" class="btn btn-secondary">До журналу</a>
+      {% if mode == 'manual' and rows != None %}
+        <input type="hidden" name="preview_token" value="{{ preview_token }}">
+        <p class="assessment-preview">Додати: {{ counts.create }} · Оновити: {{ counts.update }} · Пропустити: {{ counts.skip }}</p>
+        <div class="table-responsive assessment-preview">
+          <table class="calendar-table">
+            <thead><tr><th>№ джерела</th><th>№ у цьому класі</th><th>Поточна тема</th><th>Тема з джерела</th><th>Дія</th></tr></thead>
+            <tbody>
+            {% for row in rows %}
+              <tr>
+                <td>{{ row.source_number }}</td><td>{{ row.target_number }}</td>
+                <td>{{ row.old_title|default:'—' }}{% if manual_form.include_homework.value %}<small class="homework-target-label">ДЗ: {{ row.old_homework|default:'—' }}</small>{% endif %}</td>
+                <td>{{ row.new_title }}{% if manual_form.include_homework.value %}<small class="homework-target-label">ДЗ: {{ row.new_homework|default:'—' }}</small>{% endif %}</td>
+                <td>{{ row.status_label }}</td>
+              </tr>
+            {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        {% if counts.create or counts.update %}
+          <button type="submit" name="action" value="save" class="btn btn-primary">Зберегти теми локально</button>
+        {% endif %}
+      {% endif %}
+    </form>
+  </div>
 </div>
+
+<script>
+function switchTopicMode(targetMode) {
+  const syncSection = document.getElementById('syncModeSection');
+  const manualSection = document.getElementById('manualModeSection');
+  const tabSync = document.getElementById('tabSyncBtn');
+  const tabManual = document.getElementById('tabManualBtn');
+  if (targetMode === 'manual') {
+    syncSection.style.display = 'none';
+    manualSection.style.display = 'block';
+    tabSync.classList.remove('btn-primary');
+    tabSync.classList.add('btn-outline-primary');
+    tabManual.classList.remove('btn-outline-primary');
+    tabManual.classList.add('btn-primary');
+  } else {
+    syncSection.style.display = 'block';
+    manualSection.style.display = 'none';
+    tabSync.classList.remove('btn-outline-primary');
+    tabSync.classList.add('btn-primary');
+    tabManual.classList.remove('btn-primary');
+    tabManual.classList.add('btn-outline-primary');
+  }
+}
+
+function toggleSyncDirection() {
+  const radios = document.querySelectorAll('input[name="direction"]');
+  if (radios.length >= 2) {
+    if (radios[0].checked) {
+      radios[0].checked = false;
+      radios[1].checked = true;
+    } else {
+      radios[1].checked = false;
+      radios[0].checked = true;
+    }
+  }
+  updateDirectionDisplay();
+}
+
+function updateDirectionDisplay() {
+  const selectedRadio = document.querySelector('input[name="direction"]:checked');
+  const arrowEl = document.getElementById('dirArrowText');
+  if (!selectedRadio || !arrowEl) return;
+  if (selectedRadio.value === 'to_other') {
+    arrowEl.textContent = 'З цього класу ➔ В інший клас';
+  } else {
+    arrowEl.textContent = 'З іншого класу ➔ У цей клас';
+  }
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+  const dirRadios = document.querySelectorAll('input[name="direction"]');
+  dirRadios.forEach(function(r) {
+    r.addEventListener('change', updateDirectionDisplay);
+  });
+  updateDirectionDisplay();
+});
+</script>
 {% endblock %}

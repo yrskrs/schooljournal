@@ -324,3 +324,250 @@ class TopicCopyTests(TestCase):
         self.assertEqual(self.save(self.data(target_kind='plan')).status_code, 302)
         self.assertEqual(self.target.plan_topics.count(), 3)
         self.assertFalse(self.target.lessons.exists())
+
+
+class CalendarSyncTests(TestCase):
+    """Тести автоматичної синхронізації календарних планів за номерами уроків."""
+    def setUp(self):
+        self.school = School.objects.create(name='Школа №1')
+        self.teacher = User.objects.create_user(username='sync_teacher', role=User.Role.TEACHER, school=self.school)
+        self.year = AcademicYear.objects.create(school=self.school, name='2026/2027',
+            start_date=dt.date(2026, 9, 1), end_date=dt.date(2027, 6, 30))
+        self.subject = Subject.objects.create(school=self.school, name='Інформатика')
+        self.class_7a = StudentClass.objects.create(school=self.school, academic_year=self.year, name='7-А')
+        self.class_7b = StudentClass.objects.create(school=self.school, academic_year=self.year, name='7-Б')
+
+        self.journal_a = Journal.objects.create(school=self.school, academic_year=self.year,
+            subject=self.subject, student_class=self.class_7a, teacher=self.teacher)
+        self.journal_b = Journal.objects.create(school=self.school, academic_year=self.year,
+            subject=self.subject, student_class=self.class_7b, teacher=self.teacher)
+
+        # Клас 7-А: 20 уроків
+        self.lessons_a = [
+            Lesson.objects.create(
+                journal=self.journal_a,
+                date=dt.date(2026, 9, 1) + dt.timedelta(days=i * 2),
+                lesson_number=1,
+                topic=f'Тема {i}',
+                homework=f'ДЗ до теми {i}',
+                lesson_type='ORDINARY',
+                is_synced_to_nz=True
+            )
+            for i in range(1, 21)
+        ]
+
+        # Клас 7-Б: 19 уроків (на 1 менше)
+        self.lessons_b = [
+            Lesson.objects.create(
+                journal=self.journal_b,
+                date=dt.date(2026, 9, 2) + dt.timedelta(days=i * 2),
+                lesson_number=2,
+                topic=f'Стара тема {i}',
+                homework=f'Старе ДЗ {i}',
+                lesson_type='ORDINARY',
+                is_synced_to_nz=True
+            )
+            for i in range(1, 20)
+        ]
+
+        self.url_b = reverse('portal:topics_copy', kwargs={'journal_id': self.journal_b.pk})
+        self.client.force_login(self.teacher)
+
+    def test_calendar_sync_20_lessons_to_19_creates_missing_topic_in_plan_and_updates_lessons(self):
+        # Відкриваємо 7-Б і синхронізуємо з 7-А (from_other: 7-А -> 7-Б)
+        preview_res = self.client.post(self.url_b, {
+            'mode': 'sync',
+            'other_journal': str(self.journal_a.pk),
+            'direction': 'from_other',
+            'include_homework': 'on',
+            'replace_existing': 'on',
+            'sync_mode': 'auto',
+            'action': 'preview',
+        })
+        self.assertEqual(preview_res.status_code, 200)
+        self.assertEqual(preview_res.context['counts'], {'create': 1, 'update': 19, 'skip': 0})
+        self.assertEqual(preview_res.context['stats']['source_total'], 20)
+        self.assertEqual(preview_res.context['stats']['target_total'], 19)
+        self.assertEqual(preview_res.context['stats']['differences'], 20)
+
+        rows = preview_res.context['rows']
+        self.assertEqual(len(rows), 20)
+        # Перевіряємо 20-й урок
+        row_20 = rows[-1]
+        self.assertEqual(row_20['number'], 20)
+        self.assertEqual(row_20['status'], 'create')
+        self.assertEqual(row_20['new_title'], 'Тема 20')
+        self.assertEqual(row_20['new_homework'], 'ДЗ до теми 20')
+        self.assertIn('календарний план', row_20['status_label'])
+
+        # Зберігаємо
+        save_res = self.client.post(self.url_b, {
+            'mode': 'sync',
+            'other_journal': str(self.journal_a.pk),
+            'direction': 'from_other',
+            'include_homework': 'on',
+            'replace_existing': 'on',
+            'sync_mode': 'auto',
+            'action': 'save',
+            'preview_token': preview_res.context['preview_token'],
+        })
+        self.assertEqual(save_res.status_code, 302)
+
+        # Перевіряємо уроки 7-Б: 19 уроків оновлено
+        self.assertEqual(self.journal_b.lessons.count(), 19)
+        for i, lesson in enumerate(self.journal_b.lessons.order_by('date', 'lesson_number', 'pk'), start=1):
+            self.assertEqual(lesson.topic, f'Тема {i}')
+            self.assertEqual(lesson.homework, f'ДЗ до теми {i}')
+            self.assertTrue(lesson.homework_for_next_lesson)
+            self.assertFalse(lesson.is_synced_to_nz)
+
+        # Перевіряємо план 7-Б: створено відсутній 20-й урок
+        self.assertEqual(self.journal_b.plan_topics.count(), 1)
+        plan_20 = self.journal_b.plan_topics.first()
+        self.assertEqual(plan_20.topic_number, 20)
+        self.assertEqual(plan_20.title, 'Тема 20')
+        self.assertEqual(plan_20.homework, 'ДЗ до теми 20')
+        self.assertFalse(plan_20.is_conducted)
+
+        # Перевіряємо аудит
+        self.assertTrue(AuditLog.objects.filter(target_model='LessonPlanTopic', action=AuditLog.Action.CREATE).exists())
+        self.assertEqual(AuditLog.objects.filter(target_model='Lesson', action=AuditLog.Action.UPDATE).count(), 19)
+
+    def test_calendar_sync_reverse_direction_from_b_to_a(self):
+        # На сторінці 7-Б обираємо напрямок to_other (7-Б -> 7-А)
+        preview_res = self.client.post(self.url_b, {
+            'mode': 'sync',
+            'other_journal': str(self.journal_a.pk),
+            'direction': 'to_other',
+            'include_homework': 'on',
+            'replace_existing': 'on',
+            'sync_mode': 'auto',
+            'action': 'preview',
+        })
+        self.assertEqual(preview_res.status_code, 200)
+        # Джерело: 7-Б (19 уроків), Ціль: 7-А (20 уроків)
+        # 19 оновлень, 1 без змін (20-й урок є в 7-А, але його немає в 7-Б)
+        self.assertEqual(preview_res.context['counts'], {'create': 0, 'update': 19, 'skip': 1})
+        self.assertEqual(preview_res.context['rows'][-1]['status'], 'skip')
+        self.assertIn('Лише в цьому класі', preview_res.context['rows'][-1]['status_label'])
+
+        # Застосовуємо
+        save_res = self.client.post(self.url_b, {
+            'mode': 'sync',
+            'other_journal': str(self.journal_a.pk),
+            'direction': 'to_other',
+            'include_homework': 'on',
+            'replace_existing': 'on',
+            'sync_mode': 'auto',
+            'action': 'save',
+            'preview_token': preview_res.context['preview_token'],
+        })
+        self.assertEqual(save_res.status_code, 302)
+
+        # У 7-А перші 19 оновлені зі Старої теми 7-Б, а 20-й урок залишився незмінним!
+        lessons_a = list(self.journal_a.lessons.order_by('date', 'lesson_number', 'pk'))
+        self.assertEqual(lessons_a[0].topic, 'Стара тема 1')
+        self.assertEqual(lessons_a[18].topic, 'Стара тема 19')
+        self.assertEqual(lessons_a[19].topic, 'Тема 20')
+
+    def test_calendar_sync_without_homework_preserves_target_homework(self):
+        preview_res = self.client.post(self.url_b, {
+            'mode': 'sync',
+            'other_journal': str(self.journal_a.pk),
+            'direction': 'from_other',
+            'include_homework': '',
+            'replace_existing': 'on',
+            'sync_mode': 'auto',
+            'action': 'preview',
+        })
+        self.assertEqual(preview_res.status_code, 200)
+        self.client.post(self.url_b, {
+            'mode': 'sync',
+            'other_journal': str(self.journal_a.pk),
+            'direction': 'from_other',
+            'include_homework': '',
+            'replace_existing': 'on',
+            'sync_mode': 'auto',
+            'action': 'save',
+            'preview_token': preview_res.context['preview_token'],
+        })
+        # Тема оновлена, а ДЗ залишилось старим
+        lesson_b1 = self.journal_b.lessons.order_by('date', 'lesson_number', 'pk').first()
+        self.assertEqual(lesson_b1.topic, 'Тема 1')
+        self.assertEqual(lesson_b1.homework, 'Старе ДЗ 1')
+
+    def test_calendar_sync_replace_existing_false_only_fills_empty_and_creates(self):
+        # Робимо 2-й урок у 7-Б з порожньою темою
+        self.lessons_b[1].topic = ''
+        self.lessons_b[1].save()
+
+        preview_res = self.client.post(self.url_b, {
+            'mode': 'sync',
+            'other_journal': str(self.journal_a.pk),
+            'direction': 'from_other',
+            'include_homework': '',
+            'replace_existing': '',
+            'sync_mode': 'auto',
+            'action': 'preview',
+        })
+        # create: 1 (20-й), update: 1 (2-й порожній), skip: 18 (заповнені не чіпаємо)
+        self.assertEqual(preview_res.context['counts'], {'create': 1, 'update': 1, 'skip': 18})
+
+        self.client.post(self.url_b, {
+            'mode': 'sync',
+            'other_journal': str(self.journal_a.pk),
+            'direction': 'from_other',
+            'include_homework': '',
+            'replace_existing': '',
+            'sync_mode': 'auto',
+            'action': 'save',
+            'preview_token': preview_res.context['preview_token'],
+        })
+        self.lessons_b[0].refresh_from_db()
+        self.lessons_b[1].refresh_from_db()
+        self.assertEqual(self.lessons_b[0].topic, 'Стара тема 1')  # не перезаписано
+        self.assertEqual(self.lessons_b[1].topic, 'Тема 2')        # заповнено з джерела
+        self.assertEqual(self.journal_b.plan_topics.count(), 1)    # створено 20-й у плані
+
+    def test_calendar_sync_identical_topics_requires_no_changes(self):
+        # Робимо теми 7-Б такими ж, як у 7-А, і додаємо 20-й урок
+        for i, lesson in enumerate(self.lessons_b, start=1):
+            lesson.topic = f'Тема {i}'
+            lesson.homework = f'ДЗ до теми {i}'
+            lesson.save()
+        Lesson.objects.create(
+            journal=self.journal_b,
+            date=dt.date(2026, 11, 1),
+            lesson_number=1,
+            topic='Тема 20',
+            homework='ДЗ до теми 20',
+            lesson_type='ORDINARY'
+        )
+
+        preview_res = self.client.post(self.url_b, {
+            'mode': 'sync',
+            'other_journal': str(self.journal_a.pk),
+            'direction': 'from_other',
+            'include_homework': 'on',
+            'replace_existing': 'on',
+            'sync_mode': 'auto',
+            'action': 'preview',
+        })
+        self.assertEqual(preview_res.context['counts'], {'create': 0, 'update': 0, 'skip': 20})
+        self.assertNotContains(preview_res, 'Погодити та застосувати')
+
+    def test_calendar_sync_rejects_without_write_permission_to_target(self):
+        # Інший вчитель намагається записати в 7-Б
+        other_teacher = User.objects.create_user(username='other_tch', role=User.Role.TEACHER, school=self.school)
+        self.journal_b.teacher = other_teacher
+        self.journal_b.save()
+
+        # Поточний вчитель (self.teacher) більше не має прав на запис у 7-Б
+        res = self.client.post(self.url_b, {
+            'mode': 'sync',
+            'other_journal': str(self.journal_a.pk),
+            'direction': 'from_other',
+            'action': 'preview',
+        })
+        self.assertEqual(res.status_code, 403)
+

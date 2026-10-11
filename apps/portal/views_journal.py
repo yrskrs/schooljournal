@@ -20,8 +20,11 @@ from apps.journals.models import (
     Journal, Lesson, Grade, SummaryGrade, Attendance, LessonPlanTopic,
     LessonType, SummaryGradeType, AuditLog, SPECIAL_GRADE_VALUES, ExternalGrade
 )
-from apps.portal.forms_journal import LessonForm, LessonCreateForm, SummaryColumnForm, AssessmentForm, TopicCopyForm
-from apps.journals.services.topic_copy import numbered_lessons, preview_topic_copy, apply_topic_copy
+from apps.portal.forms_journal import LessonForm, LessonCreateForm, SummaryColumnForm, AssessmentForm, TopicCopyForm, CalendarSyncForm
+from apps.journals.services.topic_copy import (
+    numbered_lessons, preview_topic_copy, apply_topic_copy,
+    preview_calendar_sync, apply_calendar_sync
+)
 from apps.journals.services.extra_students import extra_parent
 from apps.journals.services.scheduling import (
     next_lesson_number, insert_day_slot, set_homework_target, swap_topics, reorder_plan_topic,
@@ -1046,47 +1049,138 @@ def assessment_calculate(request, journal_id):
 @require_http_methods(['GET', 'POST'])
 def topics_copy(request, journal_id):
     journal = _get_journal_or_403(request.user, journal_id, write=True)
-    initial = {'source_kind': 'lessons', 'source_start': 1, 'target_start': 1,
-               'target_kind': 'lessons' if journal.lessons.exclude(lesson_type__in=SUMMARY_TYPES).exists() else 'plan'}
-    form = TopicCopyForm(request.POST if request.method == 'POST' else None,
-                         journal=journal, user=request.user, initial=initial)
-    rows, preview_token, counts = None, '', None
-    if request.method == 'POST' and form.is_valid():
-        data = form.cleaned_data
-        source = data['source_journal']
-        try:
-            with transaction.atomic():
-                locked = {j.pk: j for j in Journal.objects.select_for_update().filter(
-                    pk__in=[source.pk, journal.pk]).order_by('pk')}
-                if len(locked) != 2:
-                    raise ValueError('Один із журналів видалено. Оновіть сторінку й оберіть джерело ще раз.')
-                source, journal = locked[source.pk], locked[journal.pk]
-                if not has_journal_access(request.user, source) or not has_journal_access(request.user, journal, write=True):
-                    raise PermissionDenied('Немає доступу до вибраних журналів.')
-                rows, fingerprint, counts = preview_topic_copy(source, journal, data, lock=True)
-                selection = {key: value for key, value in data.items() if key != 'source_journal'}
-                snapshot = {'user': request.user.pk, 'source': source.pk, 'target': journal.pk,
-                            'selection': selection, 'fingerprint': fingerprint}
-                preview_token = signing.dumps(snapshot, salt='journal-topic-copy')
-                if request.POST.get('action') == 'save':
-                    try:
-                        previous = signing.loads(request.POST.get('preview_token', ''), salt='journal-topic-copy', max_age=1800)
-                    except signing.BadSignature:
-                        raise ValueError('Спочатку перегляньте відповідність тем і номерів.') from None
-                    if previous != snapshot:
-                        raise ValueError('Журнали або параметри змінилися після перегляду. Перегляньте відповідність ще раз.')
-                    if not counts['create'] and not counts['update']:
-                        raise ValueError('Немає тем для збереження. Перевірте діапазон і дозвіл заміни заповнених тем.')
-                    apply_topic_copy(source, journal, data, rows, request.user)
-                    messages.success(request, f'Теми збережено локально. Додано: {counts["create"]}, оновлено: {counts["update"]}, пропущено: {counts["skip"]}.')
-                    return redirect('portal:journal_detail', journal_id=journal.pk)
-                if request.POST.get('action') != 'preview':
-                    raise ValueError('Оберіть попередній перегляд або збереження тем.')
-        except (ValueError, IntegrityError) as exc:
-            form.add_error(None, str(exc) if isinstance(exc, ValueError) else 'Журнал змінився під час копіювання. Перегляньте відповідність ще раз.')
-            rows, preview_token, counts = None, '', None
+    initial_manual = {
+        'source_kind': 'lessons', 'source_start': 1, 'target_start': 1,
+        'target_kind': 'lessons' if journal.lessons.exclude(lesson_type__in=SUMMARY_TYPES).exists() else 'plan',
+        'include_homework': True, 'replace_existing': True
+    }
+    initial_sync = {
+        'direction': 'from_other',
+        'include_homework': True,
+        'replace_existing': True,
+        'sync_mode': 'auto',
+    }
+
+    mode = request.POST.get('mode', '')
+    if not mode:
+        if request.method == 'POST' and ('source_start' in request.POST or ('source_journal' in request.POST and 'other_journal' not in request.POST)):
+            mode = 'manual'
+        elif request.method == 'GET' and request.GET.get('mode') == 'manual':
+            mode = 'manual'
+        else:
+            mode = 'sync'
+
+    sync_form = CalendarSyncForm(
+        request.POST if request.method == 'POST' and mode == 'sync' else None,
+        journal=journal, user=request.user, initial=initial_sync
+    )
+    manual_form = TopicCopyForm(
+        request.POST if request.method == 'POST' and mode == 'manual' else None,
+        journal=journal, user=request.user, initial=initial_manual
+    )
+
+    rows, preview_token, counts, stats, source, target = None, '', None, None, None, None
+
+    if request.method == 'POST':
+        if mode == 'sync' and sync_form.is_valid():
+            data = sync_form.cleaned_data
+            other = data['other_journal']
+            if data['direction'] == 'to_other':
+                source, target = journal, other
+            else:
+                source, target = other, journal
+
+            try:
+                with transaction.atomic():
+                    locked = {j.pk: j for j in Journal.objects.select_for_update().filter(
+                        pk__in=[source.pk, target.pk]).order_by('pk')}
+                    if len(locked) != 2:
+                        raise ValueError('Один із журналів видалено. Оновіть сторінку й оберіть клас ще раз.')
+                    source, target = locked[source.pk], locked[target.pk]
+                    if not has_journal_access(request.user, source) or not has_journal_access(request.user, target, write=True):
+                        raise PermissionDenied('Немає прав на запис у цільовий журнал.')
+
+                    rows, fingerprint, counts, stats = preview_calendar_sync(source, target, data, lock=True)
+                    snapshot = {
+                        'user': request.user.pk,
+                        'source': source.pk,
+                        'target': target.pk,
+                        'mode': 'sync',
+                        'selection': {k: str(v) for k, v in data.items() if k != 'other_journal'},
+                        'fingerprint': fingerprint
+                    }
+                    preview_token = signing.dumps(snapshot, salt='journal-calendar-sync')
+
+                    if request.POST.get('action') == 'save':
+                        try:
+                            previous = signing.loads(request.POST.get('preview_token', ''), salt='journal-calendar-sync', max_age=1800)
+                        except signing.BadSignature:
+                            raise ValueError('Спочатку виконайте порівняння тем перед збереженням.') from None
+                        if previous != snapshot:
+                            raise ValueError('Журнали або параметри змінилися після порівняння. Порівняйте теми ще раз.')
+                        if not counts['create'] and not counts['update']:
+                            raise ValueError('Немає тем для оновлення чи додавання. Календарні плани вже збігаються.')
+                        apply_calendar_sync(source, target, data, rows, request.user)
+                        messages.success(
+                            request,
+                            f'Календарні теми успішно синхронізовано з «{source.student_class.name}» до «{target.student_class.name}». '
+                            f'Додано до плану: {counts["create"]}, оновлено: {counts["update"]}, без змін: {counts["skip"]}.'
+                        )
+                        return redirect('portal:journal_detail', journal_id=target.pk)
+                    if request.POST.get('action') != 'preview':
+                        raise ValueError('Оберіть порівняння або застосування змін.')
+            except (ValueError, IntegrityError) as exc:
+                sync_form.add_error(None, str(exc) if isinstance(exc, ValueError) else 'Журнал змінився під час синхронізації. Порівняйте ще раз.')
+                rows, preview_token, counts, stats = None, '', None, None
+
+        elif mode == 'manual' and manual_form.is_valid():
+            data = manual_form.cleaned_data
+            source = data['source_journal']
+            target = journal
+            try:
+                with transaction.atomic():
+                    locked = {j.pk: j for j in Journal.objects.select_for_update().filter(
+                        pk__in=[source.pk, target.pk]).order_by('pk')}
+                    if len(locked) != 2:
+                        raise ValueError('Один із журналів видалено. Оновіть сторінку й оберіть джерело ще раз.')
+                    source, target = locked[source.pk], locked[target.pk]
+                    if not has_journal_access(request.user, source) or not has_journal_access(request.user, target, write=True):
+                        raise PermissionDenied('Немає доступу до вибраних журналів.')
+                    rows, fingerprint, counts = preview_topic_copy(source, target, data, lock=True)
+                    selection = {key: value for key, value in data.items() if key != 'source_journal'}
+                    snapshot = {'user': request.user.pk, 'source': source.pk, 'target': target.pk,
+                                'selection': selection, 'fingerprint': fingerprint}
+                    preview_token = signing.dumps(snapshot, salt='journal-topic-copy')
+                    if request.POST.get('action') == 'save':
+                        try:
+                            previous = signing.loads(request.POST.get('preview_token', ''), salt='journal-topic-copy', max_age=1800)
+                        except signing.BadSignature:
+                            raise ValueError('Спочатку перегляньте відповідність тем і номерів.') from None
+                        if previous != snapshot:
+                            raise ValueError('Журнали або параметри змінилися після перегляду. Перегляньте відповідність ще раз.')
+                        if not counts['create'] and not counts['update']:
+                            raise ValueError('Немає тем для збереження. Перевірте діапазон і дозвіл заміни заповнених тем.')
+                        apply_topic_copy(source, target, data, rows, request.user)
+                        messages.success(request, f'Теми збережено локально. Додано: {counts["create"]}, оновлено: {counts["update"]}, пропущено: {counts["skip"]}.')
+                        return redirect('portal:journal_detail', journal_id=target.pk)
+                    if request.POST.get('action') != 'preview':
+                        raise ValueError('Оберіть попередній перегляд або збереження тем.')
+            except (ValueError, IntegrityError) as exc:
+                manual_form.add_error(None, str(exc) if isinstance(exc, ValueError) else 'Журнал змінився під час копіювання. Перегляньте відповідність ще раз.')
+                rows, preview_token, counts = None, '', None
+
     return render(request, 'portal/journal/topic_copy.html', {
-        'journal': journal, 'form': form, 'rows': rows, 'preview_token': preview_token, 'counts': counts,
+        'journal': journal,
+        'mode': mode,
+        'form': manual_form,
+        'manual_form': manual_form,
+        'sync_form': sync_form,
+        'rows': rows,
+        'preview_token': preview_token,
+        'counts': counts,
+        'stats': stats,
+        'source': source,
+        'target': target,
     })
 
 

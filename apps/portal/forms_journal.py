@@ -129,6 +129,53 @@ class TopicCopyForm(forms.Form):
         return data
 
 
+class CalendarSyncForm(forms.Form):
+    other_journal = TopicJournalChoiceField(
+        label='Клас для порівняння та синхронізації',
+        queryset=Journal.objects.none()
+    )
+    direction = forms.ChoiceField(
+        label='Напрямок синхронізації',
+        choices=[
+            ('from_other', 'Скопіювати теми з іншого класу в цей клас'),
+            ('to_other', 'Скопіювати теми з цього класу в інший клас (зворотний напрямок)'),
+        ],
+        initial='from_other',
+        widget=forms.RadioSelect
+    )
+    include_homework = forms.BooleanField(
+        label='Також копіювати текст домашнього завдання',
+        required=False,
+        initial=True
+    )
+    replace_existing = forms.BooleanField(
+        label='Оновлювати вже заповнені теми (якщо відрізняються)',
+        required=False,
+        initial=True
+    )
+    sync_mode = forms.ChoiceField(
+        label='Що синхронізувати',
+        choices=[
+            ('auto', 'Автоматично (уроки та теми календарного плану)'),
+            ('lessons', 'Лише фактичні уроки журналу'),
+            ('plan', 'Лише теми календарного плану'),
+        ],
+        initial='auto',
+        required=False
+    )
+
+    def __init__(self, *args, journal, user, **kwargs):
+        super().__init__(*args, **kwargs)
+        from apps.portal.permissions import has_journal_access
+        candidates = Journal.objects.filter(school=journal.school, subject=journal.subject).exclude(pk=journal.pk).select_related(
+            'student_class', 'subject', 'academic_year')
+        accessible_ids = [candidate.pk for candidate in candidates if has_journal_access(user, candidate)]
+        self.fields['other_journal'].queryset = candidates.filter(pk__in=accessible_ids)
+        for field in self.fields.values():
+            if not isinstance(field.widget, (forms.CheckboxInput, forms.RadioSelect)):
+                field.widget.attrs['class'] = 'form-control'
+
+
 class AssessmentForm(SchoolTimeSelectionMixin, forms.Form):
     grade_type = forms.ChoiceField(choices=[c for c in LessonType.choices if c[0] in SUMMARY_TYPES])
     date = forms.DateField(label='Положення оцінки в журналі', widget=forms.DateInput(format='%Y-%m-%d', attrs={'type': 'date'}))
