@@ -74,9 +74,13 @@ def set_homework_target(lesson, target):
     lesson.homework_due_lesson = None
     lesson.homework_due_plan_topic = None
     lesson.homework_due_date = None
-    lesson.homework_for_next_lesson = target == 'next'
-    if not target or target == 'next':
+    if target == 'none':
+        lesson.homework_for_next_lesson = False
         return
+    if not target or target == 'next':
+        lesson.homework_for_next_lesson = True
+        return
+    lesson.homework_for_next_lesson = False
     kind, _, raw_id = target.partition(':')
     if kind == 'date':
         try:

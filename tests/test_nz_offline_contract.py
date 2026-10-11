@@ -139,6 +139,34 @@ class NZOfflineContractTests(TestCase):
         self.assertEqual(payload['_csrf'], 'synthetic-fresh-csrf')
         self.assertEqual(payload['OsvitaScheduleReal[hometask]'], 'Вигадане ДЗ')
 
+    def test_lesson_form_payload_uses_calendar_sequence_number_and_automatic_next_homework(self):
+        # Lesson has daily lesson_number=6 (e.g. 6th period of the day), but calendar sequence is 1
+        self.l1.lesson_number = 6
+        self.l1.homework = 'Домашнє завдання'
+        self.l1.save()
+        service = NZService()
+        response = MagicMock(status_code=200, url='https://nz.ua/journal/add-edit-home-task', text='''<form>
+        <input name="_csrf" value="synthetic-csrf">
+        <textarea name="OsvitaScheduleReal[lesson_topic]">Стара тема</textarea>
+        <textarea name="OsvitaScheduleReal[hometask]">Старе ДЗ</textarea>
+        <input name="OsvitaScheduleReal[lesson_number]" value="6">
+        <select name="Observed[hometask_date]"><option value="2026-09-05">5 вересня</option><option value="2026-10-09">9 жовтня</option></select>
+        </form>''')
+        with patch.object(service.session, 'get', return_value=response):
+            payload = service._lesson_form_payload(self.l1, response.url)
+        # Number is set to calendar plan sequence (1), not daily period (6)
+        self.assertEqual(payload['OsvitaScheduleReal[lesson_number]'], '1')
+        # Homework due date is automatically set to next lesson (self.l2 on 2026-10-09)
+        self.assertEqual(payload['Observed[hometask_date]'], '2026-10-09')
+
+        # When linked to a calendar plan topic, it uses the plan's topic_number
+        plan = LessonPlanTopic.objects.create(journal=self.journal, topic_number=5, title='Планова тема')
+        self.l1.linked_plan_topic = plan
+        self.l1.save()
+        with patch.object(service.session, 'get', return_value=response):
+            payload_plan = service._lesson_form_payload(self.l1, response.url)
+        self.assertEqual(payload_plan['OsvitaScheduleReal[lesson_number]'], '5')
+
     def test_missing_or_ambiguous_homework_form_does_not_post(self):
         self.l1.is_synced_to_nz = False; self.l1.homework_due_lesson = self.l2; self.l1.save()
         service = NZService(); service.csrf_token = 'synthetic-csrf'

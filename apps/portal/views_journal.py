@@ -235,7 +235,8 @@ def journal_detail(request, journal_id):
         'homework_target': (f'lesson:{l.homework_due_lesson_id}' if l.homework_due_lesson_id else
                             f'plan:{l.homework_due_plan_topic_id}' if l.homework_due_plan_topic_id else
                             'next' if l.homework_for_next_lesson else
-                            f'date:{l.homework_due_date.isoformat()}' if l.homework_due_date else ''),
+                            f'date:{l.homework_due_date.isoformat()}' if l.homework_due_date else
+                            'next'),
         'nz_bound': bool(l.nz_schedule_id),
     } for l in all_lessons]
 
@@ -812,6 +813,8 @@ def lesson_edit(request, journal_id, lesson_id):
             lesson.semester = journal.academic_year.semesters.filter(start_date__lte=lesson.date, end_date__gte=lesson.date).first()
             if 'homework_target' in request.POST:
                 set_homework_target(lesson, data['homework_target'])
+            elif lesson.homework and not (lesson.homework_due_lesson_id or lesson.homework_due_plan_topic_id or lesson.homework_due_date):
+                lesson.homework_for_next_lesson = True
             lesson.is_synced_to_nz = False
             lesson.save()
             if lesson.linked_plan_topic_id:

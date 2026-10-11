@@ -1165,12 +1165,17 @@ class NZService:
             })
 
         # 3. Теми уроків
+        from apps.journals.services.topic_copy import numbered_lessons
+        all_journal_lessons = list(journal.lessons.select_related('linked_plan_topic').order_by('date', 'lesson_number', 'pk'))
+        seq_numbers = {l.pk: number for number, l in numbered_lessons(all_journal_lessons).items()}
         for l in unsynced_lessons:
+            l.sequence_number = seq_numbers.get(l.pk)
             has_lesson_id = bool(l.nz_schedule_id)
             warning = self._homework_sync_warning(l)
+            cal_num = l.get_calendar_lesson_number()
             changes.append({
                 'type': 'lesson_topic',
-                'type_display': f'Тема/ДЗ (№{l.lesson_number})',
+                'type_display': f'Тема/ДЗ (№{cal_num})',
                 'object_id': l.id,
                 'student_name': '—',
                 'date': l.date.strftime('%d.%m.%Y'),
@@ -1202,10 +1207,11 @@ class NZService:
 
     @staticmethod
     def _homework_sync_warning(lesson):
-        if lesson.homework and (lesson.homework_for_next_lesson or lesson.homework_due_lesson_id or lesson.homework_due_plan_topic_id):
+        if lesson.homework:
             due = NZService._due_lesson(lesson)
             if not due or not due.nz_schedule_id:
-                return 'Урок, на який задано ДЗ, ще не має онлайн-прив’язки.'
+                if not lesson.homework_due_date:
+                    return 'Урок, на який задано ДЗ, ще не має онлайн-прив’язки.'
         return ''
 
     @staticmethod
@@ -1232,13 +1238,13 @@ class NZService:
         return None
 
     def _homework_target_fields(self, lesson, post_url, soup=None):
-        if not (lesson.homework_for_next_lesson or lesson.homework_due_lesson_id or
-                lesson.homework_due_plan_topic_id or lesson.homework_due_date):
-            return {}
         due = self._due_lesson(lesson)
         due_date = due.date if due else lesson.homework_due_date
+        if not (lesson.homework_for_next_lesson or lesson.homework_due_lesson_id or
+                lesson.homework_due_plan_topic_id or lesson.homework_due_date or due or lesson.homework):
+            return {}
         if not due_date:
-            raise NZServiceError('Немає онлайн-уроку для вибраного домашнього завдання.')
+            return {}
         if soup is None:
             response = self.session.get(post_url, timeout=15)
             if response.status_code != 200 or '/login' in str(response.url):
@@ -1261,7 +1267,9 @@ class NZService:
                     date_matches.append((select['name'], value))
         matches = id_matches or date_matches
         if len(matches) != 1:
-            raise NZServiceError('Поле «Домашнє завдання на урок» у nz.ua не підтверджено. ДЗ залишено локально.')
+            if lesson.homework or lesson.homework_for_next_lesson or lesson.homework_due_lesson_id or lesson.homework_due_plan_topic_id:
+                raise NZServiceError('Поле «Домашнє завдання на урок» у nz.ua не підтверджено. ДЗ залишено локально.')
+            return {}
         return dict(matches)
 
     def _lesson_form_payload(self, lesson, post_url):
@@ -1294,10 +1302,11 @@ class NZService:
         payload['_csrf'] = token
         payload['OsvitaScheduleReal[lesson_topic]'] = lesson.topic
         payload['OsvitaScheduleReal[hometask]'] = lesson.homework or ''
+        cal_num = lesson.get_calendar_lesson_number()
         for field_name in list(payload.keys()):
             lower = field_name.lower()
-            if any(k in lower for k in ['lesson_num', 'lesson_number', 'lesson_order', 'num_lesson', 'lessonnum']):
-                payload[field_name] = str(lesson.lesson_number)
+            if any(k in lower for k in ['lesson_num', 'lesson_number', 'lesson_order', 'num_lesson', 'lessonnum', '[order]', '[number]']) and 'buzzer' not in lower:
+                payload[field_name] = str(cal_num)
             if 'buzzer_id' in lower:
                 buzzers = self._parse_buzzers(form)
                 for b_id, b_info in buzzers.items():
@@ -1390,9 +1399,15 @@ class NZService:
             )
         )
 
-        cells = self._pending_cells(journal)
+        from apps.journals.services.topic_copy import numbered_lessons
+        all_journal_lessons = list(journal.lessons.select_related('linked_plan_topic').order_by('date', 'lesson_number', 'pk'))
+        seq_numbers = {l.pk: number for number, l in numbered_lessons(all_journal_lessons).items()}
+        for lesson in all_journal_lessons:
+            lesson.sequence_number = seq_numbers.get(lesson.pk)
         for lesson in unsynced_lessons:
-            lesson._sync_due_lesson = lesson.get_homework_due_lesson()
+            lesson.sequence_number = seq_numbers.get(lesson.pk)
+            lesson._sync_due_lesson = self._due_lesson(lesson)
+        cells = self._pending_cells(journal)
         total_items = len(cells) + len(unsynced_lessons)
         if not dry_run and total_items and not self.csrf_token:
             resp = self.session.get(f"{self.BASE_URL}/journal/index?journal={journal.nz_journal_id}", timeout=15)
@@ -1406,7 +1421,8 @@ class NZService:
 
         # 1. Синхронізація тем уроків
         for l in unsynced_lessons:
-            item_desc = f"Тема уроку №{l.lesson_number} від {l.date.strftime('%d.%m.%Y')}: «{l.topic}»"
+            cal_num = l.get_calendar_lesson_number()
+            item_desc = f"Тема уроку №{cal_num} від {l.date.strftime('%d.%m.%Y')}: «{l.topic}»"
             if not l.nz_schedule_id:
                 error_count += 1
                 report_details.append({

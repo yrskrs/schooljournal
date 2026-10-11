@@ -300,6 +300,8 @@ class TopicImportService:
                 linked_changed = plan and lesson.linked_plan_topic_id != plan.pk
                 for key, value in fields.items():
                     setattr(lesson, key, value)
+                if item['homework'] and not (lesson.homework_due_lesson_id or lesson.homework_due_plan_topic_id or lesson.homework_due_date):
+                    lesson.homework_for_next_lesson = True
                 if plan:
                     lesson.linked_plan_topic = plan
                 if changed:
@@ -314,6 +316,7 @@ class TopicImportService:
                     lesson_number=item['day_lesson_number'] or next_lesson_number(journal, lesson_date),
                     semester=next((s for s in semesters if s.start_date <= lesson_date <= s.end_date), None),
                     topic=item['title'], homework=item['homework'], lesson_type=item['lesson_type'], notes=item['notes'],
+                    homework_for_next_lesson=True,
                     linked_plan_topic=plan, created_by=user)
                 stats['added_lessons'] += 1
             if plan and lesson and not plan.is_conducted:

@@ -239,12 +239,36 @@ class Lesson(models.Model):
     def __str__(self):
         return f"{self.date.strftime('%d.%m.%Y')} (#{self.lesson_number}): {self.topic}"
 
+    def get_calendar_lesson_number(self):
+        """
+        Порядковий номер уроку за календарним плануванням / навчальним журналом.
+        1) Якщо урок прив'язаний до теми календарного плану — номер теми з плану (topic_number).
+        2) Якщо sequence_number вже закешовано/визначено на екземплярі — використовуємо його.
+        3) Інакше — порядковий номер серед навчальних уроків журналу.
+        """
+        if self.linked_plan_topic_id:
+            try:
+                if self.linked_plan_topic and self.linked_plan_topic.topic_number:
+                    return self.linked_plan_topic.topic_number
+            except Exception:
+                pass
+        if hasattr(self, 'sequence_number') and self.sequence_number:
+            return self.sequence_number
+        if not self.journal_id or not self.pk:
+            return self.lesson_number
+        from apps.journals.services.topic_copy import numbered_lessons
+        lessons = self.journal.lessons.order_by('date', 'lesson_number', 'pk')
+        seq_map = {l.pk: num for num, l in numbered_lessons(lessons).items()}
+        return seq_map.get(self.pk, self.lesson_number)
+
     def get_homework_due_lesson(self):
         if self.homework_due_lesson_id:
             return self.homework_due_lesson
         if self.homework_due_plan_topic_id:
             return self.homework_due_plan_topic.real_lessons.order_by('date', 'lesson_number').first()
-        if self.homework_for_next_lesson:
+        if self.homework_due_date:
+            return None
+        if self.homework_for_next_lesson or self.homework:
             from django.db.models import Q
             return self.journal.lessons.filter(
                 Q(date__gt=self.date) | Q(date=self.date, lesson_number__gt=self.lesson_number)
@@ -254,13 +278,14 @@ class Lesson(models.Model):
     def get_homework_target_label(self):
         target = self.get_homework_due_lesson()
         if target:
-            return f"На {target.date:%d.%m.%Y}, урок №{target.lesson_number}: {target.topic}"
+            target_num = target.get_calendar_lesson_number()
+            return f"На {target.date:%d.%m.%Y}, урок №{target_num}: {target.topic}"
         if self.homework_due_plan_topic_id:
             return f"На тему №{self.homework_due_plan_topic.topic_number}: {self.homework_due_plan_topic.title}"
-        if self.homework_for_next_lesson:
-            return "На наступний урок (дату ще не заплановано)"
         if self.homework_due_date:
             return f"На {self.homework_due_date:%d.%m.%Y}"
+        if self.homework_for_next_lesson or self.homework:
+            return "На наступний урок (дату ще не заплановано)"
         return ""
 
 

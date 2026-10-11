@@ -295,7 +295,7 @@ function lessonLabel(lesson) {
 
 function fillHomeworkChoices(select, date, number, excludedId, selectedValue) {
   if (!select) return;
-  const previous = selectedValue !== undefined ? selectedValue : (select.options.length ? select.value : 'next');
+  const previous = (selectedValue !== undefined && selectedValue !== '') ? selectedValue : (select.options.length && select.value ? select.value : 'next');
   const summaries = JOURNAL_SUMMARY_TYPES;
   const lessons = journalLessonData();
   const days = new Set(/^\d{4}-\d{2}-\d{2}$/.test(date) ? [date] : []);
@@ -307,7 +307,7 @@ function fillHomeworkChoices(select, date, number, excludedId, selectedValue) {
   const planned = plans ? Array.from(plans.options).filter(o => o.value && !summaries.includes(o.dataset.type) &&
     o.value !== document.getElementById('plan_topic_id_input').value) : [];
   planned.filter(o => o.dataset.date && o.dataset.date >= date).forEach(o => days.add(o.dataset.date));
-  select.replaceChildren(new Option('Наступний урок (автоматично)', 'next'), new Option('Без дати виконання', ''));
+  select.replaceChildren(new Option('Наступний урок (автоматично)', 'next'), new Option('Без дати виконання', 'none'));
   Array.from(days).sort().forEach(day => select.add(new Option(homeworkDateLabel(day), `date:${day}`)));
   planned.filter(o => !o.dataset.date).forEach(o => select.add(new Option(`Тема без дати: ${o.textContent.trim()}`, `plan:${o.value}`)));
   let selected = previous;
