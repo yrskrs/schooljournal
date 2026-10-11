@@ -2,6 +2,7 @@ from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.core.exceptions import PermissionDenied, ValidationError
 from django.db import transaction, IntegrityError
+from django.db.models import Q
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.utils import timezone
@@ -13,6 +14,8 @@ from apps.journals.models import Journal, GradeAPIConnection, GradeStudentMappin
 from apps.journals.services.assessment import journal_students
 from apps.journals.services.connection_setup import fetch_source_roster, roster_version, selected_students, SOURCES, ensure_same_source
 from apps.journals.services.external_grades import ExternalAPIError
+from apps.journals.services.roster_transfer import send_journal_roster
+from apps.journals.services.api_inbox import keep_roster_extras
 from apps.portal.forms_connection_setup import ConnectSourceForm, SourceContextForm, ConfirmStudentsForm
 from apps.portal.permissions import has_journal_access
 from apps.portal.views_journal import _get_journal_or_403
@@ -26,13 +29,15 @@ def _lock(journal, user):
 
 
 def _initial_context(connection):
-    values = {'version': roster_version(connection)}
+    values = {'version': roster_version(connection) if connection.pk else ''}
     for field, kind, current, name in [
         ('source_class_id', 'classes', connection.source_class_id, connection.journal.student_class.name),
         ('source_subject_id', 'subjects', connection.source_subject_id, connection.journal.subject.name),
     ]:
         rows = connection.roster_cache.get(kind, [])
-        matches = [row['id'] for row in rows if row['name'].casefold() == name.casefold()]
+        def normalized(value):
+            return ''.join(c for c in value.casefold().translate(str.maketrans('abcehiktmx', 'авсенік тмх'.replace(' ', ''))) if c.isalnum())
+        matches = [row['id'] for row in rows if normalized(row['name']) == normalized(name)]
         values[field] = current if any(row['id'] == current for row in rows) else matches[0] if len(matches) == 1 else ''
     return values
 
@@ -51,11 +56,25 @@ def connect_source(request, journal_id):
     if connection:
         setup = ConnectSourceForm(initial={'source': connection.source, 'site_url': connection.url.rsplit('/api/v2/journal/grades/', 1)[0]})
     context = mapping = None
+    available = []
+    known = set()
+    for item in GradeAPIConnection.objects.filter(contract_version=2).filter(
+            Q(journal__teacher=request.user) | Q(journal__nz_owner__user=request.user) | Q(journal__local_profile=request.user)).exclude(journal=journal).select_related('journal'):
+        identity = (item.source, item.url, item.api_key)
+        if identity not in known and has_journal_access(request.user, item.journal, write=True):
+            known.add(identity)
+            available.append(item)
     action = request.POST.get('action')
     if request.method == 'POST':
         try:
-            if action == 'connect':
-                setup = ConnectSourceForm(request.POST)
+            if action in ('connect', 'reuse'):
+                if action == 'reuse':
+                    item = next((row for row in available if str(row.pk) == request.POST.get('reuse_connection')), None)
+                    if item is None:
+                        raise PermissionDenied('Підключення недоступне.')
+                    setup = ConnectSourceForm({'source': item.source, 'site_url': item.url, 'api_key': item.api_key})
+                else:
+                    setup = ConnectSourceForm(request.POST)
                 if setup.is_valid():
                     data = setup.cleaned_data
                     payload = fetch_source_roster(data['grades_url'], data['api_key'], data['source'])
@@ -75,11 +94,35 @@ def connect_source(request, journal_id):
                         connection.url = data['grades_url']
                         connection.roster_cache = payload
                         connection.roster_checked_at = timezone.now()
+                        if 'journal_roster_import' in payload.get('capabilities', []):
+                            initial = _initial_context(connection)
+                            if not connection.source_class_id:
+                                connection.source_class_id = initial['source_class_id']
+                            if not connection.source_subject_id:
+                                connection.source_subject_id = initial['source_subject_id']
                         connection.save()
                         AuditLog.objects.create(school=journal.school, user=request.user, action=AuditLog.Action.UPDATE,
                             target_model='GradeAPIConnection', target_id=str(connection.pk), description='Підключено джерело та отримано назви класів, предметів і учнів. Оцінки не імпортувалися.')
-                    messages.success(request, 'Зв’язок установлено. Оберіть клас і предмет за назвою.')
+                    if 'journal_roster_import' in payload.get('capabilities', []):
+                        try:
+                            report = send_journal_roster(connection, request.user)
+                            messages.success(request, 'Підключено. Копію учнів журналу передано на сайт. Схожі імена перевірте нижче; оцінки ще не імпортувалися.')
+                        except ExternalAPIError as error:
+                            messages.warning(request, f'Адресу й ключ збережено. {error}')
+                    else:
+                        messages.success(request, 'Зв’язок установлено. Оберіть клас і предмет за назвою. Для передачі учнів оновіть джерело з GitHub.')
                     return redirect(destination + '?connection=' + str(connection.pk))
+            elif action == 'send_roster' and connection:
+                resolutions = {}
+                for row in connection.roster_report.get('conflicts', []):
+                    ref = row.get('journal_id', '')
+                    choice = request.POST.get('resolve_' + ref)
+                    if choice in ('local', 'journal'):
+                        resolutions[ref] = {'choice': choice, 'version': request.POST.get('version_' + ref, '')}
+                report = send_journal_roster(connection, request.user, resolutions)
+                counts = report['counts']
+                messages.success(request, f"Список передано: додано {counts['created']}, оновлено {counts['updated']}, потребують відповідності {counts['needs_review']}, конфлікти {counts['conflicts']}. Оцінки не імпортувалися.")
+                return redirect(destination + '?connection=' + str(connection.pk))
             elif action == 'refresh' and connection:
                 payload = fetch_source_roster(connection.url, connection.api_key, connection.source)
                 with transaction.atomic():
@@ -89,6 +132,7 @@ def connect_source(request, journal_id):
                     connection.roster_cache = payload
                     connection.roster_checked_at = timezone.now()
                     connection.save(update_fields=['roster_cache', 'roster_checked_at'])
+                    keep_roster_extras(connection)
                 messages.success(request, 'Назви класів, предметів та учнів оновлено. Оцінки не імпортувалися.')
                 return redirect(destination + '?connection=' + str(connection.pk))
             elif action == 'context' and connection:
@@ -150,8 +194,14 @@ def connect_source(request, journal_id):
                             GradeStudentMapping.objects.update_or_create(connection=connection, external_id=external_id, defaults={'student': student})
                         connection.enabled = True
                         connection.save(update_fields=['enabled'])
+                        keep_roster_extras(connection)
                         AuditLog.objects.create(school=journal.school, user=request.user, action=AuditLog.Action.UPDATE,
                             target_model='GradeAPIConnection', target_id=str(connection.pk), description=f'Учитель підтвердив {len(proposals)} відповідностей учнів. Оцінки не імпортувалися.')
+                    if 'journal_roster_import' in connection.roster_cache.get('capabilities', []):
+                        try:
+                            send_journal_roster(connection, request.user)
+                        except ExternalAPIError as error:
+                            messages.warning(request, str(error))
                     messages.success(request, f'Підключення готове. Підтверджено учнів: {len(proposals)}. У журналі натисніть відповідну кнопку синхронізації оцінок.')
                     return redirect('portal:journal_detail', journal_id=journal.pk)
             else:
@@ -162,8 +212,10 @@ def connect_source(request, journal_id):
         context = context or SourceContextForm(connection=connection, initial=_initial_context(connection))
         if connection.source_class_id and connection.source_subject_id:
             mapping = mapping or ConfirmStudentsForm(connection=connection, initial={'version': roster_version(connection)})
+    mapped_keys = set(connection.student_mappings.values_list('external_id', flat=True)) if connection else set()
     response = render(request, 'portal/journal/connect_source.html', {'journal': journal, 'connection': connection,
         'setup_form': setup, 'context_form': context, 'mapping_form': mapping,
-        'connections': journal.grade_apis.filter(contract_version=2).order_by('source', 'pk')})
+        'connections': journal.grade_apis.filter(contract_version=2).order_by('source', 'pk'), 'available_sources': available,
+        'needs_mapping': bool(connection and any(row['id'] not in mapped_keys for row in selected_students(connection)))})
     response['Cache-Control'] = 'no-store'
     return response

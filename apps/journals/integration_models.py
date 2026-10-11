@@ -51,6 +51,8 @@ class GradeAPIConnection(models.Model):
     last_pulled_at = models.DateTimeField(null=True, blank=True)
     roster_cache = models.JSONField(default=dict, db_default={}, blank=True)
     roster_checked_at = models.DateTimeField(null=True, blank=True)
+    roster_sent_at = models.DateTimeField(null=True, blank=True)
+    roster_report = models.JSONField(default=dict, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):
@@ -101,3 +103,30 @@ class GradePullLog(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     counts = models.JSONField(default=dict)
     errors = models.JSONField(default=list)
+
+
+class ExtraStudent(models.Model):
+    """A source identity outside the confirmed class; never an enrollment."""
+    connection = models.ForeignKey(GradeAPIConnection, on_delete=models.CASCADE, related_name='extra_students')
+    external_key = models.CharField(max_length=200)
+    name = models.CharField(max_length=200)
+    matched_student = models.ForeignKey('curriculum.Student', on_delete=models.PROTECT, null=True, blank=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=['connection', 'external_key'], name='extra_student_identity_unique')]
+        ordering = ['name', 'pk']
+
+
+class APIInboxResult(models.Model):
+    connection = models.ForeignKey(GradeAPIConnection, on_delete=models.CASCADE, related_name='inbox_results')
+    external_id = models.CharField(max_length=200)
+    extra_student = models.ForeignKey(ExtraStudent, on_delete=models.PROTECT, null=True, blank=True, related_name='results')
+    payload = models.JSONField(default=dict)
+    reason = models.CharField(max_length=500, blank=True)
+    resolved = models.BooleanField(default=False)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=['connection', 'external_id'], name='api_inbox_result_unique')]
+        ordering = ['-updated_at', '-pk']

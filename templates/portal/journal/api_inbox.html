@@ -1,0 +1,25 @@
+{% extends 'base.html' %}
+{% block title %}Позакласні учні та результати{% endblock %}
+{% block content %}
+<div class="schedule-page integration-page">
+  <div class="schedule-page-header"><div><h1>Позакласні учні та результати</h1><p>{{ journal.student_class.name }} · {{ journal.subject.name }}</p></div><a class="btn btn-outline-primary" href="{% url 'portal:journal_detail' journal.pk %}">До журналу</a></div>
+  <p>Тут зберігаються учні джерел, яких ще немає серед підтверджених учнів класу, та результати, що потребують рішення. Вони не додаються до класу й не вивантажуються в nz.ua автоматично. Джерело має власну базу й продовжує працювати без журналу.</p>
+  <p>Якщо учень ввів ім’я з помилкою або скороченням, оберіть справжнього учня після перевірки. Це збереже оригінальне ім’я й історію роботи.</p>
+  <h2>Позакласні учні</h2><p><a href="{% if show_all %}?{% else %}?all=1{% endif %}">{% if show_all %}Лише без відповідності{% else %}Також показати підтверджені відповідності{% endif %}</a></p>
+  {% for extra in extra_page %}<article class="schedule-card"><h3>{{ extra.name }}</h3><p>{{ extra.connection.get_source_display }}{% if extra.matched_student %} · Підтверджено: {{ extra.matched_student.get_full_name_ukr }}{% endif %}</p>
+    {% if extra.suggestions %}<p>Схожі імена, які варто перевірити: {{ extra.suggestions|join:', ' }}.</p>{% endif %}
+    {% for result in extra.recent_results %}<p>{{ result.payload.date }} · {{ result.payload.title }} · {{ result.payload.value }}{% if result.reason %} — {{ result.reason }}{% endif %}</p>{% empty %}<p>Оцінок ще не отримано.</p>{% endfor %}
+    {% if can_edit %}<form method="post">{% csrf_token %}<input type="hidden" name="extra_id" value="{{ extra.pk }}"><input type="hidden" name="version" value="{{ extra.updated_at|date:'c' }}"><label>Це учень мого класу: <select name="student"><option value="">Залишити позакласним</option>{% for student in students %}<option value="{{ student.pk }}" {% if extra.matched_student_id == student.pk %}selected{% endif %}>{{ student.get_full_name_ukr }}</option>{% endfor %}</select></label> <button class="btn btn-primary" name="action" value="match">Підтвердити відповідність</button></form>{% endif %}
+  </article>{% empty %}<p>Позакласних учнів немає.</p>{% endfor %}
+  {% if extra_page.has_other_pages %}<p>{% if extra_page.has_previous %}<a href="?page={{ extra_page.previous_page_number }}{% if show_all %}&amp;all=1{% endif %}">Попередні учні</a>{% endif %} {{ extra_page.number }} / {{ extra_page.paginator.num_pages }} {% if extra_page.has_next %}<a href="?page={{ extra_page.next_page_number }}{% if show_all %}&amp;all=1{% endif %}">Наступні учні</a>{% endif %}</p>{% endif %}
+  <h2>Результати, що потребують рішення</h2>
+  {% for result in result_page %}<article class="schedule-card"><h3>{{ result.payload.student_name|default:result.extra_student.name }} · {{ result.payload.value }}</h3><p>{{ result.payload.date }} · {{ result.payload.title }} · {{ result.connection.get_source_display }}</p><p role="status">{{ result.reason }}</p>
+    {% if can_edit %}<form method="post">{% csrf_token %}<input type="hidden" name="result_id" value="{{ result.pk }}"><input type="hidden" name="version" value="{{ result.updated_at|date:'c' }}">
+      <label>Урок на цю дату: <select name="lesson"><option value="">Визначити за датою</option>{% for lesson in result.lessons %}<option value="{{ lesson.pk }}">№{{ lesson.lesson_number }} · {{ lesson.topic }}</option>{% endfor %}</select></label>
+      <button class="btn btn-primary" name="action" value="apply_saved">Додати збережений результат до журналу</button>
+    </form>{% endif %}
+    <p>Якщо уроку немає, створіть його в журналі на дату роботи. Нуль, дробові, рівневі оцінки та інші шкали потребують ручного рішення; автоматично приймаються лише готові цілі 1–12 зі шкали 12.</p>
+  </article>{% empty %}<p>Немає результатів, що потребують рішення.</p>{% endfor %}
+  {% if result_page.has_other_pages %}<p>{% if result_page.has_previous %}<a href="?results_page={{ result_page.previous_page_number }}">Попередні результати</a>{% endif %} {{ result_page.number }} / {{ result_page.paginator.num_pages }} {% if result_page.has_next %}<a href="?results_page={{ result_page.next_page_number }}">Наступні результати</a>{% endif %}</p>{% endif %}
+</div>
+{% endblock %}

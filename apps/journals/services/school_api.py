@@ -82,10 +82,9 @@ def normalize_v2_grade(connection, row):
             raise ValueError('Некоректні бали результату.')
     if row['points'] > row['max_points']:
         raise ValueError('Бали перевищують максимум.')
-    mapping = connection.student_mappings.filter(external_id=str(row.get('student_id'))).first()
-    if not mapping:
-        raise ValueError(f"Учня з ID {str(row.get('student_id'))[:100]} ще не зіставлено. Відкрийте «Профілі та API». Автоматичного зіставлення за ПІБ немає.")
-    normalized = {'id': row.get('id'), 'student_id': mapping.student_id, 'date': row.get('date'),
+    from .api_inbox import resolve_student
+    local_id = resolve_student(connection, row)
+    normalized = {'id': row.get('id'), 'student_id': local_id, 'date': row.get('date'),
         'value': row.get('value'), 'is_ai': row.get('is_ai'), 'approved_by_teacher': row.get('approved_by_teacher')}
     if row.get('lesson_number') is not None:
         normalized['lesson_number'] = row['lesson_number']

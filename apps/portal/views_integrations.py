@@ -14,7 +14,7 @@ from django.views.decorators.debug import sensitive_post_parameters
 from django.views.decorators.http import require_http_methods, require_POST, require_GET
 
 from apps.accounts.personal import ensure_personal_account
-from apps.journals.models import Journal, Grade, Attendance, StudentAPIGrant, GradeAPIConnection, GradeStudentMapping, ExternalGrade, AuditLog
+from apps.journals.models import Journal, Grade, Attendance, StudentAPIGrant, GradeAPIConnection, GradeStudentMapping, ExternalGrade, AuditLog, GradePullLog
 from apps.journals.services.assessment import journal_students
 from apps.journals.services.external_grades import fetch_grade_payload, import_grade_records, review_external_grade, ExternalAPIError
 from apps.portal.forms_integrations import StudentAPIForm, GradeAPIConnectionForm, PullGradesForm, LocalProfileLinkForm, STUDENT_FIELDS
@@ -187,6 +187,8 @@ def pull_external_grades(request, journal_id, connection_id):
             counts = log.counts
             messages.success(request, f"Додано: {counts['added']}; оновлено: {counts['updated']}; очікують схвалення: {counts['pending']}; конфлікти: {counts['conflicts']}; без змін: {counts['unchanged']}; помилки: {counts['errors']}.")
         except ExternalAPIError as error:
+            GradePullLog.objects.create(connection=connection, user=request.user,
+                counts={'errors': 1}, errors=[{'message': str(error)}])
             messages.error(request, str(error))
     return redirect('portal:external_grade_review', journal_id=journal.pk)
 
@@ -207,7 +209,7 @@ def pull_source_grades(request, journal_id, source):
         return redirect('portal:journal_detail', journal_id=journal.pk)
     connections = journal.grade_apis.filter(source=source, enabled=True)
     if not connections.exists():
-        messages.info(request, 'Спершу підключіть сайт: вставте його код підключення та виберіть клас і предмет за назвою.')
+        messages.info(request, 'Спершу підключіть сайт: вставте його адресу та ключ API.')
         return redirect(reverse('portal:connect_source', kwargs={'journal_id': journal.pk}) + '?source=' + source)
     for connection in connections:
         try:
@@ -216,6 +218,8 @@ def pull_source_grades(request, journal_id, source):
             counts = log.counts
             messages.success(request, f"{connection.name}: додано {counts['added']}, оновлено {counts['updated']}, без змін {counts['unchanged']}, конфлікти {counts['conflicts']}, помилки {counts['errors']}.")
         except ExternalAPIError as error:
+            GradePullLog.objects.create(connection=connection, user=request.user,
+                counts={'errors': 1}, errors=[{'message': str(error)}])
             messages.error(request, f'{connection.name}: {error}')
     return redirect('portal:external_grade_review', journal_id=journal.pk)
 
@@ -246,7 +250,10 @@ def external_grade_review(request, journal_id):
         record.current_grade = grades.get((record.lesson_id, record.student_id))
         record.current_attendance = Attendance.objects.filter(lesson=record.lesson, student=record.student).exclude(status='PRESENT').first()
         record.reviewable = record.status in (ExternalGrade.Status.PENDING, ExternalGrade.Status.CONFLICT)
+    logs = GradePullLog.objects.filter(connection__journal=journal).select_related('connection').order_by('-created_at', '-pk')
+    logs_page = Paginator(logs, 30).get_page(request.GET.get('logs_page'))
     return render(request, 'portal/journal/external_grades.html', {'journal': journal, 'page': page,
         'can_edit': has_journal_access(request.user, journal, write=True),
         'for_review': for_review,
-        'pull_logs': [log for connection in journal.grade_apis.all() for log in connection.pull_logs.order_by('-created_at')[:3]]})
+        'pull_logs': logs_page, 'logs_page': logs_page,
+        'api_request_count': logs.count(), 'api_error_count': logs.filter(counts__errors__gt=0).count()})

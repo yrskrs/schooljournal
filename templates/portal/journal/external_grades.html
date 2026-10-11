@@ -6,6 +6,7 @@
     <div class="schedule-row-actions"><a class="btn btn-outline-primary" href="{% url 'portal:journal_detail' journal.id %}">До журналу</a><a class="btn btn-outline-primary" href="{% url 'portal:journal_integrations' journal.id %}">Профілі та API</a></div>
   </div>
   <p class="alert alert-info">Позначка «ШІ · попередня» означає, що оцінка не входить до середнього бала й підсумків та не вивантажується до nz.ua. Схвалення вчителем робить її остаточною.</p>
+  <p><a class="btn btn-outline-primary" href="{% url 'portal:api_inbox' journal.pk %}">Позакласні учні та результати з помилками</a> · <a href="{% url 'portal:nz_sync_history' journal.pk %}">Історія та помилки вивантаження в nz.ua</a></p>
   <p><a href="{% if for_review %}?all=1{% else %}?{% endif %}">{% if for_review %}Показати всю історію{% else %}Лише ті, що потребують рішення{% endif %}</a></p>
   {% for record in page %}
     <article class="schedule-card external-grade-review" data-record-id="{{ record.pk }}">
@@ -23,9 +24,11 @@
     </article>
   {% empty %}<div class="schedule-card"><p>Немає оцінок, що потребують рішення.</p></div>{% endfor %}
   {% if page.has_other_pages %}<p>{% if page.has_previous %}<a href="?page={{ page.previous_page_number }}{% if not for_review %}&amp;all=1{% endif %}">Попередні</a>{% endif %} · {{ page.number }} / {{ page.paginator.num_pages }} · {% if page.has_next %}<a href="?page={{ page.next_page_number }}{% if not for_review %}&amp;all=1{% endif %}">Наступні</a>{% endif %}</p>{% endif %}
-  {% for log in pull_logs %}<details class="schedule-card"><summary>{{ log.connection.name }} — {{ log.created_at|date:'d.m.Y H:i' }}</summary>
+  <h2>Історія запитів і помилки API</h2><p>Запитів цього журналу: {{ api_request_count }}; з помилками: {{ api_error_count }}. Помилка запиту не видаляє оцінок або списків. Старі звіти доступні на наступних сторінках.</p>
+  {% for log in pull_logs %}<details class="schedule-card" {% if log.counts.errors %}open{% endif %}><summary>{{ log.connection.name }} — {{ log.created_at|date:'d.m.Y H:i' }} · {% if log.counts.operation == 'roster' %}передача учнів{% else %}отримання оцінок{% endif %} · помилки {{ log.counts.errors|default:0 }}</summary>
     <p>Додано: {{ log.counts.added|default:0 }} · оновлено: {{ log.counts.updated|default:0 }} · попередні: {{ log.counts.pending }} · конфлікти: {{ log.counts.conflicts }} · без змін: {{ log.counts.unchanged }} · помилки: {{ log.counts.errors }}</p>
-    {% for error in log.errors %}<p>Запис {{ error.row }}: {{ error.message }}</p>{% endfor %}
+    {% for error in log.errors %}<p>{% if error.row %}Запис {{ error.row }}: {% endif %}{{ error.message }}</p>{% endfor %}
   </details>{% endfor %}
+  {% if logs_page.has_other_pages %}<p>{% if logs_page.has_previous %}<a href="?logs_page={{ logs_page.previous_page_number }}">Новіші звіти</a>{% endif %} {{ logs_page.number }} / {{ logs_page.paginator.num_pages }} {% if logs_page.has_next %}<a href="?logs_page={{ logs_page.next_page_number }}">Старіші звіти</a>{% endif %}</p>{% endif %}
 </div>
 {% endblock %}

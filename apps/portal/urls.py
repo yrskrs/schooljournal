@@ -1,6 +1,7 @@
 from django.urls import path
 from . import views_integrations
 from . import views_connection_setup
+from . import views_api_inbox
 from school_sync import django_backend as roster_views
 from . import views_public
 from django.shortcuts import redirect
@@ -27,6 +28,7 @@ urlpatterns = [
     path('journal/<int:journal_id>/integrations/<int:connection_id>/pull/', views_integrations.pull_external_grades, name='pull_external_grades'),
     path('journal/<int:journal_id>/sync/<str:source>/', views_integrations.pull_source_grades, name='pull_source_grades'),
     path('journal/<int:journal_id>/external-grades/', views_integrations.external_grade_review, name='external_grade_review'),
+    path('journal/<int:journal_id>/api-inbox/', views_api_inbox.api_inbox, name='api_inbox'),
     path('', root_redirect, name='dashboard'),
 
     # Кабінет суперадміністратора

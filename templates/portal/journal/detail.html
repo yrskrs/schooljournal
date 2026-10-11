@@ -32,6 +32,8 @@
         <a class="btn btn-outline-primary btn-sm" href="{% url 'portal:connect_source' journal.id %}">Підключити тести / завдання</a>
         <a class="btn btn-outline-primary btn-sm" href="{% url 'portal:journal_integrations' journal.id %}">Профілі та API</a>
         <a class="btn btn-outline-primary btn-sm" href="{% url 'portal:external_grade_review' journal.id %}">Оцінки з робіт{% if external_review_count %} ({{ external_review_count }}){% endif %}</a>
+        <a class="btn btn-outline-primary btn-sm" href="{% url 'portal:api_inbox' journal.id %}">Позакласні учні та результати</a>
+        <a class="btn btn-outline-primary btn-sm" href="{% url 'portal:nz_sync_history' journal.id %}">Історія та помилки nz.ua</a>
         <form method="post" action="{% url 'portal:pull_source_grades' journal.id 'schooltest' %}">{% csrf_token %}
           <input type="hidden" name="date_from" value="{{ integration_date_from }}"><input type="hidden" name="date_to" value="{{ integration_date_to }}">
           <button class="btn btn-outline-primary btn-sm">Синхронізувати з тестами</button>

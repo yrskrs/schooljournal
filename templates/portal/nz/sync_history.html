@@ -36,7 +36,7 @@
         </thead>
         <tbody>
           {% for log in logs %}
-            <tr style="border-bottom: 1px solid #f1f5f9; vertical-align: top;">
+            <tr id="log-{{ log.pk }}" style="border-bottom: 1px solid #f1f5f9; vertical-align: top;">
               <td style="padding: 0.75rem 1rem; font-weight: 600; color: #0f172a;">
                 {{ log.created_at|date:"d.m.Y H:i:s" }}
               </td>

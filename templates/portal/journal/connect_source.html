@@ -3,29 +3,39 @@
 {% block content %}
 <div class="schedule-page integration-page">
   <div class="schedule-page-header"><div><h1>Підключити тести та завдання</h1><p>Журнал: {{ journal.student_class.name }} · {{ journal.subject.name }}</p></div><a class="btn btn-outline-primary" href="{% url 'portal:journal_detail' journal.pk %}">До журналу</a></div>
-  <p>Один раз підключіть сайт і підтвердьте учнів. Надалі оцінки отримуються двома кнопками у журналі.</p>
+  <p>Вставте адресу й ключ. Журнал передасть копію свого класу та учнів у місцеву базу сайту. Надалі оцінки отримуються двома кнопками у журналі. Підключення необов’язкове для роботи будь-якого сайту.</p>
   {% for item in connections %}<p><a href="?connection={{ item.pk }}">{{ item.get_source_display }}{% if item.enabled %} — підключено{% else %} — завершіть налаштування{% endif %}</a></p>{% endfor %}
+  {% if available_sources and not connection %}<section class="schedule-card"><h2>Уже підключений сайт</h2><p>Адресу й ключ повторно вводити не потрібно. Журнал передасть учнів цього класу після натискання.</p><form method="post">{% csrf_token %}<select name="reuse_connection">{% for source in available_sources %}<option value="{{ source.pk }}">{{ source.get_source_display }} · {{ source.journal.student_class.name }} · {{ source.journal.subject.name }}</option>{% endfor %}</select> <button class="btn btn-primary" name="action" value="reuse">Використати це підключення</button></form></section>{% endif %}
   {% if connection %}
-  <section class="schedule-card"><h2>1. Збережені назви: {{ connection.get_source_display }}</h2><p>Назви збережені у журналі. Останнє отримання: {{ connection.roster_checked_at|date:'d.m.Y H:i' }}. Під час недоступності сайту ці дані залишаються.</p>
-    <form method="post">{% csrf_token %}<input type="hidden" name="connection_id" value="{{ connection.pk }}"><button name="action" value="refresh" class="btn btn-outline-primary">Оновити назви класів та учнів</button></form>
+  <section class="schedule-card"><h2>Список журналу → {{ connection.get_source_display }}</h2>
+    <p>Клас: {{ journal.student_class.name }}. Остання підтверджена передача: {{ connection.roster_sent_at|date:'d.m.Y H:i'|default:'ще не передано' }}. Учні зберігаються на сайті й доступні, коли журнал вимкнений.</p>
+    {% if connection.roster_report.counts %}<p>Додано: {{ connection.roster_report.counts.created }}; оновлено: {{ connection.roster_report.counts.updated }}; потребують відповідності: {{ connection.roster_report.counts.needs_review }}; конфлікти: {{ connection.roster_report.counts.conflicts }}.</p>{% endif %}
+    <form method="post">{% csrf_token %}<input type="hidden" name="connection_id" value="{{ connection.pk }}">
+      {% for row in connection.roster_report.conflicts %}<p><strong>{{ row.name }}</strong>: на сайті «{{ row.local_name }}».<input type="hidden" name="version_{{ row.journal_id }}" value="{{ row.version }}"><select name="resolve_{{ row.journal_id }}"><option value="">Залишити для перевірки</option><option value="journal">Використати ім’я з журналу на сайті</option><option value="local">Залишити місцеве ім’я на сайті</option></select></p>{% endfor %}
+      <button name="action" value="send_roster" class="btn btn-primary">Передати учнів журналу на сайт</button>
+    </form>
+    {% if connection.roster_report.needs_review %}<p>Є схожі імена. Перевірте відповідності нижче й натисніть «Зберегти підключення». Автоматичного об’єднання людей за ПІБ немає.</p>{% endif %}
   </section>
-  <section class="schedule-card"><h2>2. Виберіть клас і предмет</h2><p>Ці результати надходитимуть до {{ journal.student_class.name }} · {{ journal.subject.name }}.</p>
+  <details class="schedule-card"><summary>Оновити місцеву копію назв із сайту</summary><p>Назви збережені у журналі. Останнє отримання: {{ connection.roster_checked_at|date:'d.m.Y H:i' }}. Під час недоступності сайту ці дані залишаються.</p>
+    <form method="post">{% csrf_token %}<input type="hidden" name="connection_id" value="{{ connection.pk }}"><button name="action" value="refresh" class="btn btn-outline-primary">Оновити назви класів та учнів</button></form>
+  </details>
+  <details class="schedule-card" {% if not connection.source_class_id or not connection.source_subject_id %}open{% endif %}><summary>Клас і предмет на сайті джерела</summary><p>Ці результати надходитимуть до {{ journal.student_class.name }} · {{ journal.subject.name }}. Однакові назви визначаються під час підключення. Якщо назви різні, оберіть потрібні тут.</p>
     {% if not connection.roster_cache.classes %}<p role="alert">На сайті ще немає доступних класів. У тестах виберіть клас і предмет для сесії; у завданнях призначте роботу класу. Потім оновіть назви тут.</p>{% endif %}
     <form method="post">{% csrf_token %}<input type="hidden" name="connection_id" value="{{ connection.pk }}">{{ context_form.as_p }}<button name="action" value="context" class="btn btn-primary">Підтвердити клас і предмет</button></form>
-  </section>
-  {% if mapping_form %}<section class="schedule-card" id="students"><h2>3. Перевірте учнів</h2><p>Зліва — ім’я на сайті джерела, у списку — учень цього журналу. Однакові імена є лише підказкою: відповідність зберігається після вашого підтвердження. Для різних учнів з однаковими іменами виберіть записи вручну. Відсутнього учня можна явно додати як нового.</p>
+  </details>
+  {% if mapping_form %}<details class="schedule-card" id="students" {% if needs_mapping or mapping_form.errors %}open{% endif %}><summary>Перевірити відповідності учнів</summary><p>Зліва — ім’я на сайті джерела, у списку — учень цього журналу. Однакові імена є лише підказкою: відповідність зберігається після вашого підтвердження. Для різних учнів з однаковими іменами виберіть записи вручну. Дитину, якої немає в класі, залиште позакласною; її результати доступні в окремому списку.</p>
     <form method="post">{% csrf_token %}<input type="hidden" name="connection_id" value="{{ connection.pk }}">{{ mapping_form.non_field_errors }}{{ mapping_form.version }}
-      {% for field in mapping_form %}{% if field.name != 'version' and field.name != 'confirm' %}<p>{{ field.label_tag }} {{ field }} {{ field.errors }}</p>{% endif %}{% endfor %}
+      {% for field in mapping_form %}{% if field.name != 'version' and field.name != 'confirm' %}<p>{{ field.label_tag }} {{ field }} {{ field.errors }}{% if field.help_text %}<small>{{ field.help_text }}</small>{% endif %}</p>{% endif %}{% endfor %}
       <p>{{ mapping_form.confirm }} {{ mapping_form.confirm.label_tag }} {{ mapping_form.confirm.errors }}</p>
       <button name="action" value="students" class="btn btn-primary">Зберегти підключення</button>
     </form>
-  </section>{% endif %}
+  </details>{% endif %}
   <details class="schedule-card" {% if setup_form.errors %}open{% endif %}><summary>Змінити IP, порт або ключ цього підключення</summary>
   {% else %}<section class="schedule-card"><h2>1. Вкажіть адресу та ключ</h2><p>У тестах відкрийте «Підключення до журналу», у завданнях — «Налаштування → API та журнал». Натисніть «Створити ключ API». Скопіюйте адресу сайту та ключ у відповідні поля нижче.</p>{% endif %}
     <form method="post">{% csrf_token %}{% if connection %}<input type="hidden" name="connection_id" value="{{ connection.pk }}">{% endif %}{{ setup_form.non_field_errors }}
       <p>{{ setup_form.source.label_tag }} {{ setup_form.source }} {{ setup_form.source.errors }}</p><p>{{ setup_form.site_url.label_tag }} {{ setup_form.site_url }} {{ setup_form.site_url.errors }}<small>{{ setup_form.site_url.help_text }}</small></p><p>{{ setup_form.api_key.label_tag }} {{ setup_form.api_key }} {{ setup_form.api_key.errors }}</p>
       <details {% if setup_form.connection_code.errors %}open{% endif %}><summary>Код зі старої версії</summary><p>{{ setup_form.connection_code.label_tag }} {{ setup_form.connection_code }} {{ setup_form.connection_code.errors }}</p></details>
-      <p><button name="action" value="connect" class="btn btn-primary">Підключити й отримати назви</button></p>
+      <p><button name="action" value="connect" class="btn btn-primary">Підключити й передати учнів</button></p>
     </form>
   {% if connection %}</details>{% else %}</section>{% endif %}
   <p>Ця сторінка не імпортує оцінок. Відкрийте журнал і натисніть «Синхронізувати з тестами» або «Синхронізувати із завданнями» за потрібний період.</p>

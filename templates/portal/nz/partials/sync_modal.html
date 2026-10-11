@@ -112,6 +112,7 @@
 
         <!-- Контейнер звіту після відправки (по замовчуванню прихований) -->
         <div id="nzSyncResultContainer" style="display: none; margin-bottom: 1.25rem;">
+          <p><a class="btn btn-outline-primary" href="{% url 'portal:nz_sync_history' journal.pk %}" target="_blank">Відкрити збережений звіт і всі помилки вивантаження</a></p>
           <div id="nzSyncResultBanner" class="alert" style="border-radius: 8px; padding: 1rem; margin-bottom: 0.75rem;"></div>
           <div id="nzSyncResultList" style="max-height: 220px; overflow-y: auto; border: 1px solid #e2e8f0; border-radius: 6px; padding: 0.5rem; background: #fafafa; font-size: 0.85rem;"></div>
         </div>

@@ -9,6 +9,7 @@ from django.utils import timezone
 from django.core import signing
 from django.db import transaction
 from django.db.models import Q
+from django.urls import reverse
 from django.views.decorators.debug import sensitive_post_parameters
 
 from apps.portal.permissions import has_journal_access
@@ -366,18 +367,18 @@ def nz_sync_execute_view(request, journal_id):
     if not has_journal_access(request.user, journal, write=True):
         return JsonResponse({'status': 'error', 'message': 'У вас немає прав редагування цього журналу.'}, status=403)
 
+    def failed(message, status=400):
+        log = NZSyncLog.objects.create(journal=journal, user=request.user, status=NZSyncLog.Status.FAILED,
+            error_count=1, error_message=message, details={'items': [{'status': 'error', 'item': 'Вивантаження журналу', 'error': message}]})
+        return JsonResponse({'status': 'error', 'message': message, 'log_id': log.pk,
+            'history_url': reverse('portal:nz_sync_history', kwargs={'journal_id': journal.pk}) + '#log-' + str(log.pk)}, status=status)
+
     account = journal_nz_account(journal, request.user)
     if not account or not account.is_active:
-        return JsonResponse({
-            'status': 'error',
-            'message': 'Акаунт nz.ua не підключено або термін дії сесії вичерпано. Перейдіть до підключення nz.ua.'
-        }, status=400)
+        return failed('Акаунт nz.ua не підключено або термін дії сесії вичерпано. Перейдіть до підключення nz.ua.')
 
     if not journal.nz_journal_id:
-        return JsonResponse({
-            'status': 'error',
-            'message': "Цей журнал ще не прив'язано до журналу на nz.ua. Спочатку виконайте прив'язку."
-        }, status=400)
+        return failed("Цей журнал ще не прив'язано до журналу на nz.ua. Спочатку виконайте прив'язку.")
 
     dry_run = request.POST.get('dry_run') in ['1', 'true', 'True', True]
 
@@ -386,10 +387,10 @@ def nz_sync_execute_view(request, journal_id):
     try:
         approved = signing.loads(request.POST.get('preview_token', ''), salt='nz-sync-preview', max_age=1800)
     except signing.BadSignature:
-        return JsonResponse({'status': 'error', 'message': 'Спочатку відкрийте перегляд змін для вивантаження.'}, status=409)
+        return failed('Спочатку відкрийте перегляд змін для вивантаження.', 409)
     if (approved.get('journal') != journal.pk or approved.get('user') != request.user.pk or
             approved.get('fingerprint') != service.pending_changes_fingerprint(journal)):
-        return JsonResponse({'status': 'error', 'message': 'Зміни оновлено після перегляду. Закрийте вікно й перегляньте їх ще раз.'}, status=409)
+        return failed('Зміни оновлено після перегляду. Закрийте вікно й перегляньте їх ще раз.', 409)
 
     try:
         sync_log = service.push_journal_changes(
@@ -401,6 +402,7 @@ def nz_sync_execute_view(request, journal_id):
         return JsonResponse({
             'status': 'success',
             'log_id': sync_log.id,
+            'history_url': reverse('portal:nz_sync_history', kwargs={'journal_id': journal.pk}) + '#log-' + str(sync_log.pk),
             'sync_status': sync_log.status,
             'dry_run': dry_run,
             'items_count': sync_log.items_count,
@@ -418,21 +420,12 @@ def nz_sync_execute_view(request, journal_id):
     except NZAuthError as e:
         account.is_active = False
         account.save(update_fields=['is_active'])
-        return JsonResponse({
-            'status': 'error',
-            'message': f"Помилка авторизації nz.ua: {str(e)}. Будь ласка, оновіть сесію."
-        }, status=401)
+        return failed(f"Помилка авторизації nz.ua: {str(e)}. Будь ласка, оновіть сесію.", 401)
     except NZServiceError as e:
-        return JsonResponse({
-            'status': 'error',
-            'message': f"Помилка nz.ua: {str(e)}"
-        }, status=400)
+        return failed(f"Помилка nz.ua: {str(e)}")
     except Exception as e:
         logger.exception("NZ sync execute error")
-        return JsonResponse({
-            'status': 'error',
-            'message': f"Непередбачена помилка синхронізації: {str(e)}"
-        }, status=500)
+        return failed('Не вдалося завершити вивантаження. Місцеві дані збережено; деталі для адміністратора є в журналі сервера.', 500)
 
 
 @login_required

@@ -299,6 +299,8 @@ def main():
     assert code('test', "from app.database import SessionLocal;from app.models import StudentAttempt,TestSession\nwith SessionLocal() as db:\n s=db.query(TestSession).filter_by(access_code='LEGACY1').one();a=db.query(StudentAttempt).filter_by(session_id=s.id).one();print(s.roster_class_id is None and a.roster_student_id is None)") == 'True'
     log('API creation preserves legacy pupil login with an empty roster; no pupil is merged by name')
     changed_ip()
+    import simple_exchange
+    simple_exchange.run(globals())
     log('all isolated Docker integration scenarios completed')
 
 if __name__=='__main__':main()

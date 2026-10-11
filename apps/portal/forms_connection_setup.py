@@ -4,6 +4,7 @@ from django import forms
 
 from apps.journals.services.assessment import journal_students
 from apps.journals.services.connection_setup import SOURCES, source_urls, selected_students
+from school_sync.journal_roster import similar
 
 
 class ConnectSourceForm(forms.Form):
@@ -66,13 +67,17 @@ class ConfirmStudentsForm(forms.Form):
         source = selected_students(connection)
         source_counts = Counter(row['name'].casefold() for row in source)
         mappings = {row.external_id: str(row.student_id) for row in connection.student_mappings.all()}
-        choices = [('', 'Поки не зіставляти')] + [(str(student.pk), student.get_full_name_ukr()) for student in local]
+        choices = [('', 'Позакласний учень / перевірити пізніше')] + [(str(student.pk), student.get_full_name_ukr()) for student in local]
         choices.append(('new', 'Додати як нового учня цього класу'))
         for row in source:
             suggested = mappings.get(row['id'], '')
             if not suggested and counts[row['name'].casefold()] == 1 and source_counts[row['name'].casefold()] == 1:
                 suggested = next(str(student.pk) for student in local if student.get_full_name_ukr().casefold() == row['name'].casefold())
             self.fields['pupil_' + row['id']] = forms.ChoiceField(label=row['name'], choices=choices, required=False, initial=suggested)
+            if not suggested:
+                names = [s.get_full_name_ukr() for s in local if similar(row['name'], s.get_full_name_ukr())]
+                if names:
+                    self.fields['pupil_' + row['id']].help_text = 'Можлива помилка або скорочення: ' + ', '.join(names[:5]) + '. Оберіть учня лише після перевірки.'
 
     def clean(self):
         data = super().clean()

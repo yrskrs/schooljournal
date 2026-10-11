@@ -109,11 +109,14 @@ def import_grade_records(connection, rows, user, date_from, date_to):
     if not isinstance(rows, list) or len(rows) > (50000 if connection.contract_version == 2 else 1000):
         raise ExternalAPIError('Завелика або некоректна відповідь API.')
     for index, row in enumerate(rows, 1):
+        inbox = None
         try:
             if not isinstance(row, dict):
                 raise ValueError('Очікується об’єкт оцінки.')
             source_payload = {}
             if connection.contract_version == 2:
+                from .api_inbox import keep_result
+                inbox = keep_result(connection, row, date_from, date_to)
                 from .school_api import normalize_v2_grade
                 row, source_payload = normalize_v2_grade(connection, row)
             raw_id = row.get('id') if connection.contract_version == 2 else json_field(row, connection.id_key)
@@ -165,6 +168,9 @@ def import_grade_records(connection, rows, user, date_from, date_to):
                     record.source_payload = source_payload
                     record.save(update_fields=['source_payload', 'updated_at'])
                 counts['unchanged'] += 1
+                if inbox:
+                    inbox.resolved, inbox.reason = True, ''
+                    inbox.save(update_fields=['resolved', 'reason'])
                 continue
             grade = Grade.objects.filter(lesson=lesson, student=student).first()
             attendance = Attendance.objects.filter(lesson=lesson, student=student).first()
@@ -197,9 +203,15 @@ def import_grade_records(connection, rows, user, date_from, date_to):
                 grade.save()
                 counts['added' if previous_value is None else 'updated'] += 1
             counts['conflicts' if not can_apply else 'pending' if pending else 'applied'] += 1
+            if inbox:
+                inbox.resolved, inbox.reason = True, ''
+                inbox.save(update_fields=['resolved', 'reason'])
         except (ValueError, TypeError, OverflowError) as error:
             counts['errors'] += 1
             errors.append({'row': index, 'message': str(error)})
+            if inbox:
+                inbox.resolved, inbox.reason = False, str(error)[:500]
+                inbox.save(update_fields=['resolved', 'reason'])
     connection.last_pulled_at = timezone.now()
     connection.save(update_fields=['last_pulled_at'])
     log = GradePullLog.objects.create(connection=connection, user=user, counts=counts, errors=errors)
