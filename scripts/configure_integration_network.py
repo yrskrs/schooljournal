@@ -23,10 +23,12 @@ def main():
     if not network:
         print('Standalone configuration: no shared aliases to update.');return
     name=network['name']
+    managed_aliases=set()
     for service,definition in config['services'].items():
         data=definition.get('networks',{}).get('integration')
         if data is None:continue
         desired=list((data or {}).get('aliases',[]))
+        managed_aliases.update(desired)
         for container in docker(*options,'ps','-q',service).split():
             info=json.loads(docker('inspect',container))[0]
             current=info['NetworkSettings']['Networks'].get(name)
@@ -51,8 +53,8 @@ def main():
     for container in containers:
         state=json.loads(docker('inspect',container))[0]['NetworkSettings']['Networks'][name]
         for alias in state.get('Aliases') or []:aliases.setdefault(alias,[]).append(container)
-    collisions=[key for key,owners in aliases.items() if len(set(owners))>1]
+    collisions=[key for key,owners in aliases.items() if key in managed_aliases and len(set(owners))>1]
     if collisions:raise RuntimeError('Conflicting integration aliases: '+', '.join(collisions))
-    print('Integration network aliases are unique.')
+    print('Project integration aliases are unique.')
 
 if __name__=='__main__':main()

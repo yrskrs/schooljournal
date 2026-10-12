@@ -257,6 +257,7 @@ def perform_rollback(deployment, backup, old_image, old_commit, old_version):
     elif PROJECT == 'schoolwork2':
         flags += ['--no-safety-backup']
     run_command(['bash', str(ROOT / 'scripts/restore.sh'), str(backup), *flags], deployment.env, 600)
+    run_command(['python3', str(ROOT / 'scripts/configure_integration_network.py')], deployment.env, 90)
     run_command(['git', 'reset', '--hard', old_commit], deployment.env, 60)
     deployment.select_image(old_image)
     verify_deployment(deployment, old_image, old_version)
@@ -396,6 +397,7 @@ def execute_update_job(target_ref='origin/main', target_ver=None, releases_list=
             deployment.dc('run', '--rm', '--no-deps', '-T', '-e', 'SKIP_INIT=1', APP_SERVICE,
                           'python', 'manage.py', 'collectstatic', '--noinput')
         deployment.dc('up', '-d', '--no-build', '--no-deps', '--wait', '--wait-timeout', '180', *WRITERS, timeout=240)
+        run_command(['python3', str(ROOT / 'scripts/configure_integration_network.py')], deployment.env, 90)
         if PROJECT == 'schooljournal':
             deployment.dc('up', '-d', '--no-deps', 'nginx', timeout=120)
             deployment.dc('restart', 'nginx', timeout=120)
