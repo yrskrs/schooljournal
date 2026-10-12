@@ -347,7 +347,7 @@ function toggleAuthFields(val) {
       }
     });
 
-    fetch("{% url 'portal:update_journal_order' %}", {
+    siteFetch("{% url 'portal:update_journal_order' %}", {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',

@@ -12,7 +12,7 @@
   <script src="/static/js/htmx.min.js"></script>
   {% block extra_head %}{% endblock %}
 </head>
-<body>
+<body data-user-id="{{ user.pk|default:'public' }}">
 
   <!-- Навігаційна панель -->
   <header class="navbar">
@@ -30,7 +30,8 @@
       </a>
 
       {% if user.is_authenticated %}
-        <nav>
+        <button type="button" class="btn btn-secondary btn-sm nav-toggle" aria-expanded="false" aria-controls="siteNavigation" onclick="const open = document.getElementById('siteNavigation').classList.toggle('is-open'); this.setAttribute('aria-expanded', String(open));">Меню ☰</button>
+        <nav id="siteNavigation">
           <ul class="nav-links">
             {% if user.is_school_admin_user %}
               <li><a href="{% url 'portal:superadmin_dashboard' %}" class="nav-link">Головна</a></li>
@@ -92,7 +93,12 @@
     <a href="{% url 'portal:guide' %}">Інструкція користувача</a>
     <a href="{% url 'portal:versions' %}">Версія {{ site_version }} · Опис змін</a>
   </footer>
+  <div id="siteBusy" class="site-busy" role="status" aria-live="polite" hidden>
+    <span class="spinner-border spinner-border-sm" aria-hidden="true"></span>
+    <span id="siteBusyText">Завантаження…</span>
+  </div>
   <!-- Скрипт застосунку -->
+  <script src="/static/js/site.js?v={{ site_version }}"></script>
   <script src="/static/js/journal.js?v={{ site_version }}"></script>
   {% block extra_js %}{% endblock %}
 </body>

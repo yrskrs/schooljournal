@@ -155,11 +155,11 @@ def manual(value,date='2026-09-05',student=1):
 
 def changed_ip():
     """A second isolated interface changes the actual source IP, keeping its DB."""
-    network = 'school-api-ip-change-check'
+    network = os.environ.get('CHECK_IP_NETWORK', 'school-api-ip-change-check')
     containers = {service: dc('ps', '-q', service).strip() for service in ('test', 'journal')}
     subprocess.run(['docker', 'network', 'create', '--internal', network], check=True, capture_output=True)
     before_network = json.loads(subprocess.check_output(['docker', 'inspect', containers['test']], text=True))[0]
-    original_address = 'http://' + before_network['NetworkSettings']['Networks']['school-api-checks_default']['IPAddress'] + ':8000'
+    original_address = 'http://' + next(iter(before_network['NetworkSettings']['Networks'].values()))['IPAddress'] + ':8000'
     attached = []
     try:
         for container in containers.values():

@@ -231,6 +231,8 @@ def pull_source_grades(request, journal_id, source):
             GradePullLog.objects.create(connection=connection, user=request.user,
                 counts={'errors': 1}, errors=[{'message': str(error)}])
             messages.error(request, f'{connection.name}: {error}')
+    if request.headers.get('x-requested-with') == 'XMLHttpRequest':
+        return redirect('portal:journal_detail', journal_id=journal.pk)
     return redirect('portal:external_grade_review', journal_id=journal.pk)
 
 

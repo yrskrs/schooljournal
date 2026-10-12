@@ -4,11 +4,12 @@
 {% block title %}{{ journal.student_class.name }} — {{ journal.subject.name }} | Журнал{% endblock %}
 
 {% block content %}
+<div id="journalLiveContent" data-journal-id="{{ journal.pk }}">
 <!-- Шапка журналу з метаданими та кнопками дій -->
-<div style="background: white; border: 1px solid var(--border); border-radius: var(--radius-md); padding: 1.25rem 1.5rem; margin-bottom: 1.25rem; box-shadow: var(--shadow-sm);">
-  <div style="display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 1rem;">
+<div class="journal-header">
+  <div class="journal-header-layout">
     <div>
-      <div style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.25rem;">
+      <div class="journal-heading">
         <span class="user-role-pill" style="font-size: 0.95rem; font-weight: 700; background: var(--primary-light); color: var(--primary-dark);">
           {{ journal.student_class.name }} клас
         </span>
@@ -27,8 +28,11 @@
     </div>
 
     <!-- Кнопки дій -->
-    <div style="display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: center;">
+    <div class="journal-header-actions">
       {% if can_edit %}
+        <details class="journal-tools" id="journalTools">
+          <summary class="btn btn-secondary btn-sm">Підключення та імпорт ▾</summary>
+          <div class="journal-tools-menu">
         <a class="btn btn-outline-primary btn-sm" href="{% url 'portal:connect_source' journal.id %}">Підключити тести / завдання</a>
         <a class="btn btn-outline-primary btn-sm" href="{% url 'portal:journal_integrations' journal.id %}">Профілі та API</a>
         <a class="btn btn-outline-primary btn-sm" href="{% url 'portal:external_grade_review' journal.id %}">Оцінки з робіт{% if external_review_count %} ({{ external_review_count }}){% endif %}</a>
@@ -46,8 +50,19 @@
           <button class="btn btn-outline-primary btn-sm">Синхронізувати із завданнями</button>
         </form>
         <p class="text-muted" style="flex-basis:100%;font-size:.85rem">Тести — остаточні результати тестів; завдання — перевірені вчителем роботи. Період: {{ integration_date_from }} — {{ integration_date_to }}. Оцінки імпортуються лише після натискання; ручні оцінки збережено. Для першого підключення натисніть «Підключити тести / завдання»: адреса й ключ, вибір назв і підтвердження учнів.</p>
+        <a href="{% url 'portal:import_topics' journal_id=journal.id %}" class="btn btn-secondary btn-sm" title="Імпорт календарного плану">
+          Імпорт тем
+        </a>
+        <a href="{% url 'portal:import_students' journal_id=journal.id %}" class="btn btn-secondary btn-sm" title="Імпорт списку учнів класу">
+          Імпорт учнів
+        </a>
+        {% if can_manage and journal.nz_journal_id %}<a href="{% url 'portal:nz_journal_reload' journal.id %}" class="btn btn-secondary btn-sm">Завантажити заново з nz.ua</a>{% endif %}
+        <a href="{% url 'portal:export_topics' journal_id=journal.id %}?format=xlsx" class="btn btn-secondary btn-sm">Теми (XLSX)</a>
+        <a href="{% url 'portal:export_students' journal_id=journal.id %}?format=xlsx" class="btn btn-secondary btn-sm">Учні (XLSX)</a>
+          </div>
+        </details>
         <!-- Синхронізація з nz.ua (Нові знання) -->
-        <div style="display: inline-flex; gap: 0.35rem; align-items: center; background: #f8fafc; padding: 0.2rem; border-radius: var(--radius-sm); border: 1px solid #cbd5e1;">
+        <div class="journal-nz-controls">
           {% if journal.nz_journal_id %}
             <!-- Кнопка 1: Завантажити / Оновити оцінки з nz.ua -->
             <button type="button"
@@ -60,9 +75,6 @@
               <span>Оновити з nz.ua</span>
             </button>
 
-            {% if can_manage %}
-              <a href="{% url 'portal:nz_journal_reload' journal.id %}" class="btn btn-secondary btn-sm" title="Замінити локальні уроки, план та оцінки даними онлайн-журналу">Завантажити заново з nz.ua</a>
-            {% endif %}
 
             <!-- Кнопка 2: Вивантажити зміни в nz.ua -->
             <button type="button"
@@ -94,14 +106,9 @@
         <button class="btn btn-primary btn-sm" onclick="openModal('createLessonModal')">
           + Додати урок
         </button>
-        <a href="{% url 'portal:import_topics' journal_id=journal.id %}" class="btn btn-secondary btn-sm" title="Імпорт календарного плану">
-          Імпорт тем
-        </a>
-        <a href="{% url 'portal:import_students' journal_id=journal.id %}" class="btn btn-secondary btn-sm" title="Імпорт списку учнів класу">
-          Імпорт учнів
-        </a>
       {% endif %}
 
+      <button type="button" id="btnJournalRefresh" class="btn btn-secondary btn-sm" onclick="refreshJournal().catch(error => showToast(error.message, 'danger'))">↻ Оновити дані</button>
       <details class="journal-actions" id="journalActions">
         <summary class="btn btn-secondary btn-sm">Дії журналу <span aria-hidden="true">▾</span></summary>
         <div class="journal-actions-menu" aria-label="Дії журналу {{ journal.student_class.name }}">
@@ -121,14 +128,7 @@
         </div>
       </details>
 
-      <div style="display: inline-flex; border: 1px solid var(--border); border-radius: var(--radius-sm); overflow: hidden;">
-        <a href="{% url 'portal:export_topics' journal_id=journal.id %}?format=xlsx" class="btn btn-secondary btn-sm" style="border: none; border-radius: 0;" title="Експорт тем">
-          Теми (XLSX)
-        </a>
-        <a href="{% url 'portal:export_students' journal_id=journal.id %}?format=xlsx" class="btn btn-secondary btn-sm" style="border: none; border-radius: 0; border-left: 1px solid var(--border);" title="Експорт списку учнів">
-          Учні (XLSX)
-        </a>
-      </div>
+
     </div>
   </div>
 </div>
@@ -804,4 +804,5 @@
 </div>
 {% endif %}
 {{ lesson_choices|json_script:"journal-lesson-data" }}
+</div>
 {% endblock %}

@@ -22,6 +22,7 @@ jobs:
       - run: python -m unittest scripts.test_update_helpers
       - run: node tests/journal_scheduling_check.js
       - run: node tests/student_menu_check.js
+      - run: node tests/site_lifecycle_check.js
       - run: for script in *.sh scripts/*.sh; do bash -n "$script"; done
       - run: ./setup.sh && docker compose config --quiet
       - run: docker build --build-arg VCS_REF="${{ github.sha }}" -t schooljournal-ci .

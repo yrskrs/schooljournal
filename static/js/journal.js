@@ -5,8 +5,13 @@
 let currentActiveCellInput = null;
 const JOURNAL_SUMMARY_TYPES = ['THEMATIC', 'MODULAR', 'THEMATIC_NUSH', 'SEMESTER_1', 'SEMESTER_2', 'SEMESTER_1_NUSH', 'SEMESTER_2_NUSH', 'ANNUAL'];
 const JOURNAL_THEMATIC_TYPES = ['THEMATIC', 'MODULAR', 'THEMATIC_NUSH'];
+let quickPickerInitialized = false;
+let keyboardNavInitialized = false;
+let journalActionsInitialized = false;
+let nzStatusTimer;
 
-document.addEventListener('DOMContentLoaded', function () {
+function initJournalContent() {
+  currentActiveCellInput = null;
   // 1. Пошук учнів на льоту
   const searchInput = document.getElementById('studentSearchInput');
   if (searchInput) {
@@ -24,6 +29,17 @@ document.addEventListener('DOMContentLoaded', function () {
     });
   }
 
+  initQuickPicker();
+  initCellKeyboardNav();
+  initLessonLinks();
+  initLessonScheduling();
+  initAssessmentSources();
+  initJournalActions();
+}
+
+document.addEventListener('journal:refreshed', initJournalContent);
+document.addEventListener('DOMContentLoaded', function () {
+  initJournalContent();
   // 2. Налаштування CSRF для HTMX
   document.body.addEventListener('htmx:configRequest', function (evt) {
     const csrfToken = getCookie('schooljournal_csrftoken');
@@ -55,27 +71,22 @@ document.addEventListener('DOMContentLoaded', function () {
       }
     }
   });
+  document.body.addEventListener('htmx:afterRequest', function (evt) {
+    if (!evt.detail.successful || !evt.detail.elt?.matches('.journal-cell-input')) return;
+    clearTimeout(nzStatusTimer);
+    nzStatusTimer = setTimeout(updateNzPendingBadge, 150);
+  });
 
-  // 5. Ініціалізація швидкого багаторівневого селектора (Quick Picker)
-  initQuickPicker();
-
-  // 6. Клавіатурна навігація по комірках
-  initCellKeyboardNav();
-
-  // 7. Зв'язок колонок уроків з рядками в календарному плані
-  initLessonLinks();
-  initLessonScheduling();
-  initAssessmentSources();
-  initJournalActions();
 });
 
 // Швидкий селектор оцінок та відвідування (Quick Picker)
 function initQuickPicker() {
   const picker = document.getElementById('journalQuickPicker');
-  if (!picker) return;
+  if (!picker || quickPickerInitialized) return;
+  quickPickerInitialized = true;
 
   // Клік на кнопку пікера
-  picker.addEventListener('click', function (e) {
+  document.addEventListener('click', function (e) {
     const btn = e.target.closest('.qp-btn');
     if (!btn || !currentActiveCellInput) return;
 
@@ -122,6 +133,8 @@ function initQuickPicker() {
 
   // Репозиціонування при скролі будь-якого контейнера або вікна
   window.addEventListener('scroll', function () {
+    const picker = document.getElementById('journalQuickPicker');
+    if (!picker) return;
     if (currentActiveCellInput && picker.style.display !== 'none') {
       const rect = currentActiveCellInput.getBoundingClientRect();
       if (rect.bottom < 60 || rect.top > window.innerHeight - 30) {
@@ -198,6 +211,8 @@ function closeQuickPicker() {
 
 // Клавіатурна навігація: Enter, стрілки, Tab
 function initCellKeyboardNav() {
+  if (keyboardNavInitialized) return;
+  keyboardNavInitialized = true;
   document.addEventListener('keydown', function (e) {
     const input = e.target.closest('.journal-cell-input');
     if (!input) return;
@@ -609,11 +624,17 @@ async function loadAssessmentModal(url, options = {}) {
   const buttons = Array.from(content.querySelectorAll('button[type="submit"]'));
   buttons.forEach(button => { button.disabled = true; });
   try {
-    const response = await fetch(url, { ...options, credentials: 'same-origin', signal: assessmentRequest.signal });
+    const response = await siteFetch(url, { ...options, credentials: 'same-origin', signal: assessmentRequest.signal });
     if (!response.ok || response.redirected) throw new Error('Не вдалося завантажити розрахунок. Оновіть сторінку й спробуйте ще раз.');
     if (response.headers.get('content-type')?.includes('application/json')) {
       const result = await response.json();
-      if (version === assessmentRequestVersion && result.redirect) window.location.assign(result.redirect);
+      if (version === assessmentRequestVersion && result.redirect) {
+        const target = new URL(result.redirect, location.href);
+        if (target.pathname === location.pathname) {
+          closeAssessmentModal();
+          await refreshJournal();
+        } else window.location.assign(result.redirect);
+      }
       return;
     }
     const html = await response.text();
@@ -662,9 +683,11 @@ function openAssessmentModal(link) {
 }
 
 function initJournalActions() {
-  const modal = document.getElementById('assessmentModal');
-  if (!modal) return;
+  if (!document.getElementById('assessmentModal') || journalActionsInitialized) return;
+  journalActionsInitialized = true;
   document.addEventListener('click', event => {
+    const modal = document.getElementById('assessmentModal');
+    if (!modal) return;
     const link = event.target.closest('[data-assessment-link]');
     if (link && !event.ctrlKey && !event.metaKey && !event.shiftKey && !event.altKey) {
       event.preventDefault();
@@ -675,6 +698,8 @@ function initJournalActions() {
     if (event.target === modal) closeAssessmentModal();
   });
   document.addEventListener('keydown', event => {
+    const modal = document.getElementById('assessmentModal');
+    if (!modal) return;
     if (!modal.classList.contains('open')) {
       if (event.key === 'Escape') document.getElementById('journalActions').open = false;
       return;
@@ -841,7 +866,7 @@ function cycleAttendance(btn, lessonId, studentId, journalId) {
   formData.append('status', nextStatus);
   formData.append('client_version', clientVersion);
 
-  fetch(`/journal/${journalId}/attendance/update/`, {
+  siteFetch(`/journal/${journalId}/attendance/update/`, {
     method: 'POST',
     headers: {
       'X-CSRFToken': getCookie('schooljournal_csrftoken')
@@ -919,8 +944,29 @@ function showToast(message, type) {
 // ==========================================
 // Інтеграція з nz.ua (Нові знання)
 // ==========================================
+let nzPreviewRequest = null;
+let nzPreviewVersion = 0;
+
+async function updateNzPendingBadge() {
+  const journalId = document.getElementById('journalLiveContent')?.dataset.journalId;
+  const button = document.getElementById('btnNzPush');
+  if (!journalId || !button) return;
+  try {
+    const response = await siteFetch(`/journal/${journalId}/nz/preview/?format=json`);
+    if (!response.ok || response.redirected) return;
+    const preview = await response.json();
+    const badge = document.getElementById('btnNzPush')?.querySelector('.badge');
+    if (badge) {
+      badge.textContent = preview.total_count || '✓';
+      badge.title = preview.total_count ? 'Є зміни для вивантаження' : 'Усі зміни вивантажено';
+    }
+  } catch (_) { /* Cell saving already has its own error handling. */ }
+}
 
 function openNzSyncModal(journalId) {
+  nzPreviewRequest?.abort();
+  nzPreviewRequest = new AbortController();
+  const version = ++nzPreviewVersion;
   let modalContainer = document.getElementById('nzSyncModalContainer');
   if (!modalContainer) {
     modalContainer = document.createElement('div');
@@ -938,21 +984,24 @@ function openNzSyncModal(journalId) {
     </div>
   `;
 
-  fetch(`/journal/${journalId}/nz/preview/`)
+  siteFetch(`/journal/${journalId}/nz/preview/`, { signal: nzPreviewRequest.signal }, 'Перегляд змін nz.ua…')
     .then(function (res) {
       if (!res.ok) throw new Error('Помилка завантаження прев\'ю nz.ua');
       return res.text();
     })
     .then(function (html) {
-      modalContainer.innerHTML = html;
+      if (version === nzPreviewVersion) modalContainer.innerHTML = html;
     })
     .catch(function (err) {
+      if (version !== nzPreviewVersion || err.name === 'AbortError') return;
       modalContainer.innerHTML = '';
       showToast('Не вдалося відкрити діалог nz.ua: ' + err.message, 'danger');
     });
 }
 
 function closeNzSyncModal() {
+  nzPreviewVersion += 1;
+  nzPreviewRequest?.abort();
   const container = document.getElementById('nzSyncModalContainer');
   if (container) {
     container.innerHTML = '';
@@ -968,7 +1017,7 @@ function ignoreNzRecord(journalId, itemType, objectId, btnElement) {
   formData.append('item_type', itemType);
   formData.append('object_id', objectId);
 
-  fetch(`/journal/${journalId}/nz/ignore-change/`, {
+  siteFetch(`/journal/${journalId}/nz/ignore-change/`, {
     method: 'POST',
     headers: {
       'X-CSRFToken': getCookie('schooljournal_csrftoken'),
@@ -984,7 +1033,7 @@ function ignoreNzRecord(journalId, itemType, objectId, btnElement) {
     .then(function (resObj) {
       if (resObj.ok && resObj.data.status === 'ok') {
         showToast(resObj.data.message || 'Запис ігноровано при вивантаженні', 'success');
-        openNzSyncModal(journalId);
+        return refreshJournal().then(() => openNzSyncModal(journalId));
       } else {
         throw new Error(resObj.data.message || 'Помилка при ігноруванні запису');
       }
@@ -1016,7 +1065,7 @@ function pullNzJournal(journalId) {
   const formData = new FormData();
   formData.append('format', 'json');
 
-  fetch(`/journal/${journalId}/nz/import/`, {
+  siteFetch(`/journal/${journalId}/nz/import/`, {
     method: 'POST',
     headers: {
       'X-CSRFToken': getCookie('schooljournal_csrftoken'),
@@ -1032,9 +1081,8 @@ function pullNzJournal(journalId) {
     .then(function (resObj) {
       if (resObj.ok && resObj.data.success) {
         showToast(resObj.data.message || 'Оцінки та уроки успішно оновлено з nz.ua!', 'success');
-        setTimeout(function () {
-          location.reload();
-        }, 700);
+        closeNzSyncModal();
+        return refreshJournal().catch(error => showToast('Дані завантажено. ' + error.message, 'warning'));
       } else {
         throw new Error(resObj.data.error || resObj.data.message || 'Помилка при завантаженні даних з nz.ua');
       }
@@ -1049,6 +1097,9 @@ function pullNzJournal(journalId) {
         modalPullBtn.innerHTML = '⤓ Завантажити актуальні дані з nz.ua';
       }
       showToast('Не вдалося завантажити дані: ' + err.message, 'danger');
+    }).finally(function () {
+      if (btn) { btn.disabled = false; btn.innerHTML = '⤓ Оновити з nz.ua'; }
+      if (modalPullBtn) { modalPullBtn.disabled = false; modalPullBtn.innerHTML = '⤓ Завантажити з nz.ua'; }
     });
 }
 
@@ -1066,7 +1117,7 @@ function pullNzJournalFromFile(journalId, input) {
   formData.append('format', 'json');
   formData.append('html_file', file);
 
-  fetch(`/journal/${journalId}/nz/import/`, {
+  siteFetch(`/journal/${journalId}/nz/import/`, {
     method: 'POST',
     headers: {
       'X-CSRFToken': getCookie('schooljournal_csrftoken'),
@@ -1082,9 +1133,8 @@ function pullNzJournalFromFile(journalId, input) {
     .then(function (resObj) {
       if (resObj.ok && resObj.data.success) {
         showToast(resObj.data.message || 'Журнал успішно завантажено з файлу!', 'success');
-        setTimeout(function () {
-          location.reload();
-        }, 700);
+        closeNzSyncModal();
+        return refreshJournal().catch(error => showToast('Файл імпортовано. ' + error.message, 'warning'));
       } else {
         throw new Error(resObj.data.error || resObj.data.message || 'Помилка при імпорті з файлу');
       }
@@ -1095,6 +1145,9 @@ function pullNzJournalFromFile(journalId, input) {
         modalPullBtn.innerHTML = '⤓ Завантажити з nz.ua';
       }
       showToast('Не вдалося імпортувати файл: ' + err.message, 'danger');
+    }).finally(function () {
+      if (modalPullBtn) { modalPullBtn.disabled = false; modalPullBtn.innerHTML = '⤓ Завантажити з nz.ua'; }
+      input.value = '';
     });
 }
 
@@ -1125,7 +1178,7 @@ function submitNzSync(journalId) {
   const previewToken = document.getElementById('nzSyncPreviewToken');
   formData.append('preview_token', previewToken ? previewToken.value : '');
 
-  fetch(`/journal/${journalId}/nz/sync/`, {
+  siteFetch(`/journal/${journalId}/nz/sync/`, {
     method: 'POST',
     headers: {
       'X-CSRFToken': getCookie('schooljournal_csrftoken'),
@@ -1183,13 +1236,12 @@ function submitNzSync(journalId) {
         if (submitBtn) {
           submitBtn.disabled = false;
           submitBtn.className = 'btn btn-success';
-          submitBtn.innerHTML = '&#8635; Оновити сторінку';
-          submitBtn.onclick = function () {
-            location.reload();
-          };
+          submitBtn.innerHTML = 'Закрити';
+          submitBtn.onclick = closeNzSyncModal;
         }
 
         showToast(data.message, isSuccessFull ? 'success' : 'warning');
+        if (!data.dry_run) return refreshJournal().catch(error => showToast('Вивантаження завершено. ' + error.message, 'warning'));
 
       } else {
         resultBanner.className = 'alert alert-danger';
@@ -1199,7 +1251,8 @@ function submitNzSync(journalId) {
         resultBanner.innerHTML = `<strong>Помилка nz.ua:</strong> ${escapeJournalText(data.message || 'Не вдалося виконати синхронізацію')}`;
         if (submitBtn) {
           submitBtn.disabled = false;
-          submitBtn.innerHTML = 'Спробувати знову';
+          submitBtn.innerHTML = 'Перевірити зміни';
+          submitBtn.onclick = () => openNzSyncModal(journalId);
         }
         showToast(data.message || 'Помилка синхронізації', 'danger');
       }
@@ -1211,7 +1264,8 @@ function submitNzSync(journalId) {
       resultBanner.innerHTML = `<strong>Мережева помилка:</strong> ${escapeJournalText(err.message)}`;
       if (submitBtn) {
         submitBtn.disabled = false;
-        submitBtn.innerHTML = 'Спробувати знову';
+        submitBtn.innerHTML = 'Перевірити зміни';
+        submitBtn.onclick = () => openNzSyncModal(journalId);
       }
       showToast('Помилка: ' + err.message, 'danger');
     });
@@ -1228,7 +1282,7 @@ function toggleStudentIgnore(journalId, studentId, btn) {
     btn.style.opacity = '0.6';
   }
   const csrfToken = getCookie('schooljournal_csrftoken') || '';
-  fetch(`/journal/${journalId}/student/${studentId}/toggle-ignore/`, {
+  siteFetch(`/journal/${journalId}/student/${studentId}/toggle-ignore/`, {
     method: 'POST',
     headers: {
       'X-CSRFToken': csrfToken,
@@ -1245,7 +1299,8 @@ function toggleStudentIgnore(journalId, studentId, btn) {
     .then(function (data) {
       if (data.status === 'ok') {
         showToast(data.message, 'success');
-        window.location.reload();
+        (data.warnings || []).forEach(message => showToast(message, 'warning'));
+        return refreshJournal();
       } else {
         throw new Error(data.message || 'Не вдалося змінити статус');
       }
