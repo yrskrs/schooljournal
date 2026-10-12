@@ -16,13 +16,23 @@ def can_access(user):
 
 
 def allowed_classes(user):
+    if not settings.ROSTER_SCHOOL_ID or not settings.ROSTER_YEAR_ID:
+        return []
     rows = classes()
     if user.is_superadmin_user:
         return list(rows.values('id', 'name'))
     if user.is_school_admin_user:
         return list(rows.filter(school_id=user.school_id).values('id', 'name'))
-    allowed = [journal.student_class_id for journal in get_user_journals(user) if has_journal_access(user, journal, write=True)]
+    allowed = [journal.student_class_id for journal in get_user_journals(user).select_related('nz_owner__user', 'local_profile')
+               if has_journal_access(user, journal, write=True)]
     return list(rows.filter(pk__in=allowed).values('id', 'name'))
+
+
+def ui_context(user, selected_class_id=None):
+    from apps.portal.roster_overview import context
+    return {**context(user, selected_class_id),
+            'roster_peer_scope_configured': bool(settings.ROSTER_SCHOOL_ID and settings.ROSTER_YEAR_ID),
+            'roster_peer_enabled': bool(settings.ROSTER_PEERS)}
 
 
 class Native:

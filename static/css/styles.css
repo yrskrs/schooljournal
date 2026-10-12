@@ -46,6 +46,23 @@
 .navbar .nav-links { gap: .15rem; }
 .navbar .nav-link { display: inline-block; padding: .3rem .45rem; font-size: .85rem; }
 .journal-header { padding: .75rem 1rem; margin-bottom: .75rem; background: white; border: 1px solid var(--border); border-radius: var(--radius-md); box-shadow: var(--shadow-sm); }
+.roster-page { max-width: 1100px; margin: 0 auto; }
+.roster-page > h1 { font-size: 1.6rem; }
+.roster-page > p { margin: .35rem 0 1rem; }
+.roster-page h2 { font-size: 1.15rem; margin-bottom: .6rem; }
+.roster-page h3 { font-size: 1.05rem; }
+.roster-class-picker, .roster-buttons, .roster-journal-heading { display: flex; align-items: center; flex-wrap: wrap; gap: .6rem; }
+.roster-class-picker { margin: .75rem 0; }
+.roster-class-picker select { flex: 1 1 200px; min-width: 0; }
+.roster-journal { padding: 1rem 0; border-top: 1px solid var(--border); }
+.roster-journal-heading { justify-content: space-between; }
+.roster-journal > p { margin: .4rem 0; }
+.roster-connection { padding: .65rem .75rem; margin: .6rem 0; background: var(--bg-alt); border-radius: var(--radius-sm); }
+.roster-connection .roster-buttons { margin-top: .5rem; }
+.roster-note { padding-top: .75rem; border-top: 1px solid var(--border); font-size: .9rem; color: var(--text-muted); }
+.roster-advanced > summary { cursor: pointer; font-weight: 600; }
+.roster-advanced > p { margin: .7rem 0; }
+.roster-advanced pre, .roster-advanced code { overflow-wrap: anywhere; white-space: pre-wrap; }
 .journal-header-layout { display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: .5rem; }
 .journal-heading { display: flex; align-items: center; flex-wrap: wrap; gap: .4rem; margin-bottom: .2rem; }
 .journal-nz-controls { display: inline-flex; flex-wrap: wrap; gap: .25rem; align-items: center; padding: .15rem; background: #f8fafc; border: 1px solid #cbd5e1; border-radius: var(--radius-sm); }

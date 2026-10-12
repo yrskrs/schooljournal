@@ -7,6 +7,7 @@ import time
 from django.conf import settings
 from django.core import signing
 from django.core.exceptions import PermissionDenied, ValidationError
+from django.core.paginator import Paginator
 from django.db import transaction, IntegrityError, close_old_connections
 from django.http import JsonResponse
 from django.contrib import messages
@@ -223,28 +224,51 @@ def roster_ui(request):
             messages.success(request, 'Рішення збережено. Фоновий обмін передасть його іншим сайтам. Оцінки не імпортовано.')
         except (SyncError, ValueError, KeyError, signing.BadSignature) as error:
             messages.error(request, str(error) if isinstance(error, SyncError) else 'Некоректне або застаріле рішення. Оновіть сторінку.')
-        return redirect(request.path)
+        return redirect(request.get_full_path())
     def overview(engine, store):
-        engine.capture()
         visible = []
         for row in store.all():
             if row['kind'] == 'alias':
                 continue
             if row['kind'] == 'class':
+                if row.get('native_id') is None and not allowed_ids:
+                    continue
                 if row.get('native_id') is not None and row['native_id'] not in allowed_ids:
                     continue
-                choices = allowed
             else:
                 parent = store.get(engine.canonical(row['payload']['class_ref']))
                 if not parent or parent.get('native_id') not in allowed_ids:
                     continue
-                choices = [dict(id=pk, name=module.Native().read('student', pk)['name']) for pk in module.Native().students(parent['native_id'])]
-            row['version'] = signing.dumps(row, salt='roster-review')
-            row['choices'] = choices
             visible.append(row)
-        return visible, store.meta
-    rows, meta = operate(overview)
-    return render(request, 'roster_sync.html', {'roster_rows': rows, 'roster_meta': meta, 'roster_classes': allowed})
+        page = Paginator(visible, 50).get_page(request.GET.get('page'))
+        pupil_choices = {}
+        native = module.Native()
+        for row in page:
+            row['version'] = signing.dumps(row, salt='roster-review')
+            row['choices'] = []
+            if row.get('native_id') is None and row.get('pending'):
+                if row['kind'] == 'class':
+                    row['choices'] = allowed
+                else:
+                    parent = store.get(engine.canonical(row['payload']['class_ref']))
+                    group_id = parent['native_id']
+                    if group_id not in pupil_choices:
+                        pupil_choices[group_id] = [dict(id=pk, name=data['name']) for pk in native.students(group_id)
+                                                   if (data := native.read('student', pk))]
+                    row['choices'] = pupil_choices[group_id]
+        return page, store.meta
+    # Opening the page must not lock or rewrite the shared roster. Teacher POSTs
+    # and the background worker still capture changes under the existing lock.
+    state = module.RosterState.objects.filter(pk=1).first() or module.RosterState(data={})
+    store = Store(module.RosterReplica, state)
+    rows, meta = overview(Engine(store, SafeNative(module.Native())), store)
+    context = {'roster_rows': rows, 'roster_meta': meta, 'roster_classes': allowed}
+    if hasattr(module, 'ui_context'):
+        context.update(module.ui_context(request.user, request.GET.get('class_id')))
+    query = request.GET.copy()
+    query.pop('page', None)
+    context['roster_page_query'] = query.urlencode()
+    return render(request, 'roster_sync.html', context)
 
 # Serialize native teacher edits with incoming sync before any row is written.
 # This avoids a race in which a remote update could erase an uncaptured edit.

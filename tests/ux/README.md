@@ -5,7 +5,7 @@
 З кореня репозиторію:
 
 ```bash
-docker build -t schooljournal-ux-check:1.3.11 --build-arg APP_VERSION=1.3.11 .
+docker build -t schooljournal-ux-check:1.3.12 --build-arg APP_VERSION=1.3.12 .
 docker compose -f tests/ux/compose.yaml up -d --wait --wait-timeout 120
 python tests/ux/http_check.py
 docker compose -f tests/ux/compose.yaml exec -T journal python manage.py test tests school_sync.tests --noinput
@@ -42,3 +42,21 @@ docker compose -f tests/ux/compose.yaml down
 ```
 
 Ця команда прибирає лише тестовий проєкт. Робочі інсталяції журналу, тестів та завдань залишаються окремими.
+
+## Порожній «Ваш клас» та особистий профіль nz.ua
+
+Окрема перевірка відтворює звичайні серверні налаштування без фонового обміну. Виконуйте на свіжих тестових БД після завершення попереднього проєкту:
+
+```bash
+docker build -t schooljournal-roster-check:1.3.12 --build-arg APP_VERSION=1.3.12 .
+docker compose -f tests/ux/compose.yaml -f tests/ux/roster_page.compose.yaml up -d --wait journal nginx
+docker compose -f tests/ux/compose.yaml -f tests/ux/roster_page.compose.yaml exec -T journal python manage.py shell < tests/ux/seed_roster_page.py
+docker run --rm --network host \
+  -v "$PWD/tests/ux:/checks:ro" \
+  -v /tmp/schooljournal-ux-artifacts:/artifacts:rw \
+  --entrypoint bash mcr.microsoft.com/playwright:v1.56.1-noble \
+  -lc 'npm install --prefix /tmp/pw playwright@1.56.1 --no-audit --no-fund --silent && NODE_PATH=/tmp/pw/node_modules node /checks/roster_page_check.cjs'
+docker compose -f tests/ux/compose.yaml -f tests/ux/roster_page.compose.yaml down
+```
+
+Перевіряються два доступні класи локального вчителя, відсутність чужого класу, вибір предмета, перехід до підключення, кількість ігнорованих, мобільна розмітка та власний клас особистого nz.ua-профілю без локальної школи. Знімки — `roster-desktop.png` та `roster-mobile.png` у каталозі артефактів.
