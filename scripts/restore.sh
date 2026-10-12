@@ -10,7 +10,7 @@ main() {
     restore_database="journal_restore_$(date +%s)_$$"
     previous_database="journal_previous_$(date +%s)_$$"
     [[ $# -ge 1 && -f "$1" ]] || { echo "Usage: ./restore.sh ARCHIVE --yes [--no-safety-backup]; or ./restore.sh --check ARCHIVE" >&2; return 2; }
-    archive=$(realpath -- "$1")
+    archive=$(python3 -c 'from pathlib import Path; import sys; print(Path(sys.argv[1]).resolve())' "$1")
     shift
     [[ "${1:-}" == --yes ]] || { echo "Restore replaces database, media and service code. Add --yes after reviewing the archive." >&2; return 2; }
     shift
