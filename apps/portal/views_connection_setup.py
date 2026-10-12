@@ -188,7 +188,7 @@ def connect_source(request, journal_id):
                         resolutions[ref] = {'choice': choice, 'version': request.POST.get('version_' + ref, '')}
                 report = send_journal_roster(connection, request.user, resolutions)
                 counts = report['counts']
-                messages.success(request, f"Список передано: додано {counts['created']}, оновлено {counts['updated']}, потребують відповідності {counts['needs_review']}, конфлікти {counts['conflicts']}. Оцінки не імпортувалися.")
+                messages.success(request, f"Список передано: додано {counts['created']}, оновлено {counts['updated']}, виключено ігнорованих {counts.get('ignored', 0)}, потребують відповідності {counts['needs_review']}, конфлікти {counts['conflicts']}. Оцінки не імпортувалися.")
                 return redirect(destination + '?connection=' + str(connection.pk))
             elif action == 'refresh' and connection:
                 payload = fetch_source_roster(connection.url, connection.api_key, connection.source)

@@ -37,7 +37,7 @@ def validate_roster(payload, source):
         raise ExternalAPIError('Сайт не підтримує це підключення. Оновіть його з GitHub; збережені дані журналу залишаються.')
     output = {'schema_version': 2, 'source': source}
     if isinstance(payload.get('capabilities'), list):
-        output['capabilities'] = [item for item in payload['capabilities'] if item == 'journal_roster_import']
+        output['capabilities'] = [item for item in payload['capabilities'] if item in ('journal_roster_import', 'journal_roster_ignore')]
     if 'instance_id' in payload:
         try:
             output['instance_id'] = str(UUID(payload['instance_id']))

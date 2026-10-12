@@ -171,6 +171,15 @@ class ExternalIntegrationTests(TestCase):
         self.assertEqual(self.client.get(self.url('student_list_api'), HTTP_AUTHORIZATION='Bearer wrong').status_code, 401)
         self.assertEqual(self.client.get(self.url('student_list_api'), {'token': token}).status_code, 401)
 
+    def test_student_api_excludes_ignored_pupils_and_restores_same_id(self):
+        token = self.token()
+        self.journal.ignored_students.add(self.student)
+        response = self.client.get(self.url('student_list_api'), HTTP_AUTHORIZATION='Bearer ' + token)
+        self.assertEqual([row['id'] for row in response.json()['students']], [self.empty_student.pk])
+        self.journal.ignored_students.remove(self.student)
+        response = self.client.get(self.url('student_list_api'), HTTP_AUTHORIZATION='Bearer ' + token)
+        self.assertEqual({row['id'] for row in response.json()['students']}, {self.student.pk, self.empty_student.pk})
+
     def test_token_cannot_access_other_journal(self):
         token = self.token()
         self.assertEqual(self.client.get(reverse('portal:student_list_api', kwargs={'journal_id': 999999}), HTTP_AUTHORIZATION='Bearer ' + token).status_code, 401)

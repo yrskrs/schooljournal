@@ -104,6 +104,51 @@ class JournalRosterTests(unittest.TestCase):
         self.assertEqual(report['counts']['conflicts'], 1)
         self.assertEqual(self.engine.native.read('class', 1)['name'], 'Місцева група')
 
+    def test_ignored_new_pupil_is_not_created_or_matched_by_name(self):
+        self.payload['students'][0]['ignored'] = True
+        report = self.send()
+        self.assertFalse(self.engine.native.rows['student'])
+        self.assertFalse(report['mappings'])
+        self.assertEqual(report['counts']['ignored'], 1)
+
+    def test_ignore_overrides_name_conflict_and_restore_keeps_identity_and_spelling(self):
+        first = self.send()
+        pupil = first['mappings'][0]['local_id']
+        self.engine.native.rows['student'][pupil].update(name='Місцевий Т.', first_name='Т.', last_name='Місцевий')
+        self.assertEqual(self.send()['counts']['conflicts'], 1)
+        row = self.payload['students'][0]
+        row['ignored'] = True
+        for _ in range(2):
+            report = self.send()
+            self.assertEqual(report['counts']['conflicts'], 0)
+            self.assertEqual(report['mappings'][0]['local_id'], pupil)
+            self.assertIs(report['mappings'][0]['active'], False)
+            self.assertEqual(self.engine.native.read('student', pupil)['name'], 'Місцевий Т.')
+        row['ignored'] = False
+        for _ in range(2):
+            report = self.send()
+            self.assertEqual(report['counts']['conflicts'], 0)
+            self.assertIs(report['mappings'][0]['active'], True)
+            self.assertEqual(self.engine.native.read('student', pupil)['name'], 'Місцевий Т.')
+        self.assertEqual(len(self.engine.native.rows['student']), 1)
+
+    def test_ignore_existing_explicit_mapping_without_import_baseline(self):
+        group = self.engine.native.create('class', {'name': '7-А', 'grade_level': 7, 'letter': 'А', 'active': True})
+        pupil = self.engine.native.create('student', {'name': 'Місцевий Т.', 'last_name': 'Місцевий',
+            'first_name': 'Т.', 'middle_name': '', 'native_class_id': group, 'active': True})
+        self.payload['source_class_id'] = group
+        self.payload['students'][0].update(local_id=pupil, ignored=True)
+        report = self.send()
+        self.assertEqual(report['counts']['conflicts'], 0)
+        self.assertIs(report['mappings'][0]['active'], False)
+        self.assertEqual(self.engine.native.read('student', pupil)['name'], 'Місцевий Т.')
+
+    def test_non_boolean_ignore_rejected_before_any_creation(self):
+        self.payload['students'][0]['ignored'] = 'false'
+        with self.assertRaises(SyncError):
+            self.send()
+        self.assertFalse(self.engine.native.rows['class'])
+
 
 if __name__ == '__main__':
     unittest.main()

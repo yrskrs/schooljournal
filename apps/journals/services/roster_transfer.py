@@ -37,6 +37,7 @@ def roster_request(connection):
         'subject': {'name': subject_name}, 'source_class_id': connection.source_class_id or None,
         'students': [{'id': ref, 'last_name': s.last_name, 'first_name': s.first_name,
             'middle_name': s.middle_name, 'active': s.pk not in ignored_ids and s.pk in active and s.status == Student.Status.ACTIVE,
+            'ignored': s.pk in ignored_ids,
             'local_id': mappings.get(s.pk)} for ref, s in refs.items()]}
     return payload, refs
 
@@ -78,6 +79,8 @@ def send_journal_roster(connection, user, resolutions=None):
         if not isinstance(mappings, list) or len(mappings) > len(refs):
             raise ExternalAPIError('Некоректний звіт відповідностей учнів.')
         seen_refs, seen_ids = set(), set()
+        ignored_refs = {row['id'] for row in payload['students'] if row['ignored']}
+        confirms_ignore = 'journal_roster_ignore' in connection.roster_cache.get('capabilities', [])
         for row in mappings:
             if not isinstance(row, dict) or row.get('journal_id') not in refs or row['journal_id'] in seen_refs:
                 raise ExternalAPIError('Некоректна відповідність учня.')
@@ -85,6 +88,10 @@ def send_journal_roster(connection, user, resolutions=None):
             if not local_id.isdigit() or int(local_id) < 1 or local_id in seen_ids:
                 raise ExternalAPIError('Джерело повернуло повторне або некоректне зіставлення.')
             seen_refs.add(row['journal_id']); seen_ids.add(local_id)
+            if row['journal_id'] in ignored_refs and (confirms_ignore or 'active' in row) and row.get('active') is not False:
+                raise ExternalAPIError('Джерело не підтвердило вилучення ігнорованого учня з активного списку. Повторіть передачу списку після оновлення джерела.')
+        if confirms_ignore and not ignored_refs.issubset(seen_refs):
+            raise ExternalAPIError('Джерело не підтвердило всі відповідності ігнорованих учнів. Повторіть передачу списку.')
         with transaction.atomic():
             journal = Journal.objects.select_for_update().get(pk=connection.journal_id)
             fresh = GradeAPIConnection.objects.select_for_update().get(pk=connection.pk)
@@ -120,9 +127,10 @@ def send_journal_roster(connection, user, resolutions=None):
                 cache[kind] = rows
             students = {row['id']: row for row in cache.get('students', [])}
             inactive_refs = {row['id'] for row in payload['students'] if not row['active']}
+            conflicted_refs = {row.get('journal_id') for row in report.get('conflicts', [])}
             for row in mappings:
                 local_id = str(row['local_id'])
-                if row['journal_id'] in inactive_refs:
+                if row.get('active') is False or (row['journal_id'] in inactive_refs and row['journal_id'] not in conflicted_refs):
                     students.pop(local_id, None)
                 else:
                     students[local_id] = {'id': local_id, 'class_id': class_id, 'name': row['name']}

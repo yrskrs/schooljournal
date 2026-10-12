@@ -95,6 +95,7 @@ class SimpleExchangeTests(TestCase):
         payload, refs = roster_request(connection)
         ref = next(ref for ref, student in refs.items() if student.pk == self.student.pk)
         self.assertFalse(next(row for row in payload['students'] if row['id'] == ref)['active'])
+        self.assertTrue(next(row for row in payload['students'] if row['id'] == ref)['ignored'])
         self.journal.ignored_students.remove(self.student)
         restored, _ = roster_request(connection)
         self.assertTrue(next(row for row in restored['students'] if row['id'] == ref)['active'])
@@ -130,6 +131,57 @@ class SimpleExchangeTests(TestCase):
         self.assertEqual(transfer.call_args.args[0].pk, connection.pk)
         self.assertContains(self.client.get(response.url), 'value="send_roster"')
         self.assertFalse(Grade.objects.exists())
+
+    def test_grade_sync_retries_roster_before_reading_grades_on_both_routes(self):
+        self.connection(mappings=True)
+        self.journal.ignored_students.add(self.student)
+        connection = GradeAPIConnection.objects.get()
+        paths = [reverse('portal:pull_source_grades', args=[self.journal.pk, 'schooltest']),
+                 reverse('portal:pull_external_grades', args=[self.journal.pk, connection.pk])]
+        events = []
+        for path in paths:
+            events.clear()
+            with patch('apps.portal.views_integrations.send_journal_roster',
+                       side_effect=lambda *args: events.append('roster') or {'counts': {}}), \
+                 patch('apps.portal.views_integrations.fetch_grade_payload',
+                       side_effect=lambda *args: events.append('grades') or []):
+                response = self.client.post(path, {'date_from': self.year.start_date, 'date_to': self.year.end_date})
+            self.assertEqual(response.status_code, 302)
+            self.assertEqual(events, ['roster', 'grades'])
+
+    def test_failed_roster_retry_is_visible_and_does_not_block_grade_read(self):
+        from apps.journals.services.external_grades import ExternalAPIError
+        connection = self.connection(mappings=True)
+        path = reverse('portal:pull_external_grades', args=[self.journal.pk, connection.pk])
+        with patch('apps.portal.views_integrations.send_journal_roster', side_effect=ExternalAPIError('Синтетично недоступний')), \
+             patch('apps.portal.views_integrations.fetch_grade_payload', return_value=[]) as grades:
+            response = self.client.post(path, {'date_from': self.year.start_date, 'date_to': self.year.end_date}, follow=True)
+        grades.assert_called_once()
+        self.assertContains(response, 'список учнів не синхронізовано')
+
+    def test_ignore_acknowledgement_rejects_active_missing_or_omitted_mapping(self):
+        from apps.journals.services.external_grades import ExternalAPIError
+        connection = self.connection(mappings=True)
+        connection.roster_cache['capabilities'].append('journal_roster_ignore')
+        connection.save()
+        self.journal.ignored_students.add(self.student)
+        payload, refs = roster_request(connection)
+        ref = next(ref for ref, student in refs.items() if student == self.student)
+        mapping = {'journal_id': ref, 'local_id': 41, 'name': 'Вигаданий Учень'}
+        for rows in [[{**mapping, 'active': True}], [mapping], []]:
+            report = {'schema_version': 2, 'source': 'schooltest', 'instance_id': connection.roster_cache['instance_id'],
+                      'class_id': 7, 'subject_id': 3, 'counts': {}, 'mappings': rows}
+            response = MagicMock(); response.status_code = 200
+            response.iter_content.return_value = [json.dumps(report).encode()]
+            response.__enter__.return_value = response
+            with patch('apps.journals.services.roster_transfer.validate_api_url'), \
+                 patch('apps.journals.services.roster_transfer.requests.Session') as session:
+                session.return_value.__enter__.return_value.post.return_value = response
+                with self.assertRaises(ExternalAPIError):
+                    send_journal_roster(connection, self.teacher)
+            connection.refresh_from_db()
+            self.assertIsNone(connection.roster_sent_at)
+            self.assertEqual(len(connection.roster_cache['students']), 1)
 
     def test_roster_transfer_saves_returned_native_ids_and_never_marks(self):
         connection = self.connection()

@@ -60,6 +60,8 @@ def validate(payload):
         value = row.get('local_id')
         if not isinstance(row.get('active', True), bool):
             raise SyncError('Статус учня має бути true або false.')
+        if not isinstance(row.get('ignored', False), bool):
+            raise SyncError('Ігнорування учня має бути true або false.')
         if value is not None and (isinstance(value, bool) or not str(value).isdigit() or int(value) < 1):
             raise SyncError('Некоректне явне зіставлення учня.')
     value = payload.get('source_class_id')
@@ -112,7 +114,7 @@ def import_students(engine, store, payload, owner, allowed_classes):
     if binding is None:
         binding = imports[key] = {'class_id': class_id, 'students': {}, 'class_baseline': deepcopy(current_class),
             'remote_class': deepcopy(desired_class), 'class_names': [current_class['name']]}
-    counts = {'created': 0, 'updated': 0, 'unchanged': 0, 'needs_review': 0, 'conflicts': 0}
+    counts = {'created': 0, 'updated': 0, 'unchanged': 0, 'needs_review': 0, 'conflicts': 0, 'ignored': 0}
     mappings, review, conflicts = [], [], []
     # An explicitly selected class may use a different local label initially.
     # Later journal renames are copied only if the local label was not edited.
@@ -134,8 +136,9 @@ def import_students(engine, store, payload, owner, allowed_classes):
     for row in payload['students']:
         ref = row['id']
         desired = {k: row.get(k, '').strip() for k in ('first_name', 'last_name', 'middle_name')}
+        ignored = row.get('ignored', False)
         desired.update(name=' '.join(desired[k] for k in ('last_name', 'first_name', 'middle_name') if desired[k]),
-            native_class_id=class_id, active=row.get('active', True))
+            native_class_id=class_id, active=not ignored and row.get('active', True))
         entry = binding['students'].get(ref)
         explicit = int(row['local_id']) if row.get('local_id') else None
         if entry and explicit and entry['native_id'] != explicit:
@@ -148,6 +151,9 @@ def import_students(engine, store, payload, owner, allowed_classes):
             if native_id in claimed and claimed[native_id] != ref:
                 raise SyncError('Двох учнів журналу не можна пов’язати з одним місцевим учнем.')
         else:
+            if ignored:
+                counts['ignored'] += 1
+                continue
             candidates = []
             for local_id in engine.native.students(class_id):
                 current = engine.native.read('student', local_id)
@@ -160,6 +166,22 @@ def import_students(engine, store, payload, owner, allowed_classes):
             native_id = engine.native.create('student', desired)
             current = deepcopy(desired)
             counts['created'] += 1
+        if ignored or (entry and entry.get('ignored')):
+            # Ignore/restore changes membership, independently of spelling.
+            # It also works for old explicit mappings without an import baseline.
+            active = desired['active']
+            if current['active'] != active:
+                current = {**current, 'active': active}
+                engine.native.write('student', native_id, current)
+                counts['updated'] += 1
+            else:
+                counts['unchanged'] += 1
+            counts['ignored'] += int(ignored)
+            binding['students'][ref] = {'native_id': native_id, 'baseline': deepcopy(current),
+                'remote': deepcopy(desired), 'keep_local': current != desired, 'ignored': ignored}
+            claimed[native_id] = ref
+            mappings.append({'journal_id': ref, 'local_id': native_id, 'name': current['name'], 'active': current['active']})
+            continue
         baseline = entry.get('baseline') if entry else None
         if current != desired:
             # A first explicit match also needs an explicit choice of spelling.
@@ -192,7 +214,7 @@ def import_students(engine, store, payload, owner, allowed_classes):
         binding['students'][ref] = {'native_id': native_id, 'baseline': deepcopy(current) if agreed else baseline,
             'remote': deepcopy(desired), 'keep_local': keep_local}
         claimed[native_id] = ref
-        mappings.append({'journal_id': ref, 'local_id': native_id, 'name': current['name']})
+        mappings.append({'journal_id': ref, 'local_id': native_id, 'name': current['name'], 'active': current['active']})
     engine.capture()
     return {'schema_version': 2, 'class_id': class_id, 'class_name': current_class['name'], 'counts': counts, 'mappings': mappings,
         'needs_review': review, 'conflicts': conflicts}

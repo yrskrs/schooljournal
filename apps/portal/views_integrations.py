@@ -17,6 +17,7 @@ from apps.accounts.personal import ensure_personal_account
 from apps.journals.models import Journal, Grade, Attendance, StudentAPIGrant, GradeAPIConnection, GradeStudentMapping, ExternalGrade, AuditLog, GradePullLog
 from apps.journals.services.assessment import journal_students
 from apps.journals.services.external_grades import fetch_grade_payload, import_grade_records, review_external_grade, ExternalAPIError
+from apps.journals.services.roster_transfer import send_journal_roster
 from apps.portal.forms_integrations import StudentAPIForm, GradeAPIConnectionForm, PullGradesForm, LocalProfileLinkForm, STUDENT_FIELDS
 from apps.portal.views_journal import _get_journal_or_403
 from apps.portal.permissions import has_journal_access
@@ -37,7 +38,8 @@ def student_list_api(request, journal_id):
         students = []
         fields = set(grant.fields) & {key for key, label in STUDENT_FIELDS}
         for student in journal_students(grant.journal).filter(enrollments__student_class=grant.journal.student_class,
-                enrollments__is_active=True).distinct():
+                enrollments__is_active=True, status='ACTIVE').exclude(
+                pk__in=grant.journal.ignored_students.values('pk')).distinct():
             values = {'id': student.pk, 'nz_student_id': student.nz_student_id, 'internal_id': student.internal_id,
                 'name': student.get_full_name_ukr(), 'class': grant.journal.student_class.name, 'status': student.status}
             students.append({key: values[key] for key in sorted(fields)})
@@ -181,6 +183,20 @@ def journal_integrations(request, journal_id):
     return response
 
 
+def _reconcile_source_roster(request, connection):
+    """Retry membership changes after an unavailable source, on an explicit sync."""
+    if not connection.enabled or connection.contract_version != 2 or (
+            'journal_roster_import' not in connection.roster_cache.get('capabilities', [])):
+        return
+    try:
+        report = send_journal_roster(connection, request.user)
+        if report['counts'].get('conflicts') or report['counts'].get('needs_review'):
+            messages.warning(request, f'{connection.name}: список потребує перевірки відповідностей на сторінці підключення.')
+        connection.refresh_from_db()
+    except ExternalAPIError as error:
+        messages.warning(request, f'{connection.name}: список учнів не синхронізовано. {error}')
+
+
 @login_required
 @require_POST
 def pull_external_grades(request, journal_id, connection_id):
@@ -192,6 +208,7 @@ def pull_external_grades(request, journal_id, connection_id):
     else:
         try:
             start, end = form.cleaned_data['date_from'], form.cleaned_data['date_to']
+            _reconcile_source_roster(request, connection)
             rows = fetch_grade_payload(connection, start, end)
             log = import_grade_records(connection, rows, request.user, start, end)
             counts = log.counts
@@ -223,6 +240,7 @@ def pull_source_grades(request, journal_id, source):
         return redirect(reverse('portal:connect_source', kwargs={'journal_id': journal.pk}) + '?source=' + source)
     for connection in connections:
         try:
+            _reconcile_source_roster(request, connection)
             rows = fetch_grade_payload(connection, start, end)
             log = import_grade_records(connection, rows, request.user, start, end)
             counts = log.counts

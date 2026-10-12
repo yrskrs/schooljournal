@@ -66,7 +66,7 @@
   {% if connection %}
   <section class="schedule-card"><h2>Список журналу → {{ connection.get_source_display }}</h2>
     <p>Клас: {{ journal.student_class.name }}. Остання підтверджена передача: {{ connection.roster_sent_at|date:'d.m.Y H:i'|default:'ще не передано' }}. Учні зберігаються на сайті й доступні, коли журнал вимкнений.</p>
-    {% if connection.roster_report.counts %}<p>Додано: {{ connection.roster_report.counts.created }}; оновлено: {{ connection.roster_report.counts.updated }}; потребують відповідності: {{ connection.roster_report.counts.needs_review }}; конфлікти: {{ connection.roster_report.counts.conflicts }}.</p>{% endif %}
+    {% if connection.roster_report.counts %}<p>Додано: {{ connection.roster_report.counts.created }}; оновлено: {{ connection.roster_report.counts.updated }}; виключено ігнорованих: {{ connection.roster_report.counts.ignored|default:0 }}; потребують відповідності: {{ connection.roster_report.counts.needs_review }}; конфлікти: {{ connection.roster_report.counts.conflicts }}.</p>{% endif %}
     <form method="post">{% csrf_token %}<input type="hidden" name="connection_id" value="{{ connection.pk }}">
       {% for row in connection.roster_report.conflicts %}<p><strong>{{ row.name }}</strong>: на сайті «{{ row.local_name }}».<input type="hidden" name="version_{{ row.journal_id }}" value="{{ row.version }}"><select name="resolve_{{ row.journal_id }}"><option value="">Залишити для перевірки</option><option value="journal">Використати ім’я з журналу на сайті</option><option value="local">Залишити місцеве ім’я на сайті</option></select></p>{% endfor %}
       <button name="action" value="send_roster" class="btn btn-primary">Передати учнів журналу на сайт</button>
