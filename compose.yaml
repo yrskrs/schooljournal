@@ -16,7 +16,7 @@ services:
       retries: 12
     networks: [journal_net]
   web:
-    image: ${JOURNAL_IMAGE:-schooljournal-web:1.3.12}
+    image: ${JOURNAL_IMAGE:-schooljournal-web:1.3.13}
     build:
       context: .
       args:
@@ -60,6 +60,23 @@ services:
       interval: 5s
       timeout: 5s
       retries: 12
+    networks: [journal_net]
+  updater:
+    image: ${UPDATER_IMAGE:-schooljournal-updater:latest}
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.updater
+    restart: unless-stopped
+    environment:
+      JOURNAL_ROOT: /workspace
+      ENV_FILE: /workspace/.env
+      COMPOSE_PROJECT_NAME: ${COMPOSE_PROJECT_NAME:-schooljournal}
+      UPDATER_PORT: 8001
+      GITHUB_REPO: yrskrs/schooljournal
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - .:/workspace
+      - backups_data:/workspace/backups
     networks: [journal_net]
 volumes:
   postgres_data:

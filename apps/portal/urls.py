@@ -6,7 +6,7 @@ from . import views_extra_students
 from school_sync import django_backend as roster_views
 from . import views_public
 from django.shortcuts import redirect
-from . import views_superadmin, views_teacher, views_journal, views_import_export, views_nz, views_schedule
+from . import views_superadmin, views_teacher, views_journal, views_import_export, views_nz, views_schedule, views_updates
 
 app_name = 'portal'
 
@@ -20,6 +20,11 @@ def root_redirect(request):
 urlpatterns = [
     path('help/', views_public.guide, name='guide'),
     path('versions/', views_public.versions, name='versions'),
+    path('updates/', views_updates.system_updates_view, name='system_updates'),
+    path('updates/api/check/', views_updates.check_updates_api_view, name='updates_check_api'),
+    path('updates/api/start/', views_updates.start_update_api_view, name='updates_start_api'),
+    path('updates/api/status/', views_updates.update_status_api_view, name='updates_status_api'),
+    path('updates/api/rollback/', views_updates.rollback_api_view, name='updates_rollback_api'),
     path('healthz/', views_public.health, name='health'),
     path('api/v2/roster-sync/', roster_views.roster_api, name='roster_sync_api'),
     path('roster-sync/', roster_views.roster_ui, name='roster_sync'),
