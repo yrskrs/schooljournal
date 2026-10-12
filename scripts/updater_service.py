@@ -2,6 +2,7 @@
 """Independent Docker updater with streamed logs, bounded jobs and verified rollback."""
 import copy
 import fcntl
+import hashlib
 import http.server
 import json
 import os
@@ -24,6 +25,8 @@ try:
 except ModuleNotFoundError:
     from update_metadata import (read_version, version_tuple, parse_changelog_markdown,
                                  releases_between, check_remote)
+
+SERVICE_CODE_HASH = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
 
 PROJECT = 'schooljournal'
 REPO = 'yrskrs/schooljournal'
@@ -217,7 +220,8 @@ def installed_health(expected=None, timeout=180):
     error = ''
     while time.monotonic() < deadline:
         try:
-            with urllib.request.urlopen(os.environ.get('APP_URL', HEALTH_URL), timeout=4) as response:
+            request = urllib.request.Request(os.environ.get('APP_URL', HEALTH_URL), headers={'Host': 'localhost'})
+            with urllib.request.urlopen(request, timeout=4) as response:
                 data = json.load(response)
             if data.get('status') != 'ok' or not data.get('version'):
                 raise ValueError('Некоректний healthcheck')
@@ -262,7 +266,7 @@ def perform_rollback(deployment, backup, old_image, old_commit, old_version):
 
 def execute_update_job(target_ref='origin/main', target_ver=None, releases_list=None):
     deployment, backup, worktree = None, None, None
-    backup_complete = deploy_started = False
+    backup_complete = deploy_started = writers_stopped = False
     try:
         if target_ref not in ('HEAD', 'origin/main'):
             raise ValueError('Дозволено оновлення origin/main або перезбірку HEAD')
@@ -331,6 +335,7 @@ def execute_update_job(target_ref='origin/main', target_ver=None, releases_list=
         worktree = None
         update_state(step=3, progress=55, step_name='Зупинка запису та створення резервної копії')
         append_log('Крок 3/5: Зупиняємо запис і створюємо перевірений знімок…')
+        writers_stopped = True
         deployment.dc('stop', *WRITERS, timeout=120)
         if PROJECT == 'schooltest5':
             backup = Path(tempfile.mkdtemp(prefix=time.strftime('%Y%m%d-%H%M%S-'), dir=ROOT / 'backups'))
@@ -380,7 +385,7 @@ def execute_update_job(target_ref='origin/main', target_ver=None, releases_list=
             except Exception as rollback_exc:
                 rollback_error = str(rollback_exc)
                 append_log(f'❌ Помилка відкату: {rollback_error}')
-        elif deployment:
+        elif deployment and writers_stopped:
             try:
                 deployment.dc('start', *WRITERS, timeout=120)
                 installed_health(old_version, timeout=90)
@@ -444,6 +449,12 @@ def start_job(function, args):
             finally:
                 fcntl.flock(lock, fcntl.LOCK_UN)
                 lock.close()
+            if (CURRENT_STATE.get('state') == 'success' and Path('/.dockerenv').exists()
+                    and hashlib.sha256(Path(__file__).read_bytes()).hexdigest() != SERVICE_CODE_HASH):
+                append_log('Перезапускаємо оновлений код служби updater; фінальний статус збережено.')
+                subprocess.Popen(['docker', 'restart', os.uname().nodename],
+                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                 start_new_session=True)
         threading.Thread(target=worker, daemon=True).start()
         return job_id
 
