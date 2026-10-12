@@ -1217,8 +1217,22 @@ def toggle_student_sync_ignore(request, journal_id, student_id):
             changes={'ignored_student_id': student.pk, 'is_ignored': is_ignored}
         )
 
+    from apps.journals.services.roster_transfer import send_journal_roster
+    from apps.journals.services.external_grades import ExternalAPIError
+    warnings = []
+    for connection in journal.grade_apis.filter(enabled=True, contract_version=2):
+        if 'journal_roster_import' not in connection.roster_cache.get('capabilities', []):
+            continue
+        try:
+            report = send_journal_roster(connection, request.user)
+            if report['counts'].get('conflicts') or report['counts'].get('needs_review'):
+                warnings.append(f'{connection.name}: перевірте відповідності на сторінці підключення.')
+        except ExternalAPIError as error:
+            warnings.append(f'{connection.name}: {error} Повторіть передачу списку після відновлення зв’язку.')
     if request.headers.get('x-requested-with') == 'XMLHttpRequest' or 'application/json' in request.headers.get('Accept', ''):
-        return JsonResponse({'status': 'ok', 'is_ignored': is_ignored, 'message': msg})
+        return JsonResponse({'status': 'ok', 'is_ignored': is_ignored, 'message': msg, 'warnings': warnings})
+    for warning in warnings:
+        messages.warning(request, warning)
     messages.success(request, msg)
     return redirect('portal:journal_detail', journal_id=journal.pk)
 

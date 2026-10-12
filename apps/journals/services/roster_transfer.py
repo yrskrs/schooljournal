@@ -21,11 +21,13 @@ def roster_request(connection):
     namespace = UUID(origin)
     journal = connection.journal
     ignored_ids = set(journal.ignored_students.values_list('pk', flat=True))
-    students = [s for s in journal_students(journal) if s.pk not in ignored_ids]
+    mappings = {m.student_id: m.external_id for m in connection.student_mappings.all()}
+    # Omission keeps old copies in v2. Send inactive rows only for pupils that
+    # were already bound; an ignored new pupil must never be created upstream.
+    students = [s for s in journal_students(journal) if s.pk not in ignored_ids or s.pk in mappings]
     active = set(ClassEnrollment.objects.filter(student_class=journal.student_class, is_active=True).values_list('student_id', flat=True))
     # Mapping across services is explicit and stable; no nz.ua ID is required.
     refs = {str(uuid5(namespace, f'student:{s.pk}')): s for s in students}
-    mappings = {m.student_id: m.external_id for m in connection.student_mappings.all()}
     subject_name = next((r['name'] for r in connection.roster_cache.get('subjects', [])
         if r['id'] == connection.source_subject_id), journal.subject.name)
     payload = {'schema_version': 2, 'journal_instance_id': origin,
@@ -34,7 +36,7 @@ def roster_request(connection):
             'letter': journal.student_class.letter},
         'subject': {'name': subject_name}, 'source_class_id': connection.source_class_id or None,
         'students': [{'id': ref, 'last_name': s.last_name, 'first_name': s.first_name,
-            'middle_name': s.middle_name, 'active': s.pk in active and s.status == Student.Status.ACTIVE,
+            'middle_name': s.middle_name, 'active': s.pk not in ignored_ids and s.pk in active and s.status == Student.Status.ACTIVE,
             'local_id': mappings.get(s.pk)} for ref, s in refs.items()]}
     return payload, refs
 
@@ -117,8 +119,13 @@ def send_journal_roster(connection, user, resolutions=None):
                     rows.append({'id': identity, 'name': name})
                 cache[kind] = rows
             students = {row['id']: row for row in cache.get('students', [])}
+            inactive_refs = {row['id'] for row in payload['students'] if not row['active']}
             for row in mappings:
-                students[str(row['local_id'])] = {'id': str(row['local_id']), 'class_id': class_id, 'name': row['name']}
+                local_id = str(row['local_id'])
+                if row['journal_id'] in inactive_refs:
+                    students.pop(local_id, None)
+                else:
+                    students[local_id] = {'id': local_id, 'class_id': class_id, 'name': row['name']}
             cache['students'] = list(students.values())
             fresh.roster_cache = cache
             fresh.save(update_fields=['source_class_id', 'source_subject_id', 'enabled', 'roster_sent_at', 'roster_report', 'roster_cache'])

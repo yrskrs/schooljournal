@@ -1560,7 +1560,7 @@ class NZService:
             return False
         if data is True:
             return True
-        if not isinstance(data, dict) or data.get('success') is False or data.get('error') or 'message' in data:
+        if not isinstance(data, dict) or data.get('success') is False or data.get('error') or data.get('message'):
             return False
         if expected_mark is not None and ('markValue' in data or 'markId' in data):
             if 'markValue' not in data or 'markId' not in data:
@@ -1572,6 +1572,44 @@ class NZService:
                 return False
             return str(data['markId']) == str(expected_mark) or (expected_mark == 0 and data['markId'] is None)
         return data.get('success') is True or data.get('status') in (True, 'success', 'ok') or data.get('result') is True
+
+    @staticmethod
+    def _save_error(response):
+        """Keep an actual rejection visible instead of calling HTTP 200 an error."""
+        try:
+            data = json.loads(response.text)
+        except (ValueError, TypeError):
+            return ''
+        if not isinstance(data, dict):
+            return ''
+        message = data.get('message') or data.get('error')
+        if isinstance(message, str):
+            return BeautifulSoup(message, 'html.parser').get_text(' ', strip=True)[:300]
+        if data.get('success') is False or message:
+            return 'nz.ua відхилив зміну оцінки.'
+        return ''
+
+    def _mark_saved(self, response, journal, active, mark_id, value):
+        if self._response_saved(response, expected_mark=mark_id, expected_value=value):
+            return True
+        # Some update responses do not contain the same acknowledgement as a
+        # newly created mark. Verify the actual cell once; never blindly retry a POST.
+        if response.status_code != 200 or '/login' in str(response.url) or self._save_error(response):
+            return False
+        data = self.fetch_journal_data(journal.nz_journal_id, journal.nz_subgroup_id)
+        student_id, schedule_id = str(active.student.nz_student_id), str(active.lesson.nz_schedule_id)
+        if not any(str(s['nz_student_id']) == student_id for s in data['students']):
+            return False
+        if not any(str(l['nz_schedule_id']) == schedule_id for l in data['lessons']):
+            return False
+        marks = [m for m in data['marks'] if str(m['nz_student_id']) == student_id
+                 and str(m['nz_schedule_id']) == schedule_id]
+        aliases = {'Н/З': 'НЕЗАР'}
+        expected = aliases.get(value, value)
+        if not marks:
+            return expected == ''
+        return len(marks) == 1 and aliases.get(str(marks[0]['value']).strip().upper(),
+                                              str(marks[0]['value']).strip().upper()) == expected
 
     def pending_changes_fingerprint(self, journal):
         lessons = list(journal.lessons.filter(is_synced_to_nz=False, is_ignored_for_nz=False).order_by('pk').values())
@@ -1753,8 +1791,9 @@ class NZService:
                 }
                 resp = self.session.post(f"{self.BASE_URL}/journal/set-mark", data=payload,
                     headers={'X-CSRF-Token': self.csrf_token, 'X-Requested-With': 'XMLHttpRequest'}, timeout=15)
-                if not self._response_saved(resp, expected_mark=mark_id, expected_value=value):
-                    raise NZServiceError(f'nz.ua не підтвердив збереження (код {resp.status_code}). Запис залишено локально.')
+                if not self._mark_saved(resp, journal, active, mark_id, value):
+                    reason = self._save_error(resp) or f'Не підтверджено значення онлайн-клітинки (HTTP {resp.status_code}).'
+                    raise NZServiceError(f'{reason} Запис залишено локально для повторної перевірки.')
                 with transaction.atomic():
                     # Only the exact sent snapshot becomes synced. Concurrent local edits survive.
                     if grade:

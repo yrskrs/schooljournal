@@ -106,6 +106,58 @@ class NZOfflineContractTests(TestCase):
                 response = MagicMock(status_code=200, url='https://nz.ua/journal/set-mark', text=json.dumps(data))
                 self.assertFalse(NZService._response_saved(response, expected_mark=14, expected_value='9'))
 
+    def test_existing_mark_update_accepts_empty_message(self):
+        self.journal.lessons.update(is_synced_to_nz=True)
+        grade = Grade.objects.create(lesson=self.l1, student=self.student, value='9', nz_last_synced_value='8')
+        service = NZService(); service.csrf_token = 'synthetic-csrf'
+        for message in ('', None):
+            with self.subTest(message=message):
+                grade.is_synced_to_nz = False; grade.save()
+                response = MagicMock(status_code=200, url='https://nz.ua/journal/set-mark',
+                                     text=json.dumps({'markId': '14', 'markValue': 9, 'message': message}))
+                with patch.object(service.session, 'post', return_value=response) as post, \
+                        patch.object(service, 'fetch_journal_data') as read, patch('apps.journals.services.nz_service.time.sleep'):
+                    log = service.push_journal_changes(self.journal)
+                grade.refresh_from_db()
+                self.assertTrue(grade.is_synced_to_nz)
+                self.assertEqual(grade.nz_last_synced_value, '9')
+                self.assertEqual(log.error_count, 0)
+                post.assert_called_once(); read.assert_not_called()
+
+    def test_ambiguous_update_verifies_actual_cell_once_without_reposting(self):
+        self.journal.lessons.update(is_synced_to_nz=True)
+        grade = Grade.objects.create(lesson=self.l1, student=self.student, value='9', nz_last_synced_value='8')
+        service = NZService(); service.csrf_token = 'synthetic-csrf'
+        response = MagicMock(status_code=200, url='https://nz.ua/journal/set-mark', text='{}')
+        snapshot = {'students': [{'nz_student_id': self.student.nz_student_id}],
+                    'lessons': [{'nz_schedule_id': self.l1.nz_schedule_id}],
+                    'marks': [{'nz_student_id': self.student.nz_student_id, 'nz_schedule_id': self.l1.nz_schedule_id, 'value': '9'}]}
+        for actual, confirmed in [('8', False), ('9', True)]:
+            with self.subTest(actual=actual):
+                snapshot['marks'][0]['value'] = actual
+                with patch.object(service.session, 'post', return_value=response) as post, \
+                        patch.object(service, 'fetch_journal_data', return_value=snapshot) as read, \
+                        patch('apps.journals.services.nz_service.time.sleep'):
+                    log = service.push_journal_changes(self.journal)
+                grade.refresh_from_db()
+                self.assertEqual(grade.is_synced_to_nz, confirmed)
+                self.assertEqual(log.error_count, 0 if confirmed else 1)
+                post.assert_called_once(); read.assert_called_once()
+
+    def test_http_200_rejection_shows_reason_and_never_verifies_or_marks_synced(self):
+        self.journal.lessons.update(is_synced_to_nz=True)
+        grade = Grade.objects.create(lesson=self.l1, student=self.student, value='9', nz_last_synced_value='8')
+        service = NZService(); service.csrf_token = 'synthetic-csrf'
+        response = MagicMock(status_code=200, url='https://nz.ua/journal/set-mark',
+                             text='{"message":"<b>Зміну заблоковано</b>","markOld":"8"}')
+        with patch.object(service.session, 'post', return_value=response), \
+                patch.object(service, 'fetch_journal_data') as read, patch('apps.journals.services.nz_service.time.sleep'):
+            log = service.push_journal_changes(self.journal)
+        grade.refresh_from_db()
+        self.assertFalse(grade.is_synced_to_nz)
+        self.assertIn('Зміну заблоковано', log.details['items'][0]['error'])
+        read.assert_not_called()
+
     def test_clear_and_attendance_ack(self):
         for data, mark, value in [({'markId': None, 'markValue': ''}, 0, ''), ({'markId': 1, 'markValue': 'Н'}, 1, 'Н'), ({'markId': 33, 'markValue': 'Н/З'}, 33, 'НЕЗАР')]:
             response = MagicMock(status_code=200, url='https://nz.ua/journal/set-mark', text=json.dumps(data))

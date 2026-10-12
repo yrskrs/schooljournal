@@ -86,6 +86,34 @@ class SimpleExchangeTests(TestCase):
         self.assertTrue(refs); self.assertNotIn('nz_student_id', first['students'][0])
         self.assertFalse(Grade.objects.exists())
 
+    def test_ignored_new_pupil_is_absent_but_previous_mapping_is_sent_inactive(self):
+        connection = self.connection()
+        self.journal.ignored_students.add(self.student)
+        payload, refs = roster_request(connection)
+        self.assertNotIn(self.student, refs.values())
+        GradeStudentMapping.objects.create(connection=connection, student=self.student, external_id='41')
+        payload, refs = roster_request(connection)
+        ref = next(ref for ref, student in refs.items() if student.pk == self.student.pk)
+        self.assertFalse(next(row for row in payload['students'] if row['id'] == ref)['active'])
+        self.journal.ignored_students.remove(self.student)
+        restored, _ = roster_request(connection)
+        self.assertTrue(next(row for row in restored['students'] if row['id'] == ref)['active'])
+
+    def test_ignore_updates_connected_rosters_and_offline_keeps_local_decision(self):
+        from apps.journals.services.external_grades import ExternalAPIError
+        connection = self.connection(mappings=True)
+        url = reverse('portal:toggle_student_sync_ignore', args=[self.journal.pk, self.student.pk])
+        with patch('apps.journals.services.roster_transfer.send_journal_roster', return_value={'counts': {}}) as send:
+            response = self.client.post(url, HTTP_ACCEPT='application/json')
+        send.assert_called_once()
+        self.assertEqual(send.call_args.args[0].pk, connection.pk)
+        self.assertTrue(response.json()['is_ignored'])
+        with patch('apps.journals.services.roster_transfer.send_journal_roster', side_effect=ExternalAPIError('Джерело недоступне')):
+            response = self.client.post(url, HTTP_ACCEPT='application/json')
+        self.assertFalse(response.json()['is_ignored'])
+        self.assertTrue(response.json()['warnings'])
+        self.assertFalse(self.journal.ignored_students.filter(pk=self.student.pk).exists())
+
     def test_first_modern_connection_is_saved_before_context_and_transfer(self):
         old = self.connection()
         cache = old.roster_cache
