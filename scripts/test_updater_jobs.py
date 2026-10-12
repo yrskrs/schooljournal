@@ -27,6 +27,22 @@ class UpdaterJobTests(unittest.TestCase):
         self.root_patch.stop(); self.status_patch.stop(); self.lock_patch.stop()
         self.directory.cleanup()
 
+    def test_image_selection_preserves_environment_owner_and_permissions(self):
+        environment = self.root / '.env'
+        environment.write_text('DUMMY=keep-this-value\n')
+        environment.chmod(0o600)
+        owner = environment.stat()
+        deployment = updater.Deployment.__new__(updater.Deployment)
+        deployment.config = {'services': {service: {} for service in updater.WRITERS}}
+        deployment.path = self.root / 'compose.json'
+        deployment.select_image('synthetic/app:9.2.0')
+        updated = environment.stat()
+        self.assertEqual((updated.st_uid, updated.st_gid), (owner.st_uid, owner.st_gid))
+        self.assertEqual(updated.st_mode & 0o777, 0o600)
+        self.assertIn('DUMMY=keep-this-value', environment.read_text())
+        self.assertIn('synthetic/app:9.2.0', environment.read_text())
+        self.assertFalse(environment.with_suffix('.image-update').exists())
+
     def test_output_is_visible_before_command_finishes(self):
         finished = threading.Event()
         def run():

@@ -202,6 +202,8 @@ class Deployment:
         temporary = env_file.with_suffix('.image-update')
         temporary.write_text(content, encoding='utf-8')
         temporary.chmod(0o600)
+        owner = env_file.stat()
+        os.chown(temporary, owner.st_uid, owner.st_gid)
         os.replace(temporary, env_file)
 
 

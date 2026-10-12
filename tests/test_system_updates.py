@@ -52,6 +52,10 @@ class SystemUpdatesTests(TestCase):
         self.assertContains(resp, '⚡ Перезібрати поточну версію')
         self.assertContains(resp, 'Опис встановленої версії')
         self.assertContains(resp, 'Скопіювати помилку та журнал')
+        self.assertContains(resp, 'onclick="checkUpdates()"', count=1)
+        self.assertContains(resp, '<details id="updateProgressSection"')
+        self.assertNotContains(resp, 'initialCheckPrompt')
+        self.assertNotContains(resp, 'progressTargetVersion')
         self.assertTrue(resp.context['can_update'])
 
     def test_teacher_can_view_page_but_cannot_start_update(self):
