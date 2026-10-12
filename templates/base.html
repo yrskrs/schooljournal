@@ -5,6 +5,11 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>{% block title %}Електронний шкільний журнал{% endblock %}</title>
 
+  <!-- Фавікон вкладки браузера -->
+  <link rel="icon" type="image/svg+xml" href="/static/img/favicon.svg?v={{ site_version }}">
+  <link rel="alternate icon" type="image/x-icon" href="/static/favicon.ico?v={{ site_version }}">
+  <link rel="apple-touch-icon" href="/static/img/apple-touch-icon.png?v={{ site_version }}">
+
   <!-- Локальні стилі та іконки -->
   <link rel="stylesheet" href="/static/css/styles.css?v={{ site_version }}">
 
@@ -51,7 +56,7 @@
             <li><a href="{% url 'portal:roster_sync' %}" class="nav-link">Списки та синхронізація</a></li>
             <li><a href="{% url 'portal:weekly_schedule' %}" class="nav-link">Розклад на тиждень</a></li>
             <li><a href="{% url 'portal:lesson_times' %}" class="nav-link">Час уроків</a></li>
-            <li><a href="{% url 'portal:system_updates' %}" class="nav-link">Оновлення</a></li>
+            <li><a href="{% url 'portal:system_updates' %}" class="nav-link" style="display: inline-flex; align-items: center; gap: 0.35rem;"><span style="color: #0284c7;">🔄</span> Оновлення</a></li>
           </ul>
         </nav>
 

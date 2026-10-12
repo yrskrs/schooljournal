@@ -121,7 +121,8 @@ class SystemUpdatesTests(TestCase):
                 return resp
             raise ValueError(f"Unexpected url {url}")
 
-        with patch('apps.portal.services.updates.urllib.request.urlopen', side_effect=fake_urlopen):
+        with patch('apps.portal.services.updates.get_current_local_version', return_value='1.3.13'), \
+             patch('apps.portal.services.updates.urllib.request.urlopen', side_effect=fake_urlopen):
             result = check_updates_available()
             self.assertTrue(result['ok'])
             self.assertEqual(result['latest_version'], '1.3.14')

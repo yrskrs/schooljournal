@@ -14,7 +14,7 @@
     <a href="{% url 'portal:weekly_schedule' %}" class="btn btn-secondary">Розклад на тиждень</a>
     <a href="{% url 'portal:lesson_times' %}" class="btn btn-secondary">Час уроків</a>
     <a href="{% url 'portal:teacher_api_keys' %}" class="btn btn-secondary">Ключі API</a>
-    <a href="{% url 'portal:system_updates' %}" class="btn btn-secondary">Оновлення</a>
+    <a href="{% url 'portal:system_updates' %}" class="btn btn-secondary">🔄 Оновлення</a>
     {% if uncreated_assignments %}
       <a href="{% url 'portal:create_journal' %}" class="btn btn-primary">
         + Створити журнал (доступно: {{ uncreated_assignments|length }})
