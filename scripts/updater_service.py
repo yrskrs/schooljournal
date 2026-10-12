@@ -309,7 +309,31 @@ def execute_update_job(target_ref='origin/main', target_ver=None, releases_list=
                 if key not in ('PATH', 'LANG', 'PYTHON_VERSION', 'PYTHON_SHA256', 'PYTHONDONTWRITEBYTECODE', 'PYTHONUNBUFFERED', 'DEBIAN_FRONTEND'):
                     changes += ['--change', f'ENV {key}=""']
             snapshot = f'{PROJECT}-rollback:container-{CURRENT_STATE["job_id"][:12]}'
-            run_command(['docker', 'commit', *changes, container, snapshot], deployment.env, 300)
+            try:
+                run_command(['docker', 'commit', *changes, container, snapshot], deployment.env, 300)
+            except RuntimeError:
+                append_log('Метадані старого образу пошкоджено; експортуємо файлову систему чинного контейнера…')
+                config = json.loads(capture(['docker', 'inspect', '--format', '{{json .Config}}', container]))
+                fd, exported_path = tempfile.mkstemp(prefix='.rollback-rootfs-', suffix='.tar', dir=ROOT / 'backups')
+                os.close(fd)
+                try:
+                    run_command(['docker', 'export', '--output', exported_path, container], deployment.env, 600)
+                    import_changes = []
+                    for key in ('Cmd', 'Entrypoint'):
+                        if config.get(key):
+                            import_changes += ['--change', key.upper() + ' ' + json.dumps(config[key])]
+                    for key in ('User', 'WorkingDir'):
+                        if config.get(key):
+                            import_changes += ['--change', ('WORKDIR' if key == 'WorkingDir' else 'USER') + ' ' + config[key]]
+                    for entry in environment:
+                        if entry.split('=', 1)[0] in ('PATH', 'LANG', 'PYTHONDONTWRITEBYTECODE', 'PYTHONUNBUFFERED'):
+                            import_changes += ['--change', 'ENV ' + entry]
+                    for key, value in (config.get('Labels') or {}).items():
+                        if key.startswith('org.opencontainers.'):
+                            import_changes += ['--change', f'LABEL {key}=' + json.dumps(value)]
+                    run_command(['docker', 'import', *import_changes, exported_path, snapshot], deployment.env, 600)
+                finally:
+                    Path(exported_path).unlink(missing_ok=True)
             old_image = capture(['docker', 'image', 'inspect', '--format', '{{.Id}}', snapshot])
         deployment.select_image(old_image, persist=False)
         deployment.env.update(BACKUP_IMAGE=old_image, BACKUP_SOURCE_COMMIT=old_commit)
@@ -331,6 +355,11 @@ def execute_update_job(target_ref='origin/main', target_ver=None, releases_list=
         image = f'{PROJECT}-candidate:{commit[:12]}-{CURRENT_STATE["job_id"][:8]}'
         run_command(['docker', 'build', '--progress=plain', '--build-arg', f'VCS_REF={commit}',
                      '--build-arg', f'APP_VERSION={version}', '-t', image, str(worktree)], deployment.env, 1200)
+        if PROJECT != 'schooltest5':
+            append_log('Перевіряємо імпорт і конфігурацію кандидата без робочої БД…')
+            settings = 'config.test_settings' if PROJECT == 'schooljournal' else 'schoolnet.test_settings'
+            run_command(['docker', 'run', '--rm', '--network', 'none', '-e', f'DJANGO_SETTINGS_MODULE={settings}',
+                         '--entrypoint', 'python', image, 'manage.py', 'check'], deployment.env, 120)
         run_command(['git', 'worktree', 'remove', '--force', str(worktree)], deployment.env, 60)
         worktree = None
         update_state(step=3, progress=55, step_name='Зупинка запису та створення резервної копії')
@@ -449,7 +478,7 @@ def start_job(function, args):
             finally:
                 fcntl.flock(lock, fcntl.LOCK_UN)
                 lock.close()
-            if (CURRENT_STATE.get('state') == 'success' and Path('/.dockerenv').exists()
+            if (CURRENT_STATE.get('state') == 'success' and not CURRENT_STATE.get('rolled_back') and Path('/.dockerenv').exists()
                     and hashlib.sha256(Path(__file__).read_bytes()).hexdigest() != SERVICE_CODE_HASH):
                 append_log('Перезапускаємо оновлений код служби updater; фінальний статус збережено.')
                 subprocess.Popen(['docker', 'restart', os.uname().nodename],
