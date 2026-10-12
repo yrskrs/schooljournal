@@ -22,7 +22,7 @@ main() {
     trap cleanup_backup EXIT
     web_id=$(dc ps -aq web)
     [[ -n "$web_id" ]] || { echo "No deployed web container; start the service first." >&2; return 1; }
-    image_id=$(docker inspect --format '{{.Image}}' "$web_id")
+    image_id=${BACKUP_IMAGE:-$(docker inspect --format '{{.Image}}' "$web_id")}
     if [[ $quiesced -eq 0 ]]; then dc stop nginx web >&2; fi
     echo "Backing up PostgreSQL, media, source and the deployed image..." >&2
     dc exec -T db sh -c 'exec pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Fc --no-owner --no-acl' > "$work/database.dump"

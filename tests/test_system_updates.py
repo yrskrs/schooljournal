@@ -49,6 +49,9 @@ class SystemUpdatesTests(TestCase):
         self.assertContains(resp, 'Оновлення системи')
         self.assertContains(resp, 'Поточна встановлена версія')
         self.assertContains(resp, get_current_local_version())
+        self.assertContains(resp, '⚡ Перезібрати поточну версію')
+        self.assertContains(resp, 'Опис встановленої версії')
+        self.assertContains(resp, 'Скопіювати помилку та журнал')
         self.assertTrue(resp.context['can_update'])
 
     def test_teacher_can_view_page_but_cannot_start_update(self):

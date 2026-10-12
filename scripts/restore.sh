@@ -6,7 +6,7 @@ if [[ "${1:-}" == --check && $# -eq 2 ]]; then
 fi
 source "$(dirname -- "${BASH_SOURCE[0]}")/common.sh"
 main() {
-    local archive commit image_tag safety
+    local archive commit image_tag safety keep_code=0 no_safety=0
     restore_database="journal_restore_$(date +%s)_$$"
     previous_database="journal_previous_$(date +%s)_$$"
     [[ $# -ge 1 && -f "$1" ]] || { echo "Usage: ./restore.sh ARCHIVE --yes [--no-safety-backup]; or ./restore.sh --check ARCHIVE" >&2; return 2; }
@@ -14,7 +14,13 @@ main() {
     shift
     [[ "${1:-}" == --yes ]] || { echo "Restore replaces database, media and service code. Add --yes after reviewing the archive." >&2; return 2; }
     shift
-    [[ $# -eq 0 || ( $# -eq 1 && "$1" == --no-safety-backup ) ]] || return 2
+    for option in "$@"; do
+        case "$option" in
+            --no-safety-backup) no_safety=1;;
+            --keep-code) keep_code=1;;
+            *) return 2;;
+        esac
+    done
     lock_maintenance
     work=$(mktemp -d "$JOURNAL_ROOT/backups/.restore.XXXXXX")
     cleanup_restore() { status=$?; trap - EXIT; rm -rf -- "$work"; if [[ $status -ne 0 ]]; then echo "Restore failed. Web remains stopped if restoration began. Use the safety backup to recover." >&2; fi; exit "$status"; }
@@ -22,7 +28,7 @@ main() {
     python3 "$JOURNAL_ROOT/scripts/archive.py" extract "$archive" "$work"
     dc exec -T db pg_restore --list < "$work/database.dump" > /dev/null
     gzip -dc "$work/web-image.tar.gz" | docker image load >&2
-    if [[ "${1:-}" != --no-safety-backup ]]; then
+    if [[ $no_safety -eq 0 ]]; then
         safety=$("$JOURNAL_ROOT/scripts/backup.sh")
         echo "Safety backup: $safety" >&2
     fi
@@ -38,10 +44,10 @@ SQL
     # Точна заміна media; вміст архіву перевірено до зупинки сервісу.
     dc run --rm --no-deps -T --user 0 --entrypoint sh web -c 'find /app/media -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +; exec tar -xzf - -C /app/media' < "$work/media.tar.gz"
     commit=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["commit"])' "$work/manifest.json")
-    if [[ "$commit" =~ ^[0-9a-f]{40}$ ]] && git rev-parse --is-inside-work-tree >/dev/null 2>&1 && git cat-file -e "$commit^{commit}" 2>/dev/null; then
+    if [[ $keep_code -eq 0 && "$commit" =~ ^[0-9a-f]{40}$ ]] && git rev-parse --is-inside-work-tree >/dev/null 2>&1 && git cat-file -e "$commit^{commit}" 2>/dev/null; then
         git reset --hard "$commit"
     fi
-    python3 "$JOURNAL_ROOT/scripts/archive.py" install-source "$work/source.tar.gz" "$JOURNAL_ROOT"
+    if [[ $keep_code -eq 0 ]]; then python3 "$JOURNAL_ROOT/scripts/archive.py" install-source "$work/source.tar.gz" "$JOURNAL_ROOT"; fi
     image_tag=$(python3 "$JOURNAL_ROOT/scripts/archive.py" tag "$work/manifest.json")
     docker image tag "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["image"])' "$work/manifest.json")" "$image_tag"
     printf 'services:\n  web:\n    image: %s\n    pull_policy: never\n' "$image_tag" > "$JOURNAL_ROOT/.release-image.yaml"

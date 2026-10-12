@@ -1,6 +1,5 @@
 FROM docker:27-cli
-RUN apk add --no-cache bash git python3 util-linux curl docker-cli-compose && \
-    git config --global --add safe.directory '*'
+RUN apk add --no-cache bash git python3 util-linux curl docker-cli-compose
 WORKDIR /workspace
 EXPOSE 8001
 CMD ["python3", "/workspace/scripts/updater_service.py"]

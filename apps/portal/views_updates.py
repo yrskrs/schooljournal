@@ -7,6 +7,7 @@ from django.views.decorators.http import require_POST, require_GET
 from apps.accounts.models import User
 from apps.portal.services.updates import (
     get_current_local_version,
+    get_current_release,
     check_updates_available,
     get_update_status,
     start_update,
@@ -28,6 +29,7 @@ def system_updates_view(request):
 
     context = {
         'current_version': current_version,
+        'current_release': get_current_release(),
         'status_info': status_info,
         'can_update': can_update,
     }

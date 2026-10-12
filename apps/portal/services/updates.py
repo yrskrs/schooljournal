@@ -1,3 +1,4 @@
+from scripts.update_metadata import check_remote, local_release
 import json
 import logging
 import os
@@ -83,93 +84,22 @@ def get_releases_between(all_releases, current_ver, target_ver):
 
 
 def check_updates_available():
-    """Check for new versions on GitHub either via updater service or directly."""
     current_ver = get_current_local_version()
-
-    # 1. Try updater service first
+    payload = json.dumps({'current_version': current_ver}).encode('utf-8')
     try:
-        req = urllib.request.Request(f"{UPDATER_URL}/api/check", data=b'{}', headers={'Content-Type': 'application/json'})
-        with urllib.request.urlopen(req, timeout=4) as resp:
+        req = urllib.request.Request(f"{UPDATER_URL}/api/check", data=payload,
+                                     headers={'Content-Type': 'application/json'})
+        with urllib.request.urlopen(req, timeout=35) as resp:
             data = json.loads(resp.read().decode('utf-8'))
-            if data.get('ok'):
-                # Ensure releases list is populated if has_update
-                if data.get('has_update') and not data.get('releases') and data.get('release'):
-                    data['releases'] = [data['release']]
-                    data['releases_count'] = 1
-                return data
+        if isinstance(data, dict) and 'ok' in data:
+            return data
     except Exception as exc:
-        logger.debug(f"Updater service check unreachable, checking GitHub directly: {exc}")
+        logger.debug("Updater check unavailable: %s", exc)
+    return check_remote(Path(settings.BASE_DIR), os.environ.get('GITHUB_REPO', 'yrskrs/schooljournal'), current_ver)
 
-    # 2. Fallback: query GitHub directly
-    repo_url = os.environ.get('GITHUB_REPO', 'yrskrs/schooljournal')
-    version_url = f"https://raw.githubusercontent.com/{repo_url}/main/VERSION"
-    releases_url = f"https://raw.githubusercontent.com/{repo_url}/main/RELEASES.json"
-    changelog_url = f"https://raw.githubusercontent.com/{repo_url}/main/CHANGELOG.md"
-    headers = {'User-Agent': 'SchoolJournal-Django/1.0'}
 
-    try:
-        req_v = urllib.request.Request(version_url, headers=headers)
-        with urllib.request.urlopen(req_v, timeout=6) as resp:
-            remote_ver = resp.read().decode('utf-8').strip()
-
-        all_releases = []
-        # Try RELEASES.json
-        try:
-            req_r = urllib.request.Request(releases_url, headers=headers)
-            with urllib.request.urlopen(req_r, timeout=6) as resp:
-                all_releases = json.loads(resp.read().decode('utf-8'))
-        except Exception:
-            all_releases = []
-
-        # If RELEASES.json is missing or incomplete, try CHANGELOG.md from GitHub or locally
-        if not all_releases:
-            try:
-                req_c = urllib.request.Request(changelog_url, headers=headers)
-                with urllib.request.urlopen(req_c, timeout=6) as resp:
-                    all_releases = parse_changelog_markdown(resp.read().decode('utf-8'))
-            except Exception:
-                local_changelog = Path(settings.BASE_DIR) / 'CHANGELOG.md'
-                if local_changelog.exists():
-                    all_releases = parse_changelog_markdown(local_changelog.read_text(encoding='utf-8'))
-
-        has_update = parse_version_tuple(remote_ver) > parse_version_tuple(current_ver)
-        releases_to_apply = get_releases_between(all_releases, current_ver, remote_ver)
-
-        if has_update and not releases_to_apply:
-            releases_to_apply = [{
-                'version': remote_ver,
-                'title': f'Оновлення {remote_ver}',
-                'date': '',
-                'changes': ['Планове оновлення системи']
-            }]
-
-        target_release = releases_to_apply[0] if releases_to_apply else {
-            'version': remote_ver,
-            'title': f'Версія {remote_ver}',
-            'date': '',
-            'changes': ['Планове оновлення системи']
-        }
-
-        return {
-            'ok': True,
-            'current_version': current_ver,
-            'latest_version': remote_ver,
-            'has_update': has_update,
-            'releases': releases_to_apply,
-            'releases_count': len(releases_to_apply),
-            'total_changes_count': sum(len(r.get('changes', [])) for r in releases_to_apply),
-            'release': target_release
-        }
-    except Exception as exc:
-        return {
-            'ok': False,
-            'current_version': current_ver,
-            'latest_version': current_ver,
-            'has_update': False,
-            'releases': [],
-            'releases_count': 0,
-            'error': f"Не вдалося перевірити оновлення на GitHub: {str(exc)}"
-        }
+def get_current_release():
+    return local_release(Path(settings.BASE_DIR), get_current_local_version())
 
 
 def get_update_status():

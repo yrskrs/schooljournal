@@ -35,6 +35,13 @@
   </div>
 
   <!-- Контейнер результатів перевірки -->
+  <section class="card version-status-card" style="padding:16px; margin:16px 0;" aria-label="Опис встановленої версії">
+    <h3>Опис встановленої версії {{ current_version }}</h3>
+    <p>{{ current_release.title }}</p>
+    <ul>{% for change in current_release.changes %}<li>{{ change }}</li>{% endfor %}</ul>
+    {% if can_update %}<button type="button" id="btnRebuildCurrent" class="btn btn-secondary" onclick="forceRebuildCurrentVersion()">⚡ Перезібрати поточну версію</button>{% endif %}
+  </section>
+
   <div id="updateCheckResult" class="update-result-box" hidden></div>
 
   <!-- Контейнер процесу оновлення (З'являється під час активного оновлення) -->
@@ -92,6 +99,9 @@
     <div id="errorAlert" class="alert alert-danger" style="margin-top: 1rem;" hidden>
       <h3 style="margin: 0 0 0.5rem; font-size: 1.1rem; color: #dc2626;">❌ Оновлення не вдалося</h3>
       <p id="errorMessage" style="margin: 0 0 0.75rem; font-family: monospace; font-size: 0.85rem; background: rgba(0,0,0,0.05); padding: 0.5rem; border-radius: 4px;"></p>
+      <textarea id="updateDiagnostics" readonly aria-label="Помилка та журнал для копіювання" style="width:100%; min-height:100px; white-space:pre;"></textarea>
+      <button type="button" class="btn btn-secondary" onclick="copyTerminalLogs()">Скопіювати помилку та журнал</button>
+
       <div id="rollbackNotice" class="alert alert-success" style="margin-bottom: 0.5rem;" hidden>
         ✅ <strong>Автоматичне відновлення:</strong> Систему успішно повернуто до попередньої стабільної версії з резервної копії. Усі дані та оцінки збережено.
       </div>
@@ -122,6 +132,8 @@
         <span class="terminal-title">Журнал виконання оновлення</span>
         <button type="button" class="btn-toggle-terminal" onclick="toggleTerminal()">Згорнути/Розгорнути</button>
       </div>
+      <button type="button" class="btn btn-secondary" onclick="copyTerminalLogs()">Скопіювати журнал</button><span id="copyUpdateResult" role="status"></span>
+
       <div class="terminal-body" id="terminalBody">
         <div class="log-line">Очікування команд…</div>
       </div>
@@ -629,393 +641,239 @@
 </style>
 
 <script>
-let updatePollTimer = null;
+const updatesApi = {"check": "{% url 'portal:updates_check_api' %}", "start": "{% url 'portal:updates_start_api' %}", "status": "{% url 'portal:updates_status_api' %}", "rollback": "{% url 'portal:updates_rollback_api' %}"};
 let currentTargetVersion = null;
 let currentReleasesToApply = [];
+let activeJobId = null;
+let updatePollTimer = null;
 let isUpdating = false;
+let polling = false;
+let lastStatus = null;
 let restartAttempts = 0;
 
+function visible(id, value) {
+  const element = document.getElementById(id);
+  if (element) { element.hidden = !value; element.style.display = value ? 'block' : 'none'; }
+}
+function text(id, value) {
+  const element = document.getElementById(id);
+  if (element) element.textContent = value;
+}
+function setBusy(value) {
+  isUpdating = value;
+  ['btnCheckUpdates', 'btnRebuildCurrent'].forEach(id => {
+    const element = document.getElementById(id);
+    if (element) element.disabled = value;
+  });
+}
+function escapeHtml(value) {
+  return String(value ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#039;');
+}
 function getCsrfToken() {
-  const match = document.cookie.match(/schooljournal_csrftoken=([^;]+)/);
-  if (match) return match[1];
-  const input = document.querySelector('input[name=csrfmiddlewaretoken]');
-  return input ? input.value : '';
+  return document.querySelector('[name=csrfmiddlewaretoken]')?.value || '';
 }
-
-function renderReleaseCard(rel) {
-  const version = escapeHtml(rel.version || '');
-  const title = escapeHtml(rel.title || `Оновлення ${version}`);
-  const date = escapeHtml(rel.date || '');
-  const changes = rel.changes || [];
-  const changesHtml = changes.length > 0
-    ? `<ul>${changes.map(c => `<li>${escapeHtml(c)}</li>`).join('')}</ul>`
-    : `<p style="font-size: 0.85rem; color: #64748b; margin: 0.25rem 0;">Планове оновлення компонентів та покращення стабільності</p>`;
-
-  return `
-    <div class="release-group-card">
-      <div class="release-header-line">
-        <span class="release-badge">v${version}</span>
-        <span class="release-title">${title}</span>
-        ${date ? `<span class="release-date">📅 ${date}</span>` : ''}
-      </div>
-      <div class="release-changes-list">
-        ${changesHtml}
-      </div>
-    </div>
-  `;
+async function apiRequest(kind, payload) {
+  const options = {cache: 'no-store', signal: AbortSignal.timeout(kind === 'check' ? 60000 : 10000)};
+  if (payload) {
+    options.method = 'POST';
+    if (true) {
+      const body = new FormData();
+      Object.entries(payload).forEach(([key, value]) => body.append(key, value ?? ''));
+      body.append('csrfmiddlewaretoken', getCsrfToken());
+      options.body = body;
+    } else {
+      options.headers = {'Content-Type': 'application/json'};
+      options.body = JSON.stringify(payload);
+    }
+  }
+  const response = await fetch(updatesApi[kind], options);
+  const data = await response.json();
+  if (!response.ok || data.ok === false) throw new Error(data.error || data.detail || `HTTP ${response.status}`);
+  return data;
 }
-
-function toggleActiveChanges() {
-  const content = document.getElementById('activeChangesContent');
-  const icon = document.getElementById('activeChangesToggleIcon');
-  if (!content) return;
-  const isHidden = content.style.display === 'none';
-  content.style.display = isHidden ? 'block' : 'none';
-  if (icon) icon.textContent = isHidden ? '▼' : '▶';
+function renderReleaseCard(release) {
+  return `<div class="release-group-card" style="padding:12px; margin:8px 0; border:1px solid #94a3b8; border-radius:8px;">
+    <strong>v${escapeHtml(release.version)} — ${escapeHtml(release.title)}</strong>
+    <small>${escapeHtml(release.date || '')}</small>
+    <ul>${(release.changes || []).map(change => `<li>${escapeHtml(change)}</li>`).join('')}</ul></div>`;
 }
-
 async function checkUpdates() {
-  const spinner = document.getElementById('checkSpinner');
-  const btnText = document.getElementById('btnCheckText');
-  const resultBox = document.getElementById('updateCheckResult');
-  
-  spinner.hidden = false;
-  btnText.textContent = 'Перевірка…';
-  resultBox.hidden = true;
-
+  const button = document.getElementById('btnCheckUpdates');
+  button.disabled = true;
+  visible('checkSpinner', true);
+  text('btnCheckText', 'Перевірка GitHub…');
+  visible('updateCheckResult', true);
   try {
-    const res = await fetch("{% url 'portal:updates_check_api' %}", {
-      headers: { 'X-Requested-With': 'XMLHttpRequest' }
-    });
-    const data = await res.json();
-    
-    resultBox.hidden = false;
-    if (!data.ok) {
-      resultBox.innerHTML = `
-        <div class="alert alert-danger">
-          <strong>Помилка перевірки:</strong> ${data.error || 'Не вдалося зв’язатися з GitHub.'}
-        </div>
-      `;
-      return;
-    }
-
+    const data = await apiRequest('check');
+    currentTargetVersion = data.latest_version;
+    currentReleasesToApply = data.releases || data.releases_between || [];
+    const box = document.getElementById('updateCheckResult');
     if (data.has_update) {
-      currentReleasesToApply = data.releases || (data.release ? [data.release] : []);
-      currentTargetVersion = data.latest_version;
-      const releasesCount = currentReleasesToApply.length;
-      const releasesListHtml = currentReleasesToApply.map(renderReleaseCard).join('');
-      
-      const versionsSummary = releasesCount > 1
-        ? `Включає ${releasesCount} версій (з ${data.current_version} до ${data.latest_version})`
-        : `Версія ${data.latest_version} (поточна: ${data.current_version})`;
-
-      resultBox.innerHTML = `
-        <div class="update-available-card">
-          <div class="update-header-row">
-            <div>
-              <div style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.25rem;">
-                <span class="update-tag">Доступне оновлення</span>
-                ${releasesCount > 1 ? `<span class="badge" style="background: #e0f2fe; color: #0369a1; font-weight: 700; padding: 0.2rem 0.5rem; border-radius: 9999px; font-size: 0.75rem;">+${releasesCount} версій</span>` : ''}
-              </div>
-              <h3 class="update-title">${versionsSummary}</h3>
-              <div style="font-size: 0.85rem; color: #64748b;">
-                ${releasesCount > 1 ? `Усі проміжні зміни будуть послідовно та безпечно застосовані` : `Останній реліз: ${escapeHtml(currentReleasesToApply[0]?.date || 'Нещодавно')}`}
-              </div>
-            </div>
-            {% if can_update %}
-            <button type="button" class="btn btn-primary" onclick="openConfirmModal('${data.latest_version}')">
-              🚀 Оновити до ${data.latest_version}
-            </button>
-            {% else %}
-            <span class="badge" style="background: #e2e8f0; color: #64748b; padding: 0.5rem;">
-              Оновлення доступне суперадміністратору
-            </span>
-            {% endif %}
-          </div>
-          <div class="changes-list">
-            <h4 style="margin: 0 0 0.75rem; font-size: 1rem; color: #1e293b;">
-              📋 Список змін, які будуть застосовані:
-            </h4>
-            <div class="releases-wrapper">
-              ${releasesListHtml}
-            </div>
-          </div>
-        </div>
-      `;
+      box.innerHTML = `<div class="card" style="padding:16px;"><h3>Доступне оновлення v${escapeHtml(data.latest_version)}</h3>
+        ${currentReleasesToApply.map(renderReleaseCard).join('')}
+        {% if can_update %}<button type="button" class="btn btn-primary" onclick="openConfirmModal()">🚀 Оновити систему</button>{% endif %}</div>`;
     } else {
-      resultBox.innerHTML = `
-        <div class="alert alert-success" style="display: flex; align-items: center; gap: 0.5rem;">
-          <span>✅</span>
-          <div>
-            <strong>У вас найновіша версія!</strong> Встановлена версія <strong>${data.current_version}</strong> є актуальною. Нових оновлень на GitHub не знайдено.
-          </div>
-        </div>
-      `;
+      box.innerHTML = `<div class="alert alert-success">Новіших релізів на GitHub не знайдено.
+        Встановлено v${escapeHtml(data.current_version)}.</div>`;
     }
-  } catch (err) {
-    resultBox.hidden = false;
-    resultBox.innerHTML = `
-      <div class="alert alert-danger">
-        <strong>Помилка зв’язку:</strong> Не вдалося виконати запит до сервера.
-      </div>
-    `;
+  } catch (error) {
+    document.getElementById('updateCheckResult').innerHTML = `<div class="alert alert-danger">${escapeHtml(error.message)}</div>`;
   } finally {
-    spinner.hidden = true;
-    btnText.textContent = '🔍 Перевірити наявність оновлень';
+    visible('checkSpinner', false);
+    text('btnCheckText', '🔍 Перевірити наявність оновлень');
+    button.disabled = isUpdating;
   }
 }
-
-function openConfirmModal(ver) {
-  document.getElementById('modalTargetVersion').textContent = ver;
-  const modalChangesList = document.getElementById('modalChangesList');
-  if (modalChangesList) {
-    if (currentReleasesToApply && currentReleasesToApply.length > 0) {
-      modalChangesList.innerHTML = currentReleasesToApply.map(renderReleaseCard).join('');
-    } else {
-      modalChangesList.innerHTML = `<p style="font-size: 0.85rem; color: #64748b; margin: 0.5rem 0;">Планове оновлення компонентів до версії ${escapeHtml(ver)}</p>`;
-    }
-  }
-  document.getElementById('confirmModal').hidden = false;
+function openConfirmModal() {
+  if (confirm(`Оновити систему до v${currentTargetVersion}? Перед запуском буде створено резервну копію.`)) proceedWithUpdate();
 }
-
-function closeConfirmModal() {
-  document.getElementById('confirmModal').hidden = true;
-}
-
-async function proceedWithUpdate() {
-  closeConfirmModal();
-  isUpdating = true;
+function showConfirmBox() { openConfirmModal(); }
+function closeConfirmModal() { visible('confirmModal', false); }
+function hideConfirmBox() { visible('inlineConfirmBox', false); }
+async function proceedWithUpdate(ref = 'origin/main') {
+  if (isUpdating) return;
+  setBusy(true);
+  activeJobId = null;
+  lastStatus = null;
   restartAttempts = 0;
-
-  const progressSection = document.getElementById('updateProgressSection');
-  progressSection.hidden = false;
-  document.getElementById('updateCheckResult').hidden = true;
-  document.getElementById('errorAlert').hidden = true;
-  document.getElementById('successAlert').hidden = true;
-  document.getElementById('restartAlert').hidden = true;
-
-  // Відображаємо зміни в блоці активного оновлення
-  const activeBox = document.getElementById('activeUpdateChangesBox');
-  const activeContent = document.getElementById('activeChangesContent');
-  const activeCount = document.getElementById('activeChangesCount');
-  if (activeBox && activeContent && currentReleasesToApply && currentReleasesToApply.length > 0) {
-    activeCount.textContent = String(currentReleasesToApply.length);
-    activeContent.innerHTML = currentReleasesToApply.map(renderReleaseCard).join('');
-    activeBox.hidden = false;
-  }
-
-  updateStepper(1, 'Отримання коду з GitHub…', 10);
-  addLogLine(`Запуск оновлення до версії ${currentTargetVersion || 'останньої'}…`);
-
+  closeConfirmModal();
+  visible('updateProgressSection', true);
+  ['errorAlert', 'successAlert', 'rollbackNotice', 'restartAlert', 'updateCheckResult'].forEach(id => visible(id, false));
+  renderLogs(['Підготовка нової операції…']);
+  updateStepper(1, 'Підготовка операції…', 5);
+  text('progressPill', 'Виконується');
+  document.getElementById('progressPill').className = 'status-pill status-pill-running';
   try {
-    const formData = new FormData();
-    formData.append('version', currentTargetVersion || '');
-    formData.append('csrfmiddlewaretoken', getCsrfToken());
-
-    const res = await fetch("{% url 'portal:updates_start_api' %}", {
-      method: 'POST',
-      body: formData,
-      headers: { 'X-Requested-With': 'XMLHttpRequest' }
-    });
-    const data = await res.json();
-    if (data.error) {
-      showError(data.error);
-      return;
-    }
-  } catch (err) {
-    addLogLine(`Помилка виклику API: ${err.message}`);
+    const version = ref === 'HEAD' ? document.getElementById('lblCurrentVersion').textContent.replace(/^v/, '').trim() : currentTargetVersion;
+    const data = await apiRequest('start', {ref, version});
+    activeJobId = data.job_id;
+    startPollingStatus();
+  } catch (error) {
+    showError(error.message);
   }
-
-  startPollingStatus();
 }
-
+function forceRebuildCurrentVersion() {
+  if (confirm('Перезібрати саме встановлену ревізію коду? Перед запуском буде створено резервну копію.')) proceedWithUpdate('HEAD');
+}
 function startPollingStatus() {
-  if (updatePollTimer) clearInterval(updatePollTimer);
-  updatePollTimer = setInterval(pollUpdateStatus, 1500);
+  clearInterval(updatePollTimer);
+  updatePollTimer = setInterval(pollUpdateStatus, 2000);
+  pollUpdateStatus();
 }
-
 async function pollUpdateStatus() {
+  if (polling) return;
+  polling = true;
   try {
-    const res = await fetch("{% url 'portal:updates_status_api' %}?t=" + Date.now(), {
-      headers: { 'X-Requested-With': 'XMLHttpRequest' }
-    });
-    
-    if (!res.ok) {
-      handleNetworkDrop();
-      return;
-    }
-
-    const data = await res.json();
+    const data = await apiRequest('status');
+    if (activeJobId && data.job_id !== activeJobId) return;
     restartAttempts = 0;
-    document.getElementById('restartAlert').hidden = true;
-
-    // Оновлення блоку змін процесу оновлення
-    if (Array.isArray(data.releases) && data.releases.length > 0) {
-      const activeBox = document.getElementById('activeUpdateChangesBox');
-      const activeContent = document.getElementById('activeChangesContent');
-      const activeCount = document.getElementById('activeChangesCount');
-      if (activeBox && activeContent && activeContent.innerHTML.trim() === '') {
-        activeCount.textContent = String(data.releases.length);
-        activeContent.innerHTML = data.releases.map(renderReleaseCard).join('');
-        activeBox.hidden = false;
-      }
-    }
-
-    // Оновлення логів
-    if (Array.isArray(data.logs)) {
-      renderLogs(data.logs);
-    }
-
-    // Оновлення кроку
-    if (data.step) {
-      updateStepper(data.step, data.step_name || 'Оновлення…', data.progress || (data.step * 20));
-    }
-
-    if (data.state === 'success') {
-      clearInterval(updatePollTimer);
-      showSuccess(data.target_version);
-    } else if (data.state === 'error') {
-      clearInterval(updatePollTimer);
-      showError(data.error, data.rolled_back);
-    }
-  } catch (err) {
-    handleNetworkDrop();
-  }
-}
-
-function handleNetworkDrop() {
-  // Якщо ми на кроці 3-4 або мережа зникла під час оновлення, значить контейнер перезавантажується
-  if (isUpdating) {
+    visible('restartAlert', false);
+    renderStatus(data);
+  } catch (error) {
     restartAttempts++;
-    document.getElementById('restartAlert').hidden = false;
-    updateStepper(4, 'Перезапуск контейнерів та перевірка зв’язку…', 85);
-    addLogLine(`Перезапуск веб-сервісу… очікування відновлення (спроба ${restartAttempts})`);
-    
-    // Пінгуємо healthz
-    fetch('/healthz/?t=' + Date.now())
-      .then(r => r.json())
-      .then(h => {
-        if (h.status === 'ok') {
-          addLogLine(`Сервіс відновлено! Версія: ${h.version}`);
-          document.getElementById('restartAlert').hidden = true;
-          // Перевіряємо ще раз статус
-          setTimeout(pollUpdateStatus, 1000);
-        }
-      })
-      .catch(() => {});
+    visible('restartAlert', true);
+    text('progressSubtext', `Очікування зв’язку зі службою оновлення (${restartAttempts}). ${error.message}`);
+    // A connection failure does not prove job failure; keep watching through deployment/rollback.
+  } finally { polling = false; }
+}
+function renderStatus(data) {
+  lastStatus = data;
+  if (data.state === 'idle') return;
+  visible('updateProgressSection', true);
+  renderLogs(data.logs || []);
+  updateStepper(data.step || 1, data.step_name, data.state === 'running' ? Math.min(data.progress || 0, 99) : data.progress || 0);
+  if (data.state === 'running') {
+    setBusy(true);
+    text('progressPill', data.step_name?.includes('відкат') ? 'Відновлення' : 'Виконується');
+    document.getElementById('progressPill').className = 'status-pill status-pill-running';
+  } else if (data.state === 'success') {
+    clearInterval(updatePollTimer);
+    setBusy(false);
+    text('progressPill', 'Успішно');
+    document.getElementById('progressPill').className = 'status-pill status-pill-success';
+    visible('successAlert', true);
+    document.getElementById('successAlert').textContent = data.rolled_back ? '✅ Відкат успішно завершено. Попередню версію перевірено.' : '✅ Операцію успішно завершено. Версію, образ і готовність перевірено.';
+    text('lblCurrentVersion', data.current_version || data.target_version);
+  } else if (data.state === 'error') {
+    const details = [data.error, data.rollback_error ? `Помилка відкату: ${data.rollback_error}` : ''].filter(Boolean).join('\n');
+    showError(details, data.rolled_back);
   }
 }
-
-function updateStepper(stepNum, subtext, percent) {
-  document.getElementById('progressBarFill').style.width = Math.max(5, Math.min(100, percent)) + '%';
-  document.getElementById('progressSubtext').textContent = subtext;
-
+function showError(message, rolledBack = false) {
+  clearInterval(updatePollTimer);
+  setBusy(false);
+  text('progressPill', 'Помилка');
+  document.getElementById('progressPill').className = 'status-pill status-pill-error';
+  visible('updateProgressSection', true);
+  visible('errorAlert', true);
+  visible('restartAlert', false);
+  visible('rollbackNotice', rolledBack);
+  text('errorMessage', message);
+  const diagnostic = document.getElementById('updateDiagnostics');
+  if (diagnostic) diagnostic.value = [message, '', ...(lastStatus?.logs || [])].join('\n');
+  if (rolledBack) text('lblCurrentVersion', lastStatus.current_version);
+}
+function updateStepper(step, name, progress) {
+  const fill = document.getElementById('progressBarFill');
+  if (fill) fill.style.width = `${progress}%`;
+  text('progressSubtext', name || 'Оновлення…');
+  text('progressPercentage', `${progress}%`);
+  text('progressPercent', `${progress}%`);
   for (let i = 1; i <= 5; i++) {
-    const el = document.getElementById('step' + i);
-    const line = document.getElementById('line' + (i - 1));
-    if (!el) continue;
-    el.classList.remove('active', 'completed');
-    if (line) line.classList.remove('completed');
-
-    if (i < stepNum) {
-      el.classList.add('completed');
-      el.querySelector('.step-circle').textContent = '✓';
-      if (line) line.classList.add('completed');
-    } else if (i === stepNum) {
-      el.classList.add('active');
-      el.querySelector('.step-circle').textContent = String(i);
-      if (line) line.classList.add('completed');
-    } else {
-      el.querySelector('.step-circle').textContent = String(i);
-    }
+    const element = document.getElementById(`step${i}`);
+    if (!element) continue;
+    element.classList.toggle('completed', i < step);
+    element.classList.toggle('active', i === step);
+    element.querySelector('.step-circle').textContent = i < step ? '✓' : i;
   }
 }
-
 function renderLogs(logs) {
   const terminal = document.getElementById('terminalBody');
-  terminal.innerHTML = logs.map(l => `<div class="log-line">${escapeHtml(l)}</div>`).join('');
+  terminal.innerHTML = logs.map(line => `<div class="log-line">${escapeHtml(line)}</div>`).join('');
   terminal.scrollTop = terminal.scrollHeight;
 }
-
-function addLogLine(text) {
-  const terminal = document.getElementById('terminalBody');
-  const div = document.createElement('div');
-  div.className = 'log-line';
-  div.textContent = `[${new Date().toLocaleTimeString()}] ${text}`;
-  terminal.appendChild(div);
-  terminal.scrollTop = terminal.scrollHeight;
-}
-
-function showSuccess(ver) {
-  isUpdating = false;
-  document.getElementById('progressBarFill').style.width = '100%';
-  document.getElementById('progressPill').className = 'status-pill status-pill-success';
-  document.getElementById('progressPill').textContent = 'Успішно';
-  document.getElementById('successAlert').hidden = false;
-  
-  if (ver) {
-    document.getElementById('lblCurrentVersion').textContent = ver;
+async function copyTerminalLogs() {
+  const diagnostic = document.getElementById('updateDiagnostics');
+  const value = lastStatus?.error ? diagnostic.value : document.getElementById('terminalBody').innerText;
+  try { await navigator.clipboard.writeText(value); }
+  catch (_) {
+    const temporary = document.createElement('textarea');
+    temporary.value = value;
+    document.body.appendChild(temporary);
+    temporary.select();
+    document.execCommand('copy');
+    temporary.remove();
   }
-
-  let count = 3;
-  const countdownEl = document.getElementById('reloadCountdown');
-  const timer = setInterval(() => {
-    count--;
-    if (countdownEl) countdownEl.textContent = String(count);
-    if (count <= 0) {
-      clearInterval(timer);
-      window.location.reload();
-    }
-  }, 1000);
+  text('copyUpdateResult', 'Скопійовано');
 }
-
-function showError(msg, rolledBack) {
-  isUpdating = false;
-  document.getElementById('progressPill').className = 'status-pill status-pill-error';
-  document.getElementById('progressPill').textContent = 'Помилка';
-  document.getElementById('errorAlert').hidden = false;
-  document.getElementById('errorMessage').textContent = msg || 'Невідома помилка під час виконання оновлення.';
-  if (rolledBack) {
-    document.getElementById('rollbackNotice').hidden = false;
-  }
-}
-
+function toggleTerminal() { document.getElementById('terminalBody').classList.toggle('collapsed'); }
+function toggleActiveChanges() {}
+function toggleInProgressChangelog() {}
 function resetUpdateUI() {
-  document.getElementById('updateProgressSection').hidden = true;
-  document.getElementById('errorAlert').hidden = true;
-  isUpdating = false;
+  visible('updateProgressSection', false);
+  activeJobId = null;
+  setBusy(false);
 }
-
-function toggleTerminal() {
-  document.getElementById('terminalBody').classList.toggle('collapsed');
+async function triggerManualRollback() {
+  if (isUpdating || !confirm('Відновити попередню версію, БД і файли з копії останньої операції?')) return;
+  setBusy(true);
+  visible('updateProgressSection', true);
+  visible('errorAlert', false);
+  visible('successAlert', false);
+  try {
+    const data = await apiRequest('rollback', {});
+    activeJobId = data.job_id;
+    startPollingStatus();
+  } catch (error) { showError(error.message); }
 }
-
-function escapeHtml(str) {
-  return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-}
-
-// Перевіряємо статус при завантаженні сторінки (якщо оновлення вже виконувалося)
-document.addEventListener('DOMContentLoaded', () => {
-  fetch("{% url 'portal:updates_status_api' %}")
-    .then(r => r.json())
-    .then(data => {
-      if (data && data.state === 'running') {
-        document.getElementById('updateProgressSection').hidden = false;
-        isUpdating = true;
-        if (Array.isArray(data.releases) && data.releases.length > 0) {
-          const activeBox = document.getElementById('activeUpdateChangesBox');
-          const activeContent = document.getElementById('activeChangesContent');
-          const activeCount = document.getElementById('activeChangesCount');
-          if (activeBox && activeContent) {
-            activeCount.textContent = String(data.releases.length);
-            activeContent.innerHTML = data.releases.map(renderReleaseCard).join('');
-            activeBox.hidden = false;
-          }
-        }
-        startPollingStatus();
-      }
-    })
-    .catch(() => {});
+function triggerRollback() { triggerManualRollback(); }
+document.addEventListener('DOMContentLoaded', async () => {
+  try {
+    const data = await apiRequest('status');
+    renderStatus(data);
+    if (data.state === 'running') { activeJobId = data.job_id; startPollingStatus(); }
+  } catch (_) {}
 });
 </script>
 {% endblock %}

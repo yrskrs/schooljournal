@@ -1,4 +1,6 @@
 """Versioned, checksummed snapshots. Never include credentials or live personal data in source."""
+import io
+import os
 import hashlib
 import json
 import re
@@ -55,21 +57,32 @@ def checked_members(archive, source=False):
 
 
 def create(work, root, image):
-    with tarfile.open(work / 'source.tar.gz', 'w:gz') as archive:
-        paths = [root / name for name in FILES if (root / name).is_file()]
-        for directory in DIRECTORIES:
-            if (root / directory).exists():
-                paths.extend((root / directory).rglob('*'))
-        for path in sorted(paths):
-            name = path.relative_to(root).as_posix()
-            if path.is_file() and not path.is_symlink() and source_allowed(name):
-                archive.add(path, arcname=name, recursive=False)
-    commit = ''
-    if shutil.which('git'):
-        result = subprocess.run(['git', '-C', str(root), 'rev-parse', 'HEAD'], capture_output=True, text=True)
-        commit = result.stdout.strip() if result.returncode == 0 else ''
+    commit = os.environ.get('BACKUP_SOURCE_COMMIT', '')
+    if commit:
+        if not re.fullmatch(r'[0-9a-f]{40}', commit):
+            raise ValueError('Invalid deployed source commit')
+        data = subprocess.check_output(['git', '-C', str(root), 'archive', commit])
+        with tarfile.open(fileobj=io.BytesIO(data)) as source, tarfile.open(work / 'source.tar.gz', 'w:gz') as archive:
+            version = source.extractfile('VERSION').read().decode().strip()
+            for member in source.getmembers():
+                if member.isfile() and source_allowed(member.name):
+                    archive.addfile(member, source.extractfile(member))
+    else:
+        with tarfile.open(work / 'source.tar.gz', 'w:gz') as archive:
+            paths = [root / name for name in FILES if (root / name).is_file()]
+            for directory in DIRECTORIES:
+                if (root / directory).exists():
+                    paths.extend((root / directory).rglob('*'))
+            for path in sorted(paths):
+                name = path.relative_to(root).as_posix()
+                if path.is_file() and not path.is_symlink() and source_allowed(name):
+                    archive.add(path, arcname=name, recursive=False)
+        version = (root / 'VERSION').read_text().strip()
+        if shutil.which('git'):
+            result = subprocess.run(['git', '-C', str(root), 'rev-parse', 'HEAD'], capture_output=True, text=True)
+            commit = result.stdout.strip() if result.returncode == 0 else ''
     manifest = {'format': 1, 'created_at': datetime.now(timezone.utc).isoformat(),
-                'version': (root / 'VERSION').read_text().strip(), 'commit': commit, 'image': image}
+                'version': version, 'commit': commit, 'image': image}
     (work / 'manifest.json').write_text(json.dumps(manifest, indent=2) + '\n')
     (work / 'SHA256SUMS').write_text(''.join(digest(work / name) + '  ' + name + '\n' for name in PAYLOADS))
 

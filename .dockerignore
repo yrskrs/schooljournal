@@ -44,3 +44,7 @@ compose.override.yaml
 .release-image.yaml
 .local-audits/
 test_media*/
+
+# Runtime updater files
+.maintenance.lock
+.release-image.yaml

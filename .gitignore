@@ -30,3 +30,7 @@ release/
 .release-image.yaml
 
 compose.override.yaml
+
+# Runtime updater files
+.maintenance.lock
+.release-image.yaml

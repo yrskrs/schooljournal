@@ -11,6 +11,10 @@ docker compose version >/dev/null
 [[ -f "$ENV_FILE" ]] || { echo "Missing $ENV_FILE. Run ./setup.sh." >&2; exit 1; }
 
 dc() {
+    if [[ -n "${UPDATER_COMPOSE_FILE:-}" ]]; then
+        docker compose --env-file "$ENV_FILE" -f "$UPDATER_COMPOSE_FILE" "$@"
+        return
+    fi
     local -a options=(--env-file "$ENV_FILE" -f "$JOURNAL_ROOT/compose.yaml")
     [[ ! -f "$JOURNAL_ROOT/.release-image.yaml" ]] || options+=(-f "$JOURNAL_ROOT/.release-image.yaml")
     [[ ! -f "$JOURNAL_ROOT/compose.override.yaml" ]] || options+=(-f "$JOURNAL_ROOT/compose.override.yaml")
@@ -30,6 +34,6 @@ healthy() {
     # nginx resolves web at startup; reload it after web obtains a new address.
     dc up -d nginx || return
     dc restart nginx || return
-    dc up -d --wait --wait-timeout "${HEALTH_WAIT_TIMEOUT:-180}" || return
-    dc exec -T -e EXPECTED_VERSION="$(cat "$JOURNAL_ROOT/VERSION")" web python -c 'import json, os, urllib.request; from pathlib import Path; d=json.load(urllib.request.urlopen("http://localhost:8000/healthz/")); assert d["status"] == "ok" and d["version"] == Path("/app/VERSION").read_text().strip() == os.environ["EXPECTED_VERSION"]'
+    dc up -d --wait --wait-timeout "${HEALTH_WAIT_TIMEOUT:-180}" db web nginx || return
+    dc exec -T -e EXPECTED_VERSION="${EXPECTED_VERSION:-$(cat "$JOURNAL_ROOT/VERSION")}" web python -c 'import json, os, urllib.request; from pathlib import Path; d=json.load(urllib.request.urlopen("http://localhost:8000/healthz/")); assert d["status"] == "ok" and d["version"] == Path("/app/VERSION").read_text().strip() == os.environ["EXPECTED_VERSION"]'
 }
