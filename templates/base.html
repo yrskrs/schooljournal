@@ -41,7 +41,6 @@
               <li><a href="{% url 'portal:superadmin_assignments' %}" class="nav-link">Призначення</a></li>
               <li><a href="{% url 'portal:superadmin_students' %}" class="nav-link">Учні</a></li>
               <li><a href="{% url 'portal:superadmin_audit' %}" class="nav-link">Аудит</a></li>
-              <li><a href="{% url 'portal:system_updates' %}" class="nav-link">Оновлення</a></li>
               {% if user.is_superadmin_user %}<li><a href="/admin/" class="nav-link" target="_blank" title="Технічна адмінка">Django Admin</a></li>{% endif %}
             {% else %}
               <li><a href="{% url 'portal:teacher_dashboard' %}" class="nav-link">Мої журнали</a></li>
@@ -52,6 +51,7 @@
             <li><a href="{% url 'portal:roster_sync' %}" class="nav-link">Списки та синхронізація</a></li>
             <li><a href="{% url 'portal:weekly_schedule' %}" class="nav-link">Розклад на тиждень</a></li>
             <li><a href="{% url 'portal:lesson_times' %}" class="nav-link">Час уроків</a></li>
+            <li><a href="{% url 'portal:system_updates' %}" class="nav-link">Оновлення</a></li>
           </ul>
         </nav>
 
