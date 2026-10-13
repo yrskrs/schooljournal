@@ -8,6 +8,7 @@ const JOURNAL_THEMATIC_TYPES = ['THEMATIC', 'MODULAR', 'THEMATIC_NUSH'];
 let quickPickerInitialized = false;
 let keyboardNavInitialized = false;
 let journalActionsInitialized = false;
+let journalToolsInitialized = false;
 let nzStatusTimer;
 
 function initJournalContent() {
@@ -35,6 +36,7 @@ function initJournalContent() {
   initLessonScheduling();
   initAssessmentSources();
   initJournalActions();
+  initJournalTools();
 }
 
 document.addEventListener('journal:refreshed', initJournalContent);
@@ -680,6 +682,61 @@ function openAssessmentModal(link) {
   const url = new URL(link.href, window.location.href);
   url.searchParams.set('modal', '1');
   loadAssessmentModal(url);
+}
+
+function positionJournalToolsMenu() {
+  const tools = document.getElementById('journalTools');
+  if (!tools?.open) return;
+  const menu = tools.querySelector('.journal-tools-menu');
+  const rect = tools.querySelector('summary').getBoundingClientRect();
+  const viewport = window.visualViewport;
+  const margin = 8, gap = 5;
+  const left = (viewport?.offsetLeft || 0) + margin;
+  const top = (viewport?.offsetTop || 0) + margin;
+  const width = (viewport?.width || window.innerWidth) - margin * 2;
+  const bottom = top + (viewport?.height || window.innerHeight) - margin * 2;
+
+  menu.style.position = 'fixed';
+  menu.style.right = 'auto';
+  menu.style.maxWidth = `${width}px`;
+  menu.style.maxHeight = `${bottom - top}px`;
+  const below = Math.max(0, bottom - Math.max(top, rect.bottom + gap));
+  const above = Math.max(0, Math.min(bottom, rect.top - gap) - top);
+  const openAbove = menu.offsetHeight > below && above > below;
+  menu.style.maxHeight = `${openAbove ? above : below}px`;
+  menu.style.left = `${Math.max(left, Math.min(rect.left, left + width - menu.offsetWidth))}px`;
+  const menuTop = openAbove ? rect.top - gap - menu.offsetHeight : rect.bottom + gap;
+  menu.style.top = `${Math.max(top, Math.min(menuTop, bottom - menu.offsetHeight))}px`;
+}
+
+function initJournalTools() {
+  const tools = document.getElementById('journalTools');
+  if (!tools) return;
+  if (!tools.dataset.menuInitialized) {
+    tools.dataset.menuInitialized = 'true';
+    tools.addEventListener('toggle', positionJournalToolsMenu);
+  }
+  positionJournalToolsMenu();
+  if (journalToolsInitialized) return;
+  journalToolsInitialized = true;
+  document.addEventListener('click', event => {
+    const tools = document.getElementById('journalTools');
+    if (tools && !tools.contains(event.target)) tools.open = false;
+  });
+  document.addEventListener('keydown', event => {
+    const tools = document.getElementById('journalTools');
+    if (event.key === 'Escape' && tools?.open) {
+      tools.open = false;
+      tools.querySelector('summary').focus({ preventScroll: true });
+    }
+  });
+  document.addEventListener('scroll', event => {
+    const menu = document.querySelector('#journalTools .journal-tools-menu');
+    if (!menu?.contains(event.target)) positionJournalToolsMenu();
+  }, true);
+  window.addEventListener('resize', positionJournalToolsMenu);
+  window.visualViewport?.addEventListener('resize', positionJournalToolsMenu);
+  window.visualViewport?.addEventListener('scroll', positionJournalToolsMenu);
 }
 
 function initJournalActions() {
