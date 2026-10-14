@@ -72,7 +72,10 @@ def teacher_dashboard(request):
         return (2, j.student_class.grade_level, j.student_class.name, j.subject.name)
 
     from apps.journals.services.extra_students import extra_parent
-    my_journals = sorted((journal for journal in my_journals if not extra_parent(journal)), key=journal_sort_key)
+    all_my_journals = list(my_journals)
+    extra_journals = sorted([j for j in all_my_journals if extra_parent(j)],
+                            key=lambda j: (j.student_class.grade_level, j.student_class.name, j.subject.name))
+    my_journals = sorted((journal for journal in all_my_journals if not extra_parent(journal)), key=journal_sort_key)
 
     class_groups = OrderedDict()
     for j in my_journals:
@@ -88,6 +91,7 @@ def teacher_dashboard(request):
 
     context = {
         'my_journals': my_journals,
+        'extra_journals': extra_journals,
         'class_blocks': class_blocks,
         'override_journals': override_journals,
         'assignments': assignments,

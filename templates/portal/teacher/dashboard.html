@@ -168,6 +168,70 @@
   </div>
 </div>
 
+<!-- Журнали позакласних учнів (якщо є) -->
+{% if extra_journals %}
+<div style="margin-bottom: 2.5rem;">
+  <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; flex-wrap: wrap; gap: 0.5rem;">
+    <h2 style="font-size: 1.25rem; font-weight: 700; color: #1e3a8a; margin: 0; display: flex; align-items: center; gap: 0.5rem;">
+      <span>📘</span> Журнали позакласних учнів
+    </h2>
+    <span style="font-size: 0.85rem; color: var(--text-muted);">
+      Окремі локальні журнали для виписування оцінок позакласних учнів та передачі основним вчителям (не відправляються на nz.ua)
+    </span>
+  </div>
+
+  <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 1.25rem;">
+    {% for j in extra_journals %}
+      <div class="card journal-tile-card" style="margin-bottom: 0; display: flex; flex-direction: column; justify-content: space-between; border-left: 4px solid #2563eb; background: #fafcff;">
+        <div>
+          <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 0.75rem;">
+            <div style="display: flex; gap: 0.35rem; align-items: center; flex-wrap: wrap;">
+              <span class="user-role-pill" style="font-size: 0.85rem; font-weight: 700; padding: 0.2rem 0.6rem; background: #dbeafe; color: #1e40af;">
+                {{ j.student_class.name }}
+              </span>
+              <span class="user-role-pill" style="font-size: 0.72rem; font-weight: 600; background: #f1f5f9; color: #475569;" title="Цей журнал локальний і не відправляється на nz.ua">
+                Лише для вчителя
+              </span>
+            </div>
+            <span class="user-role-pill" style="background-color: #dcfce7; color: #15803d; font-size: 0.75rem;">
+              Позакласний
+            </span>
+          </div>
+
+          <h3 style="font-size: 1.18rem; font-weight: 700; color: var(--primary-dark); margin-bottom: 0.35rem;">
+            {{ j.subject.name }}
+          </h3>
+          <p style="font-size: 0.83rem; color: var(--text-muted); margin-bottom: 0.75rem;">
+            Навчальний рік: {{ j.academic_year.name }}
+          </p>
+
+          <div style="display: flex; gap: 1rem; font-size: 0.85rem; color: var(--text-main); padding: 0.5rem 0; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); margin-bottom: 0.85rem;">
+            <div>
+              <strong>{{ j.lessons.count }}</strong> <span style="color: var(--text-muted);">уроків</span>
+            </div>
+            <div>
+              <strong>{{ j.student_class.enrollments.count }}</strong> <span style="color: var(--text-muted);">позакласних учнів</span>
+            </div>
+          </div>
+        </div>
+
+        <div style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
+          <a href="{% url 'portal:journal_detail' journal_id=j.id %}" class="btn btn-primary" style="flex: 1;" draggable="false">
+            Відкрити журнал &rarr;
+          </a>
+          <a href="{% url 'portal:export_journal_xlsx' journal_id=j.id %}" class="btn btn-secondary btn-sm" title="Експорт в Excel" draggable="false">
+            XLSX
+          </a>
+          <a href="{% url 'portal:export_journal_pdf' journal_id=j.id %}" class="btn btn-secondary btn-sm" title="Друкований PDF" draggable="false">
+            PDF
+          </a>
+        </div>
+      </div>
+    {% endfor %}
+  </div>
+</div>
+{% endif %}
+
 <!-- Журнали на заміну (якщо є) -->
 {% if override_journals %}
 <div>

@@ -93,8 +93,8 @@ class NewJournalFeaturesTests(TestCase):
         self.assertFalse(result.resolved)
         self.assertIsNone(result.ignored_at)
 
-    def test_keep_extracurricular_preserves_results_without_creating_class_or_journal(self):
-        """An explicit separate pupil keeps their mark without school enrollment."""
+    def test_keep_extracurricular_creates_journal_and_records_grade(self):
+        """При виборі 'Залишити позакласним' створюється окремий журнал, підтягуються теми й записуються оцінки."""
         conn = GradeAPIConnection.objects.create(
             journal=self.journal, name='Завдання', source='schoolwork', url='https://example.com/api', api_key='k456',
             source_class_id='c1', source_subject_id='s1'
@@ -106,9 +106,6 @@ class NewJournalFeaturesTests(TestCase):
         )
 
         url = reverse('portal:api_inbox', args=[self.journal.pk])
-        before = (StudentClass.objects.count(), Journal.objects.count(), Student.objects.count(),
-                  ClassEnrollment.objects.count(), Lesson.objects.count(), Grade.objects.count())
-        # The legacy empty-choice POST follows the same separate-pupil decision.
         resp = self.client.post(url, {
             'action': 'match',
             'extra_id': extra.pk,
@@ -117,17 +114,24 @@ class NewJournalFeaturesTests(TestCase):
         })
         self.assertEqual(resp.status_code, 302)
 
-        self.assertEqual(before, (StudentClass.objects.count(), Journal.objects.count(), Student.objects.count(),
-                                  ClassEnrollment.objects.count(), Lesson.objects.count(), Grade.objects.count()))
         extra.refresh_from_db()
         self.assertTrue(extra.is_separate)
-        self.assertIsNone(extra.separate_student_id)
-        self.assertIsNone(extra.separate_journal_id)
+        self.assertIsNotNone(extra.separate_student_id)
+        self.assertIsNotNone(extra.separate_journal_id)
+        self.assertEqual(extra.separate_journal.student_class.letter, 'ПК')
+        self.assertEqual(extra.separate_journal.nz_journal_id, '')
+
+        # Перевіряємо що оцінку записано в окремий журнал
+        grade = Grade.objects.filter(student=extra.separate_student).first()
+        self.assertIsNotNone(grade)
+        self.assertEqual(grade.value, '11')
+        self.assertEqual(grade.lesson.journal_id, extra.separate_journal_id)
+        self.assertEqual(grade.lesson.date.isoformat(), '2026-09-20')
+
         result = APIInboxResult.objects.get(extra_student=extra)
         self.assertTrue(result.resolved)
         self.assertEqual(result.payload['value'], '11')
-        self.assertContains(self.client.get(url), 'Практична робота')
-        self.assertContains(self.client.get(reverse('portal:outside_students')), extra.name)
+        self.assertContains(self.client.get(url), 'Залишено позакласним')
 
     def test_ignore_nz_change_excludes_it_from_delta(self):
         """3. Тест: кнопка 'Ігнорувати запис' у синхронізації з nz.ua виключає запис із дельти."""
@@ -254,3 +258,70 @@ class NewJournalFeaturesTests(TestCase):
         self.assertContains(resp, 'toggleStudentActionMenu')
         self.assertContains(resp, 'Ігноровано (сімейна форма)')
         self.assertContains(resp, 'role="menuitemcheckbox" aria-checked="false"')
+
+    def test_extracurricular_journal_workflow(self):
+        """Тест повного життєвого циклу позакласного журналу: створення, підтягування тем, дашборд, перегляд та блокування nz.ua."""
+        # 1. Створюємо позакласного учня та результат у вхідних
+        conn = GradeAPIConnection.objects.create(
+            journal=self.journal, name='Тести', source='schooltest', url='https://example.com/api', api_key='k123',
+            source_class_id='c1', source_subject_id='s1'
+        )
+        extra = ExtraStudent.objects.create(connection=conn, external_key='u88', name='Сидоренко Василь')
+        APIInboxResult.objects.create(
+            connection=conn, external_id='res-extra-1', extra_student=extra,
+            payload={'date': '2026-09-15', 'value': '12', 'title': 'Тест з баз даних'}
+        )
+
+        inbox_url = reverse('portal:api_inbox', args=[self.journal.pk])
+        # Вчитель натискає "Залишити позакласним"
+        resp = self.client.post(inbox_url, {
+            'action': 'keep_separate',
+            'extra_id': extra.pk,
+            'version': extra.updated_at.isoformat(),
+        }, follow=True)
+        self.assertEqual(resp.status_code, 200)
+
+        extra.refresh_from_db()
+        self.assertIsNotNone(extra.separate_journal_id)
+        extra_journal = extra.separate_journal
+
+        # 2. Перевіряємо що тема уроку підтягнулася з основного журналу (2026-09-15 -> 'Бази даних')
+        extra_lesson = extra_journal.lessons.filter(date=date(2026, 9, 15)).first()
+        self.assertIsNotNone(extra_lesson)
+        self.assertEqual(extra_lesson.topic, 'Бази даних')
+
+        # Оцінку записано
+        grade = Grade.objects.filter(lesson=extra_lesson, student=extra.separate_student).first()
+        self.assertIsNotNone(grade)
+        self.assertEqual(grade.value, '12')
+
+        # 3. Додаємо новий урок до основного журналу та перевіряємо кнопку "Підтягнути теми"
+        new_main_lesson = Lesson.objects.create(
+            journal=self.journal, date=date(2026, 9, 22), lesson_number=1, topic='Алгоритми пошуку'
+        )
+        sync_url = reverse('portal:sync_extra_topics', args=[extra_journal.pk])
+        sync_resp = self.client.post(sync_url, follow=True)
+        self.assertEqual(sync_resp.status_code, 200)
+        self.assertTrue(extra_journal.lessons.filter(date=date(2026, 9, 22), topic='Алгоритми пошуку').exists())
+
+        # 4. Перевіряємо що позакласний журнал показується у дашборді вчителя у блоці extra_journals
+        dash_resp = self.client.get(reverse('portal:teacher_dashboard'))
+        self.assertIn(extra_journal, dash_resp.context['extra_journals'])
+        self.assertContains(dash_resp, 'Журнали позакласних учнів')
+        self.assertContains(dash_resp, extra_journal.student_class.name)
+
+        # 5. Перевіряємо що екран journal_detail для позакласного журналу відкривається успішно (200), не редіректить
+        detail_resp = self.client.get(reverse('portal:journal_detail', args=[extra_journal.pk]))
+        self.assertEqual(detail_resp.status_code, 200)
+        self.assertContains(detail_resp, 'Журнал позакласних учнів')
+        self.assertContains(detail_resp, 'Сидоренко Василь')
+        self.assertContains(detail_resp, 'Бази даних')
+        self.assertContains(detail_resp, 'Алгоритми пошуку')
+        self.assertContains(detail_resp, '12')
+        self.assertContains(detail_resp, 'Локальний (не відправляється на nz.ua)')
+
+        # 6. Перевіряємо що відправлення в nz.ua заблоковано для цього журналу
+        nz_resp = self.client.post(reverse('portal:nz_sync_execute', args=[extra_journal.pk]))
+        self.assertEqual(nz_resp.status_code, 400)
+        self.assertIn('не відправляється на nz.ua', nz_resp.json()['message'])
+

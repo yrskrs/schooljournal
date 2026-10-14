@@ -1,3 +1,4 @@
+import datetime as dt
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.db import transaction
@@ -9,7 +10,7 @@ from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 from django.views.decorators.http import require_http_methods
 
-from apps.journals.models import ExtraStudent, APIInboxResult, Journal, AuditLog
+from apps.journals.models import ExtraStudent, APIInboxResult, Journal, AuditLog, Lesson, LessonType
 from apps.journals.services.assessment import journal_students
 from apps.journals.services.external_grades import import_grade_records, ExternalAPIError
 from apps.portal.permissions import has_journal_access
@@ -67,7 +68,7 @@ def api_inbox(request, journal_id):
                         messages.success(request, text)
                     elif action == 'keep_separate' or (action == 'match' and choice == ''):
                         separate, created = keep_separate(extra, request.user)
-                        messages.success(request, f'Учня «{extra.name}» збережено окремо. Його результати доступні тут без створення класу.' if separate is None else f'Історію учня «{extra.name}» збережено в попередньому окремому журналі.')
+                        messages.success(request, f'Учня «{extra.name}» додано до журналу позакласних учнів «{separate.student_class.name}». Теми уроків та оцінки перенесено.')
                     else:
                         student = journal_students(journal).filter(pk=int(choice)).first() if str(choice or '').isdigit() else None
                         if not student:
@@ -108,12 +109,31 @@ def api_inbox(request, journal_id):
                         raise ExternalAPIError('Результат змінився після перегляду. Оновіть сторінку.')
                     payload = dict(result.payload)
                     lesson_id = request.POST.get('lesson')
+                    target_journal = result.extra_student.separate_journal if result.extra_student and result.extra_student.separate_journal_id else journal
                     if lesson_id:
-                        target_journal = result.extra_student.separate_journal if result.extra_student and result.extra_student.separate_journal_id else journal
                         lesson = target_journal.lessons.filter(pk=int(lesson_id)).first() if str(lesson_id).isdigit() else None
                         if not lesson or lesson.date.isoformat() != payload.get('date'):
                             raise ExternalAPIError('Оберіть урок цього журналу на початкову дату результату.')
                         payload['lesson_number'] = lesson.lesson_number
+                    else:
+                        d_str = payload.get('date')
+                        if d_str and target_journal != journal:
+                            l_date = dt.date.fromisoformat(d_str)
+                            lesson = target_journal.lessons.filter(date=l_date).first()
+                            if not lesson:
+                                main_lesson = journal.lessons.filter(date=l_date).first()
+                                topic = main_lesson.topic if main_lesson else (payload.get('title') or 'Позакласна робота')
+                                lesson = Lesson.objects.create(
+                                    journal=target_journal,
+                                    date=l_date,
+                                    lesson_number=main_lesson.lesson_number if main_lesson else 1,
+                                    topic=topic,
+                                    homework=main_lesson.homework if main_lesson else '',
+                                    lesson_type=main_lesson.lesson_type if main_lesson else LessonType.ORDINARY,
+                                    semester=main_lesson.semester if main_lesson else None,
+                                    created_by=request.user
+                                )
+                            payload['lesson_number'] = lesson.lesson_number
                     log = import_grade_records(result.connection, [payload], request.user,
                         journal.academic_year.start_date, journal.academic_year.end_date)
                     if log.counts['errors']:
@@ -182,9 +202,7 @@ def api_inbox(request, journal_id):
         subject=journal.subject,
         teacher=journal.teacher,
     ).first()
-    if extra_journal and not (extra_journal.lessons.filter(grades__isnull=False).exists()
-            or extra_journal.summary_grades.exists() or extra_journal.lessons.filter(attendances__isnull=False).exists()):
-        extra_journal = None
+
 
     filters = request.GET.copy()
     for key in ('page', 'results_page', 'ignored_page'):

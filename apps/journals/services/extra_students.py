@@ -1,9 +1,60 @@
-"""Teacher decisions about one stable source identity, never a name match."""
+import datetime as dt
 from django.db.models import Q
-from apps.curriculum.models import Student
-from apps.journals.models import Journal, ExtraStudent, DeletedAPIIdentity, AuditLog, GradeStudentMapping, ExternalGrade
+from apps.curriculum.models import Student, StudentClass, ClassEnrollment
+from apps.journals.models import (
+    Journal, ExtraStudent, DeletedAPIIdentity, AuditLog, GradeStudentMapping,
+    ExternalGrade, Lesson, Grade, LessonType
+)
 from apps.portal.permissions import has_journal_access
 from .external_grades import ExternalAPIError
+
+
+def sync_topics_from_main_journal(extra_journal, main_journal=None):
+    """
+    Підтягує або оновлює теми уроків з основного навчального журналу
+    в окремий позакласний журнал вчителя.
+    """
+    if not main_journal:
+        main_journal = extra_parent(extra_journal)
+    if not main_journal:
+        return 0
+    created_count = 0
+    updated_count = 0
+    for l in main_journal.lessons.all():
+        extra_lesson, created = Lesson.objects.get_or_create(
+            journal=extra_journal,
+            date=l.date,
+            lesson_number=l.lesson_number,
+            defaults={
+                'topic': l.topic,
+                'homework': l.homework,
+                'lesson_type': l.lesson_type,
+                'semester': l.semester,
+                'lesson_time': l.lesson_time,
+                'created_by': l.created_by,
+            }
+        )
+        if created:
+            created_count += 1
+        else:
+            to_update = []
+            if not extra_lesson.topic and l.topic:
+                extra_lesson.topic = l.topic
+                to_update.append('topic')
+            if not extra_lesson.homework and l.homework:
+                extra_lesson.homework = l.homework
+                to_update.append('homework')
+            if extra_lesson.lesson_type != l.lesson_type and extra_lesson.lesson_type == LessonType.ORDINARY:
+                extra_lesson.lesson_type = l.lesson_type
+                to_update.append('lesson_type')
+            if not extra_lesson.semester_id and l.semester_id:
+                extra_lesson.semester = l.semester
+                to_update.append('semester')
+            if to_update:
+                to_update.append('updated_at')
+                extra_lesson.save(update_fields=to_update)
+                updated_count += 1
+    return created_count + updated_count
 
 
 def extra_parent(journal):
@@ -59,14 +110,20 @@ def audit(extra, user, action, description, **changes):
 
 
 def match_student(extra, student, user):
-    if extra.separate_student_id:
-        raise ExternalAPIError('Учня вже залишено в окремому журналі. Видалення або перенесення його історії потребує окремого рішення.')
     if identity_records(extra).exclude(student=student).exists():
         raise ExternalAPIError('Відповідність уже має імпортовану історію іншого учня. Переприв’язування заборонено.')
+    sep_student = extra.separate_student
+    sep_journal = extra.separate_journal
     previous = extra.matched_student_id
     extra.matched_student = student
     extra.is_separate = False
-    extra.save(update_fields=['matched_student', 'is_separate', 'updated_at'])
+    extra.separate_student = None
+    extra.separate_journal = None
+    extra.save(update_fields=['matched_student', 'is_separate', 'separate_student', 'separate_journal', 'updated_at'])
+    if sep_student:
+        if sep_journal:
+            sep_student.grades.filter(lesson__journal=sep_journal).delete()
+        sep_student.delete()
     audit(extra, user, AuditLog.Action.UPDATE, f'Підтверджено відповідність «{extra.name}»: «{student.get_full_name_ukr()}».',
         matched_student={'old': previous, 'new': student.pk})
 
@@ -74,15 +131,104 @@ def match_student(extra, student, user):
 def keep_separate(extra, user):
     if extra.matched_student_id or identity_records(extra).exists():
         raise ExternalAPIError('Учень уже має відповідність класу або імпортовану історію. Її перенесення потребує окремого рішення.')
-    if extra.separate_student_id:
+    journal = extra.connection.journal
+    if extra.separate_student_id and extra.separate_journal_id:
         return extra.separate_journal, False
+
+    extra_class_name = f"{journal.student_class.name} (Позакласні)"
+    extra_class, _ = StudentClass.objects.get_or_create(
+        school=journal.school,
+        academic_year=journal.academic_year,
+        name=extra_class_name,
+        defaults={
+            'grade_level': journal.student_class.grade_level,
+            'letter': 'ПК',
+        }
+    )
+
+    extra_journal, _ = Journal.objects.get_or_create(
+        school=journal.school,
+        academic_year=journal.academic_year,
+        student_class=extra_class,
+        subject=journal.subject,
+        defaults={
+            'teacher': journal.teacher,
+            'nz_journal_id': '',
+        }
+    )
+    if not has_journal_access(user, extra_journal, write=True):
+        raise ExternalAPIError('Окремий журнал належить іншому вчителю. Зверніться до адміністратора.')
+
+    student = extra.separate_student
+    if not student:
+        names = extra.name.strip().split(None, 1)
+        last_name = names[0] if names else 'Учень'
+        first_name = names[1] if len(names) > 1 else ''
+        student = Student.objects.create(
+            school=journal.school,
+            last_name=last_name,
+            first_name=first_name,
+            notes=f'Позакласний учень ({journal.student_class.name})'
+        )
+
+    ClassEnrollment.objects.get_or_create(
+        student=student,
+        student_class=extra_class,
+        defaults={'is_active': True}
+    )
+
     created = not extra.is_separate
+    extra.separate_student = student
+    extra.separate_journal = extra_journal
     extra.is_separate = True
-    extra.save(update_fields=['is_separate', 'updated_at'])
-    extra.results.filter(is_ignored=False).update(resolved=True, reason='Збережено для окремого учня без зарахування до класу.')
+    extra.save(update_fields=['separate_student', 'separate_journal', 'is_separate', 'updated_at'])
+
+    # Підтягуємо теми уроків з основного журналу
+    sync_topics_from_main_journal(extra_journal, journal)
+
+    # Переносимо результати та оцінки учня в окремий журнал позакласних
+    for res in extra.results.filter(is_ignored=False):
+        payload = res.payload
+        d_str = payload.get('date')
+        val = payload.get('value')
+        if d_str and val is not None:
+            try:
+                lesson_date = dt.date.fromisoformat(d_str)
+                lesson = extra_journal.lessons.filter(date=lesson_date).first()
+                if not lesson:
+                    main_lesson = journal.lessons.filter(date=lesson_date).first()
+                    topic = main_lesson.topic if main_lesson else (payload.get('title') or 'Позакласна робота')
+                    homework = main_lesson.homework if main_lesson else ''
+                    l_type = main_lesson.lesson_type if main_lesson else LessonType.ORDINARY
+                    sem = main_lesson.semester if main_lesson else None
+                    l_num = main_lesson.lesson_number if main_lesson else 1
+                    lesson = Lesson.objects.create(
+                        journal=extra_journal,
+                        date=lesson_date,
+                        lesson_number=l_num,
+                        topic=topic,
+                        homework=homework,
+                        lesson_type=l_type,
+                        semester=sem,
+                        created_by=user
+                    )
+                Grade.objects.update_or_create(
+                    lesson=lesson,
+                    student=student,
+                    defaults={'value': str(val), 'is_approved': True}
+                )
+                res.resolved = True
+                res.reason = 'Оцінку збережено в журналі позакласних учнів.'
+                res.save(update_fields=['resolved', 'reason', 'updated_at'])
+            except Exception:
+                pass
+
     if created:
-        audit(extra, user, AuditLog.Action.CREATE, f'Учня «{extra.name}» залишено окремим учнем без створення класу.')
-    return None, created
+        audit(extra, user, AuditLog.Action.CREATE,
+              f'Учня «{extra.name}» додано до журналу позакласних учнів «{extra_journal.student_class.name}».',
+              separate_student=student.pk, separate_journal=extra_journal.pk)
+
+    return extra_journal, created
 
 
 def merge_extra(extra, target, user):

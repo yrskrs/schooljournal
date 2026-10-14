@@ -5,6 +5,28 @@
 
 {% block content %}
 <div id="journalLiveContent" data-journal-id="{{ journal.pk }}">
+{% if extra_parent %}
+  <div class="alert alert-info" style="display: flex; justify-content: space-between; align-items: center; background: #f0f9ff; border: 1px solid #bae6fd; color: #0369a1; padding: 0.75rem 1rem; border-radius: 8px; margin-bottom: 1rem; flex-wrap: wrap; gap: 0.5rem;">
+    <div>
+      <strong>📘 Журнал позакласних учнів:</strong> призначений виключно для вчителя (не відправляється на nz.ua). Тут фіксуються оцінки учнів поза вашими списками для передачі основному вчителеві або класному керівнику.
+    </div>
+    <div style="display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap;">
+      <form method="post" action="{% url 'portal:sync_extra_topics' journal.id %}" style="margin: 0;">
+        {% csrf_token %}
+        <button type="submit" class="btn btn-sm btn-outline-primary" style="background: white;" title="Підтягнути або оновити розклад і теми уроків з основного журналу">
+          🔄 Підтягнути теми з {{ extra_parent.student_class.name }}
+        </button>
+      </form>
+      <a class="btn btn-sm btn-outline-secondary" style="background: white;" href="{% url 'portal:journal_detail' extra_parent.id %}">
+        ← До основного журналу ({{ extra_parent.student_class.name }})
+      </a>
+      <a class="btn btn-sm btn-outline-primary" style="background: white;" href="{% url 'portal:api_inbox' extra_parent.id %}">
+        Вхідні та рішення
+      </a>
+    </div>
+  </div>
+{% endif %}
+
 <!-- Шапка журналу з метаданими та кнопками дій -->
 <div class="journal-header">
   <div class="journal-header-layout">
@@ -13,6 +35,11 @@
         <span class="user-role-pill" style="font-size: 0.95rem; font-weight: 700; background: var(--primary-light); color: var(--primary-dark);">
           {{ journal.student_class.name }} клас
         </span>
+        {% if extra_parent %}
+          <span class="user-role-pill" style="font-size: 0.75rem; font-weight: 600; background: #e0f2fe; color: #0369a1;">
+            Позакласні учні · Лише для вчителя
+          </span>
+        {% endif %}
         <h1 style="font-size: 1.5rem; font-weight: 700; color: var(--primary-dark); margin: 0;">
           {{ journal.subject.name }}
         </h1>
@@ -30,6 +57,11 @@
     <!-- Кнопки дій -->
     <div class="journal-header-actions">
       {% if can_edit %}
+        {% if extra_journal %}
+          <a class="btn btn-outline-success btn-sm" href="{% url 'portal:journal_detail' extra_journal.id %}" title="Відкрити журнал оцінок позакласних учнів">
+            📘 Журнал позакласних учнів
+          </a>
+        {% endif %}
         <details class="journal-tools" id="journalTools">
           <summary class="btn btn-secondary btn-sm">Підключення та імпорт ▾</summary>
           <div class="journal-tools-menu">
@@ -95,6 +127,10 @@
                 </span>
               {% endif %}
             </button>
+          {% elif extra_parent %}
+            <span class="badge" style="background: #e2e8f0; color: #475569; font-size: 0.8rem; padding: 0.35rem 0.65rem; border-radius: 6px;" title="Цей журнал локальний і не відправляється на nz.ua">
+              🔒 Локальний (не відправляється на nz.ua)
+            </span>
           {% else %}
             <!-- Якщо журнал ще не прив'язано до nz.ua -->
             <a href="{% url 'portal:nz_journals_list' %}" class="btn btn-outline-primary btn-sm" style="display: inline-flex; align-items: center; gap: 0.35rem; font-weight: 600;">

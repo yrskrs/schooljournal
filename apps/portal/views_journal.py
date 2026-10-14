@@ -88,7 +88,7 @@ def journal_detail(request, journal_id):
     """
     journal = _get_journal_or_403(request.user, journal_id, write=False)
     parent = extra_parent(journal)
-    if parent and not journal.lessons.filter(grades__isnull=False).exists() and not journal.summary_grades.exists() and not journal.lessons.filter(attendances__isnull=False).exists():
+    if parent and not journal.lessons.exists() and not journal.summary_grades.exists():
         return redirect(reverse('portal:outside_students') + '?journal=' + str(parent.pk))
     can_edit = has_journal_access(request.user, journal, write=True)
     can_manage = can_manage_journal(request.user, journal)
@@ -1238,4 +1238,19 @@ def toggle_student_sync_ignore(request, journal_id, student_id):
         messages.warning(request, warning)
     messages.success(request, msg)
     return redirect('portal:journal_detail', journal_id=journal.pk)
+
+
+@login_required
+@require_POST
+def sync_extra_topics(request, journal_id):
+    journal = _get_journal_or_403(request.user, journal_id, write=True)
+    parent = extra_parent(journal)
+    if not parent:
+        messages.error(request, 'Це не окремий позакласний журнал.')
+        return redirect('portal:journal_detail', journal_id=journal.pk)
+    from apps.journals.services.extra_students import sync_topics_from_main_journal
+    count = sync_topics_from_main_journal(journal, parent)
+    messages.success(request, f'Теми уроків успішно підтягнуто з основного журналу «{parent.student_class.name}» (додано/оновлено уроків: {count}).')
+    return redirect('portal:journal_detail', journal_id=journal.pk)
+
 

@@ -376,6 +376,8 @@ def nz_sync_preview_view(request, journal_id):
     journal = get_object_or_404(Journal, id=journal_id)
     if not has_journal_access(request.user, journal, write=False):
         return JsonResponse({'error': 'Доступ заборонено'}, status=403)
+    if not journal.nz_journal_id or journal.student_class.letter == 'ПК':
+        return JsonResponse({'error': 'Цей журнал є виключно локальним для вчителя і не відправляється на nz.ua.'}, status=400)
 
     account = journal_nz_account(journal, request.user)
     service = NZService()
@@ -416,12 +418,12 @@ def nz_sync_execute_view(request, journal_id):
         return JsonResponse({'status': 'error', 'message': message, 'log_id': log.pk,
             'history_url': reverse('portal:nz_sync_history', kwargs={'journal_id': journal.pk}) + '#log-' + str(log.pk)}, status=status)
 
+    if not journal.nz_journal_id or journal.student_class.letter == 'ПК':
+        return failed('Цей журнал є виключно локальним для вчителя і не відправляється на nz.ua.' if journal.student_class.letter == 'ПК' else "Цей журнал ще не прив'язано до журналу на nz.ua. Спочатку виконайте прив'язку.")
+
     account = journal_nz_account(journal, request.user)
     if not account or not account.is_active:
         return failed('Акаунт nz.ua не підключено або термін дії сесії вичерпано. Перейдіть до підключення nz.ua.')
-
-    if not journal.nz_journal_id:
-        return failed("Цей журнал ще не прив'язано до журналу на nz.ua. Спочатку виконайте прив'язку.")
 
     dry_run = request.POST.get('dry_run') in ['1', 'true', 'True', True]
 

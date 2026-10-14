@@ -9,7 +9,7 @@ import requests
 from django.core.exceptions import ValidationError
 from django.db import transaction
 from django.utils import timezone
-from apps.journals.models import Journal, Grade, Attendance, ExternalGrade, GradePullLog, AuditLog
+from apps.journals.models import Journal, Grade, Attendance, ExternalGrade, GradePullLog, AuditLog, Lesson, LessonType
 from apps.journals.services.assessment import journal_students
 from apps.journals.services.scheduling import SUMMARY_TYPES
 
@@ -198,8 +198,29 @@ def import_grade_records(connection, rows, user, date_from, date_to):
                     raise ValueError('Некоректний номер уроку на дату.')
                 lessons = lessons.filter(lesson_number=int(number))
             if lessons.count() != 1:
-                raise ValueError('Не знайдено однозначний урок на дату. Створіть урок або надайте lesson_number.')
-            lesson = lessons.first()
+                if target_journal != journal:
+                    main_lesson = journal.lessons.filter(date=date).first()
+                    l_num = int(number) if number is not None else (main_lesson.lesson_number if main_lesson else 1)
+                    topic = main_lesson.topic if main_lesson else (row.get('title') if connection.contract_version == 2 else json_field(row, connection.title_key, 'Позакласна робота'))
+                    homework = main_lesson.homework if main_lesson else ''
+                    l_type = main_lesson.lesson_type if main_lesson else LessonType.ORDINARY
+                    sem = main_lesson.semester if main_lesson else None
+                    lesson, _ = Lesson.objects.get_or_create(
+                        journal=target_journal,
+                        date=date,
+                        lesson_number=l_num,
+                        defaults={
+                            'topic': topic or 'Позакласна робота',
+                            'homework': homework,
+                            'lesson_type': l_type,
+                            'semester': sem,
+                            'created_by': user,
+                        }
+                    )
+                else:
+                    raise ValueError('Не знайдено однозначний урок на дату. Створіть урок або надайте lesson_number.')
+            else:
+                lesson = lessons.first()
             raw_value = row.get('value') if connection.contract_version == 2 else json_field(row, connection.value_key)
             if isinstance(raw_value, bool) or not str(raw_value).isdigit() or not 1 <= int(raw_value) <= 12:
                 raise ValueError('Оцінка має бути цілим числом від 1 до 12.')

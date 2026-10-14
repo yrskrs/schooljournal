@@ -70,9 +70,10 @@ class ExtraDecisionTests(TestCase):
         response = self.decision(extra, action='keep_separate')
         extra.refresh_from_db()
         self.assertTrue(extra.is_separate)
-        self.assertIsNone(extra.separate_student_id)
+        self.assertIsNotNone(extra.separate_student_id)
+        self.assertIsNotNone(extra.separate_journal_id)
         self.assertEqual(list(response.context['extra_page']), [extra])
-        self.assertContains(self.client.get(self.url('?all=1')), 'Окремий учень')
+        self.assertContains(self.client.get(self.url('?all=1')), 'Залишено позакласним')
         original_id = extra.separate_student_id
         self.decision(extra, action='keep_separate')
         extra.refresh_from_db()

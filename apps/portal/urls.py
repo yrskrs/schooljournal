@@ -69,6 +69,7 @@ urlpatterns = [
     path('journal/<int:journal_id>/lesson/swap/', views_journal.lesson_swap, name='lesson_swap'),
     path('journal/<int:journal_id>/plan/<int:topic_id>/move/', views_journal.plan_topic_move, name='plan_topic_move'),
     path('journal/<int:journal_id>/topics/copy/', views_journal.topics_copy, name='topics_copy'),
+    path('journal/<int:journal_id>/sync-extra-topics/', views_journal.sync_extra_topics, name='sync_extra_topics'),
     path('journal/<int:journal_id>/assessment/', views_journal.assessment_calculate, name='assessment_calculate'),
     path('journal/<int:journal_id>/lesson/<int:lesson_id>/edit/', views_journal.lesson_edit, name='lesson_edit'),
     path('journal/<int:journal_id>/lesson/<int:lesson_id>/delete/', views_journal.lesson_delete, name='lesson_delete'),

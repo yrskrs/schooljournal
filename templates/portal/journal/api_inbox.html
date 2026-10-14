@@ -40,10 +40,12 @@
   {% for extra in extra_page %}
     <article class="schedule-card">
       <h3>{{ extra.name }}</h3>
-      {% if extra.is_separate %}<p role="status">Окремий учень · без зарахування до класу.</p>{% endif %}
-      <p><a href="?student={{ extra.pk }}&amp;all=1">Усі роботи й оцінки цього учня</a></p>
-      <p>{{ extra.connection.get_source_display }}{% if extra.matched_student %} · Підтверджено: {{ extra.matched_student.get_full_name_ukr }}{% endif %}</p>
-      {% if extra.separate_student %}<p role="status">✓ Залишено позакласним: <a href="{% url 'portal:journal_detail' extra.separate_journal_id %}">{{ extra.separate_journal.student_class.name }}</a>.</p>{% endif %}
+      {% if extra.separate_student %}
+        <p role="status" style="color: #15803d; font-weight: 600;">✓ Залишено позакласним: <a href="{% url 'portal:journal_detail' extra.separate_journal_id %}">📘 {{ extra.separate_journal.student_class.name }}</a></p>
+      {% elif extra.is_separate %}
+        <p role="status">Окремий учень · без зарахування до класу.</p>
+      {% endif %}
+      <p><a href="?student={{ extra.pk }}&amp;all=1">Усі роботи й оцінки цього учня</a> · {{ extra.connection.get_source_display }}{% if extra.matched_student %} · Підтверджено: {{ extra.matched_student.get_full_name_ukr }}{% endif %}</p>
       {% if extra.suggestions %}<p>Схожі імена, які варто перевірити: {{ extra.suggestions|join:', ' }}.</p>{% endif %}
 
       {% for result in extra.recent_results %}
@@ -80,12 +82,12 @@
           </label> 
           <button class="btn btn-primary" name="action" value="match">Підтвердити відповідність</button>
         </form>
-        {% if not extra.matched_student and not extra.is_separate %}
+        {% if not extra.matched_student and not extra.separate_student %}
           <form method="post" style="margin-top: 0.5rem;">
             {% csrf_token %}
             <input type="hidden" name="extra_id" value="{{ extra.pk }}">
             <input type="hidden" name="version" value="{{ extra.updated_at|date:'c' }}">
-            <button class="btn btn-outline-primary" name="action" value="keep_separate">Залишити позакласним</button>
+            <button class="btn btn-outline-primary" name="action" value="keep_separate">📘 Залишити позакласним (додати до журналу)</button>
           </form>
         {% endif %}
         {% endif %}

@@ -15,21 +15,22 @@ class OutsideStudentsTests(TestCase):
     row = exchange.SimpleExchangeTests.row
     pull = exchange.SimpleExchangeTests.pull
 
-    def test_separate_identity_keeps_marks_without_creating_a_class_or_pupil(self):
+    def test_separate_identity_creates_extracurricular_journal_and_records_grade(self):
         connection = self.connection()
         self.pull(connection, self.row())
         extra = ExtraStudent.objects.get()
-        before = (StudentClass.objects.count(), Journal.objects.count(), Student.objects.count())
         keep_separate(extra, self.teacher)
-        self.pull(connection, self.row())
-        self.assertEqual(before, (StudentClass.objects.count(), Journal.objects.count(), Student.objects.count()))
         extra.refresh_from_db()
         self.assertTrue(extra.is_separate)
-        self.assertFalse(Grade.objects.exists())
+        self.assertIsNotNone(extra.separate_student_id)
+        self.assertIsNotNone(extra.separate_journal_id)
+        self.assertEqual(extra.separate_journal.student_class.letter, 'ПК')
+        self.assertEqual(extra.separate_journal.nz_journal_id, '')
+        self.assertTrue(Grade.objects.filter(student=extra.separate_student).exists())
         self.assertTrue(APIInboxResult.objects.get().resolved)
         page = self.client.get(reverse('portal:api_inbox', args=[self.journal.pk]))
         self.assertContains(page, extra.name)
-        self.assertContains(page, 'Синтетичний тест')
+        self.assertContains(page, 'Залишено позакласним')
 
     def test_stable_outside_identity_groups_works_but_never_same_names(self):
         connection = self.connection()
