@@ -1,0 +1,9 @@
+{
+  "passed": [
+    "Saved pupils and all six grades are visible despite disabled canonical connections; real lesson topics form the columns",
+    "Mobile grid scrolls inside its container; pupil names remain fixed and the page does not overflow",
+    "Search and month filters preserve the journal; resetting restores all saved results",
+    "A grade opens the canonical pupil works; the main journal links directly to the outside grid"
+  ],
+  "javascript_errors": []
+}
