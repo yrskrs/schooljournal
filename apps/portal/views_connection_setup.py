@@ -12,7 +12,7 @@ from django.views.decorators.http import require_http_methods, require_POST
 from apps.curriculum.models import Student, ClassEnrollment
 from apps.journals.models import Journal, GradeAPIConnection, GradeStudentMapping, AuditLog, StudentAPIGrant
 from apps.journals.services.assessment import journal_students
-from apps.journals.services.connection_setup import fetch_source_roster, roster_version, selected_students, SOURCES, ensure_same_source
+from apps.journals.services.connection_setup import fetch_source_roster, roster_version, selected_students, SOURCES, ensure_same_source, existing_source_connection
 from apps.journals.services.external_grades import ExternalAPIError
 from apps.journals.services.roster_transfer import send_journal_roster
 from apps.journals.services.api_inbox import keep_roster_extras
@@ -47,6 +47,11 @@ def _initial_context(connection):
 @sensitive_post_parameters('api_key', 'connection_code')
 def connect_source(request, journal_id):
     journal = _get_journal_or_403(request.user, journal_id, write=True)
+    from apps.journals.services.extra_students import extra_parent
+    parent = extra_parent(journal)
+    if parent:
+        messages.info(request, 'Підключення налаштовується для основного журналу. Позакласні результати зберігаються окремими учнями.')
+        return redirect(reverse('portal:connect_source', kwargs={'journal_id': parent.pk}))
     destination = reverse('portal:connect_source', kwargs={'journal_id': journal.pk})
     connection_id = request.POST.get('connection_id') if request.method == 'POST' else request.GET.get('connection')
     connection = get_object_or_404(journal.grade_apis, pk=connection_id, contract_version=2) if str(connection_id or '').isdigit() else None
@@ -58,7 +63,7 @@ def connect_source(request, journal_id):
     context = mapping = None
     available = []
     known = set()
-    for item in GradeAPIConnection.objects.filter(contract_version=2).filter(
+    for item in GradeAPIConnection.objects.filter(contract_version=2, journal__is_archived=False).filter(
             Q(journal__teacher=request.user) | Q(journal__nz_owner__user=request.user) | Q(journal__local_profile=request.user)).exclude(journal=journal).select_related('journal'):
         identity = (item.source, item.url, item.api_key)
         if identity not in known and has_journal_access(request.user, item.journal, write=True):
@@ -89,7 +94,7 @@ def connect_source(request, journal_id):
                             if connection.source != data['source']:
                                 raise ExternalAPIError('Це підключення належить іншому джерелу. Поверніться до журналу та підключіть нове джерело окремо.')
                         else:
-                            connection = journal.grade_apis.filter(source=data['source'], contract_version=2, url=data['grades_url']).order_by('pk').first()
+                            connection = existing_source_connection(journal, data['source'], data['grades_url'], payload)
                         if connection is None:
                             connection = GradeAPIConnection(journal=journal, source=data['source'], contract_version=2,
                                 name=conn_name, url=data['grades_url'], enabled=False)
@@ -122,13 +127,15 @@ def connect_source(request, journal_id):
                         ).exclude(pk=journal.pk).select_related('student_class', 'subject'))
 
                         for other_j in other_journals:
+                            from apps.journals.services.extra_students import extra_parent
+                            if extra_parent(other_j):
+                                continue
                             if not has_journal_access(request.user, other_j, write=True):
                                 continue
                             try:
                                 with transaction.atomic():
-                                    other_conn = other_j.grade_apis.filter(
-                                        source=data['source'], contract_version=2, url=data['grades_url']
-                                    ).order_by('pk').first()
+                                    _lock(other_j, request.user)
+                                    other_conn = existing_source_connection(other_j, data['source'], data['grades_url'], payload)
                                     if other_conn is None:
                                         other_conn = GradeAPIConnection(
                                             journal=other_j, source=data['source'], contract_version=2,

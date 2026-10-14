@@ -124,7 +124,8 @@ def import_grade_records(connection, rows, user, date_from, date_to):
                 if inbox is None or inbox.is_ignored:
                     counts['ignored'] += 1
                     continue
-                if inbox.extra_student and inbox.extra_student.is_separate and not inbox.extra_student.separate_student_id:
+                if (inbox.extra_student and inbox.extra_student.is_separate
+                        and not inbox.extra_student.matched_student_id and not inbox.extra_student.separate_student_id):
                     inbox.resolved = True
                     inbox.reason = 'Збережено для окремого учня без зарахування до класу.'
                     inbox.save(update_fields=['resolved', 'reason'])
@@ -210,6 +211,24 @@ def import_grade_records(connection, rows, user, date_from, date_to):
             if record and source_payload:
                 from .school_api import check_revision
                 check_revision(record.source_payload, source_payload)
+            grade = Grade.objects.filter(lesson=lesson, student=student).first()
+            attendance = Attendance.objects.filter(lesson=lesson, student=student).first()
+            # A teacher may already have entered this mark manually, or another
+            # connection to the same server may have imported it. Keep ownership
+            # and NZ sync flags intact; an identical approved cell needs no vote.
+            if (grade and grade.value == value and grade.is_approved
+                    and (not attendance or attendance.status == Attendance.Status.PRESENT)
+                    and not (record and record.status == ExternalGrade.Status.REJECTED)
+                    and (not record or (record.lesson_id, record.student_id) == (lesson.pk, student.pk))):
+                ExternalGrade.objects.update_or_create(connection=connection, external_id=external_id,
+                    defaults={'student': student, 'lesson': lesson, 'value': value, 'is_ai': is_ai,
+                        'externally_approved': externally_approved, 'status': ExternalGrade.Status.APPLIED,
+                        'fingerprint': fingerprint, 'source_payload': source_payload})
+                counts['unchanged'] += 1
+                if inbox:
+                    inbox.resolved, inbox.reason = True, ''
+                    inbox.save(update_fields=['resolved', 'reason'])
+                continue
             if record and record.fingerprint == fingerprint:
                 if source_payload:
                     record.source_payload = source_payload
@@ -219,8 +238,6 @@ def import_grade_records(connection, rows, user, date_from, date_to):
                     inbox.resolved, inbox.reason = True, ''
                     inbox.save(update_fields=['resolved', 'reason'])
                 continue
-            grade = Grade.objects.filter(lesson=lesson, student=student).first()
-            attendance = Attendance.objects.filter(lesson=lesson, student=student).first()
             previous_value = record.value if record else None
             previous_cell = (record.lesson_id, record.student_id) if record else None
             if record and previous_cell != (lesson.pk, student.pk):

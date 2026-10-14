@@ -272,7 +272,7 @@ def external_grade_review(request, journal_id):
     records = ExternalGrade.objects.filter(connection__journal=journal).select_related('connection', 'student', 'lesson', 'reviewed_by')
     for_review = request.GET.get('all') != '1'
     if for_review:
-        records = records.filter(status__in=[ExternalGrade.Status.PENDING, ExternalGrade.Status.CONFLICT])
+        records = records.filter(connection__enabled=True, status__in=[ExternalGrade.Status.PENDING, ExternalGrade.Status.CONFLICT])
     page = Paginator(records, 50).get_page(request.GET.get('page'))
     grades = {(grade.lesson_id, grade.student_id): grade for grade in Grade.objects.filter(lesson__journal=journal)}
     for record in page:

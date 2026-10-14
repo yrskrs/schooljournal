@@ -37,7 +37,7 @@ class SimpleExchangeTests(TestCase):
     def test_extra_result_is_saved_without_enrollment_or_grade_and_repeat_has_no_duplicates(self):
         connection = self.connection()
         before = ClassEnrollment.objects.count()
-        self.assertEqual(self.pull(connection, self.row()).counts['errors'], 1)
+        self.assertEqual(self.pull(connection, self.row()).counts['errors'], 0)
         self.pull(connection, self.row())
         self.assertEqual(ExtraStudent.objects.count(), 1); self.assertEqual(APIInboxResult.objects.count(), 1)
         self.assertFalse(Grade.objects.exists()); self.assertEqual(ClassEnrollment.objects.count(), before)

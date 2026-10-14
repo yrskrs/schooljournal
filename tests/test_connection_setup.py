@@ -13,6 +13,17 @@ from tests import test_journal_workflows as workflows
 
 
 class ConnectionSetupTests(TestCase):
+    def test_new_connection_form_reuses_verified_instance_after_ip_change(self):
+        self.payload['instance_id'] = '11111111-1111-4111-8111-111111111111'
+        connection = self.connect()
+        with patch('apps.portal.views_connection_setup.fetch_source_roster', return_value=self.payload):
+            response = self.client.post(self.url, {'action': 'connect', 'source': 'schooltest',
+                'site_url': 'http://10.25.4.21:8000', 'api_key': 'synthetic-new-key'})
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(GradeAPIConnection.objects.count(), 1)
+        connection.refresh_from_db()
+        self.assertEqual(connection.url, 'http://10.25.4.21:8000/api/v2/journal/grades/')
+
     def test_refresh_cannot_replace_a_previously_confirmed_server(self):
         self.payload['instance_id'] = '11111111-1111-4111-8111-111111111111'
         connection = self.connect(); self.context(connection); connection.refresh_from_db(); self.confirm(connection)

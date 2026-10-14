@@ -49,7 +49,7 @@ class IgnoreRegressionTests(TestCase):
         other = APIInboxResult.objects.get(external_id='other-date')
         self.ignore(first)
         response = self.client.get(self.inbox_url())
-        self.assertEqual(list(response.context['result_page']), [other])
+        self.assertEqual(list(response.context['result_page']), [])
         self.assertEqual(response.context['extra_page'][0].recent_results, [other])
         self.ignore(other)
         self.assertEqual(list(self.client.get(self.inbox_url()).context['extra_page']), [])
