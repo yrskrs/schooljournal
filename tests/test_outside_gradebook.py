@@ -152,6 +152,21 @@ class OutsideGradebookTests(TestCase):
         self.assertContains(page, self.l1.topic)
         self.assertEqual(page.context['tables'][0]['rows'], [])
 
+    def test_empty_unlinked_legacy_profiles_are_preserved_without_duplicate_directory_rows(self):
+        self.identity()
+        group = StudentClass.objects.create(school=self.school, academic_year=self.year,
+            name=self.group.name+' (Позакласні)', letter='ПК')
+        legacy = Journal.objects.create(school=self.school, academic_year=self.year,
+            student_class=group, subject=self.subject, teacher=self.teacher)
+        pupil = Student.objects.create(school=self.school, first_name='Старий', last_name='Порожній')
+        enrollment = ClassEnrollment.objects.create(student=pupil, student_class=group)
+        page = self.page()
+        self.assertEqual(len(page.context['tables'][0]['rows']), 1)
+        self.assertNotContains(page, pupil.get_full_name_ukr())
+        self.assertContains(page, reverse('portal:journal_detail', args=[legacy.pk]))
+        self.assertTrue(Student.objects.filter(pk=pupil.pk).exists())
+        self.assertTrue(ClassEnrollment.objects.filter(pk=enrollment.pk).exists())
+
     def test_anonymous_or_other_teacher_cannot_open_journal_history(self):
         self.identity()
         self.client.logout()

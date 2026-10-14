@@ -71,10 +71,15 @@ def build_outside_tables(groups, journals, legacy_by_parent, *, search='', sourc
         for legacy in legacy_by_parent.get(journal.pk, []):
             table = table_for(journal)
             pupils = list(journal_students(legacy))
+            graded_ids = set(Grade.objects.filter(lesson__journal=legacy).exclude(value='').values_list('student_id', flat=True))
             for pupil in pupils:
                 if search and search.casefold() not in pupil.get_full_name_ukr().casefold():
                     continue
                 identity = ('student', pupil.pk)
+                # Empty, unlinked profiles from older releases remain in their
+                # original journal, rather than duplicating the results directory.
+                if identity not in table['rows_by_key'] and pupil.pk not in graded_ids:
+                    continue
                 if source and identity not in table['rows_by_key']:
                     continue
                 row = table['rows_by_key'].setdefault(identity, {'name': pupil.get_full_name_ukr(),
