@@ -126,3 +126,50 @@ class OutsideStudentsTests(TestCase):
         self.assertEqual([journal.pk for journal in page.context['my_journals']], [self.journal.pk])
         self.assertTrue(Journal.objects.filter(pk=extra.separate_journal_id).exists())
         self.assertContains(self.client.get(reverse('portal:outside_students')), 'Історія в попередньому окремому журналі')
+
+    def test_merge_extra_across_different_connections_of_same_journal(self):
+        from apps.journals.models import GradeAPIConnection
+        conn1 = self.connection()
+        conn2 = GradeAPIConnection.objects.create(
+            journal=self.journal, source='schooltest', name='Тести',
+            contract_version=2, url=conn1.url, source_class_id='7',
+            source_subject_id='3', roster_cache=conn1.roster_cache
+        )
+        self.pull(conn1, self.row(id='work-1', attempt_id=1, student_key='unmapped:1'))
+        self.pull(conn2, self.row(id='test-1', attempt_id=2, student_key='unmapped:2'))
+        source = ExtraStudent.objects.get(connection=conn1)
+        target = ExtraStudent.objects.get(connection=conn2)
+        self.assertNotEqual(source.connection_id, target.connection_id)
+
+        url = reverse('portal:api_inbox', args=[self.journal.pk])
+        data = {
+            'action': 'merge_extra',
+            'extra_id': source.pk,
+            'version': source.updated_at.isoformat(),
+            'target_extra': f'{target.pk}|{target.updated_at.isoformat()}',
+            'confirm_same_student': 'on',
+        }
+        resp = self.client.post(url, data, follow=True)
+        self.assertEqual(resp.status_code, 200)
+        source.refresh_from_db()
+        self.assertEqual(source.alias_of_id, target.pk)
+
+    def test_keep_separate_with_nz_owner_or_linked_profile_synchronizes_access(self):
+        from apps.accounts.models import User
+        from apps.journals.models import NZAccount
+        nz_teacher = User.objects.create_user(username='nz-teacher-remote', school=self.school, role=User.Role.TEACHER)
+        self.journal.teacher = nz_teacher
+        nz_acc = NZAccount.objects.create(user=self.teacher, login='nz_user', phpsessid='sess_123', is_active=True)
+        self.journal.nz_owner = nz_acc
+        self.journal.save()
+
+        connection = self.connection()
+        self.pull(connection, self.row())
+        extra = ExtraStudent.objects.get(connection=connection)
+
+        # Calling keep_separate must NOT fail with 'Окремий журнал належить іншому вчителю'
+        extra_journal, created = keep_separate(extra, self.teacher)
+        self.assertIsNotNone(extra_journal)
+        self.assertTrue(extra.is_separate)
+        from apps.portal.permissions import has_journal_access
+        self.assertTrue(has_journal_access(self.teacher, extra_journal, write=True))

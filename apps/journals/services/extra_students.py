@@ -160,18 +160,28 @@ def keep_separate(extra, user):
         }
     )
 
-    extra_journal, _ = Journal.objects.get_or_create(
+    extra_journal, created = Journal.objects.get_or_create(
         school=journal.school,
         academic_year=journal.academic_year,
         student_class=extra_class,
         subject=journal.subject,
         defaults={
-            'teacher': journal.teacher,
+            'teacher': journal.teacher or user,
+            'nz_owner': journal.nz_owner,
+            'local_profile': journal.local_profile or user,
+            'allows_override_teacher': journal.allows_override_teacher,
             'nz_journal_id': '',
         }
     )
     if not has_journal_access(user, extra_journal, write=True):
-        raise ExternalAPIError('Окремий журнал належить іншому вчителю. Зверніться до адміністратора.')
+        if has_journal_access(user, journal, write=True):
+            extra_journal.teacher = journal.teacher or user
+            extra_journal.nz_owner = journal.nz_owner
+            extra_journal.local_profile = journal.local_profile or user
+            extra_journal.allows_override_teacher = journal.allows_override_teacher
+            extra_journal.save(update_fields=['teacher', 'nz_owner', 'local_profile', 'allows_override_teacher'])
+        else:
+            raise ExternalAPIError('Окремий журнал належить іншому вчителю. Зверніться до адміністратора.')
 
     student = extra.separate_student
     if not student:
@@ -247,12 +257,14 @@ def keep_separate(extra, user):
 
 def merge_extra(extra, target, user):
     """Only a teacher's explicit decision may connect old per-work identities."""
-    if extra.pk == target.pk or extra.connection_id != target.connection_id or extra.alias_of_id:
-        raise ExternalAPIError('Об’єднання недоступне: виберіть два дійсні записи одного підключення.')
     while target.alias_of_id:
         target = target.alias_of
     if extra.pk == target.pk:
         raise ExternalAPIError('Не можна об’єднати запис із самим собою.')
+    if extra.connection.journal_id != target.connection.journal_id:
+        raise ExternalAPIError('Об’єднання недоступне: виберіть два дійсні записи одного журналу.')
+    if extra.alias_of_id:
+        raise ExternalAPIError('Запис уже об’єднано з іншим записом.')
 
     extra.results.update(extra_student=target)
     extra.alias_of = target
@@ -267,6 +279,11 @@ def merge_extra(extra, target, user):
             GradeStudentMapping.objects.update_or_create(
                 connection=extra.connection, external_id=extra.external_key, defaults={'student': target.matched_student}
             )
+            for alias in extra.aliases.all():
+                GradeStudentMapping.objects.filter(connection=alias.connection, student=target.matched_student).exclude(external_id=alias.external_key).delete()
+                GradeStudentMapping.objects.update_or_create(
+                    connection=alias.connection, external_id=alias.external_key, defaults={'student': target.matched_student}
+                )
         except Exception:
             pass
         target.results.filter(is_ignored=False).update(resolved=False, reason='Відповідність підтверджено. Роботи об’єднано.')
@@ -276,6 +293,23 @@ def merge_extra(extra, target, user):
         extra.is_separate = True
         extra.save(update_fields=['separate_student', 'separate_journal', 'is_separate', 'updated_at'])
         target.results.filter(is_ignored=False).update(resolved=True, reason='Збережено для окремого учня без зарахування до класу.')
+        if target.separate_journal:
+            for res in extra.results.filter(is_ignored=False):
+                payload = res.payload
+                d_str = payload.get('date')
+                val = payload.get('value')
+                if d_str and val is not None:
+                    try:
+                        lesson_date = dt.date.fromisoformat(d_str)
+                    except (ValueError, TypeError):
+                        continue
+                    lesson = target.separate_journal.lessons.filter(date=lesson_date).first()
+                    if lesson:
+                        Grade.objects.update_or_create(
+                            lesson=lesson,
+                            student=target.separate_student,
+                            defaults={'value': str(val), 'is_approved': True}
+                        )
     elif target.is_separate:
         target.results.filter(is_ignored=False).update(resolved=True, reason='Збережено для окремого учня без зарахування до класу.')
 
@@ -287,7 +321,14 @@ def delete_extra(extra, user):
     student = extra.separate_student
     if student:
         if not has_journal_access(user, extra.separate_journal, write=True):
-            raise ExternalAPIError('Немає права редагувати окремий журнал.')
+            if has_journal_access(user, journal, write=True):
+                extra.separate_journal.teacher = journal.teacher or user
+                extra.separate_journal.nz_owner = journal.nz_owner
+                extra.separate_journal.local_profile = journal.local_profile or user
+                extra.separate_journal.allows_override_teacher = journal.allows_override_teacher
+                extra.separate_journal.save(update_fields=['teacher', 'nz_owner', 'local_profile', 'allows_override_teacher'])
+            else:
+                raise ExternalAPIError('Немає права редагувати окремий журнал.')
         if (student.enrollments.exclude(student_class=extra.separate_journal.student_class).exists()
                 or GradeStudentMapping.objects.filter(student=student).exists()
                 or ExtraStudent.objects.filter(matched_student=student).exists()

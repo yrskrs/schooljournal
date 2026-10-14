@@ -10,12 +10,37 @@
   <button class="btn btn-primary">Показати</button>
 </form>
 {% for pupil in page_obj %}
-<article class="schedule-card">
-  <h2>{{ pupil.name }}</h2><p>{{ pupil.source }} · окремий учень</p>
+<article class="schedule-card" style="margin-bottom: 1.25rem;">
+  <div style="display: flex; justify-content: space-between; align-items: baseline; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 0.5rem;">
+    <h2 style="margin: 0; font-size: 1.25rem;">{{ pupil.name }}</h2>
+    <span class="badge" style="background: #f1f5f9; color: #475569; font-weight: 600; padding: 2px 8px; border-radius: 4px; font-size: 0.82rem;">{{ pupil.source }}</span>
+  </div>
   {% for context in pupil.contexts %}
-    <p>{{ context.extra.connection.journal.student_class.name }} · {{ context.extra.connection.journal.subject.name }} · <a href="{% url 'portal:api_inbox' context.extra.connection.journal_id %}?student={{ context.extra.pk }}&amp;all=1">Усі роботи та відповідність</a></p>
-    {% for result in context.results %}<p>{{ result.payload.date }} · {{ result.payload.title }} · <strong>{{ result.payload.value }}</strong></p>{% empty %}<p>Оцінок ще не отримано.</p>{% endfor %}
-    {% if context.extra.separate_journal_id %}<p><a href="{% url 'portal:journal_detail' context.extra.separate_journal_id %}">Історія в попередньому окремому журналі</a></p>{% endif %}
+    <div style="margin: 0.5rem 0; padding: 0.65rem 0.85rem; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px;">
+      <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.5rem;">
+        <div>
+          <strong style="color: #1e293b;">{{ context.extra.connection.journal.student_class.name }}</strong> · <span>{{ context.extra.connection.journal.subject.name }}</span>
+          {% if context.extra.separate_student %}
+            <span class="badge" style="background: #e0f2fe; color: #0369a1; padding: 2px 8px; border-radius: 4px; font-size: 0.78rem; font-weight: 700; margin-left: 0.4rem;">📘 Додано до журналу: {{ context.extra.separate_journal.student_class.name }}</span>
+          {% else %}
+            <span class="badge" style="background: #fef3c7; color: #92400e; padding: 2px 8px; border-radius: 4px; font-size: 0.78rem; font-weight: 700; margin-left: 0.4rem;">⏳ Очікує рішення вчителя</span>
+          {% endif %}
+        </div>
+        <div style="display: flex; gap: 0.4rem; flex-wrap: wrap;">
+          <a class="btn btn-outline-primary btn-sm" href="{% url 'portal:api_inbox' context.extra.connection.journal_id %}?student={{ context.extra.pk }}&amp;all=1">⚙️ Усі роботи та відповідність</a>
+          {% if context.extra.separate_journal_id %}
+            <a class="btn btn-outline-secondary btn-sm" href="{% url 'portal:journal_detail' context.extra.separate_journal_id %}">📖 Історія в попередньому окремому журналі</a>
+          {% endif %}
+        </div>
+      </div>
+      <div style="margin-top: 0.5rem; font-size: 0.85rem; color: #475569; border-top: 1px dashed #e2e8f0; padding-top: 0.4rem;">
+        {% for result in context.results %}
+          <div>📅 {{ result.payload.date }} · {{ result.payload.title }} · <strong>Оцінка: {{ result.payload.value }}</strong></div>
+        {% empty %}
+          <div style="color: #94a3b8;">Оцінок ще не отримано.</div>
+        {% endfor %}
+      </div>
+    </div>
   {% endfor %}
 </article>
 {% empty %}<p>Окремих учнів за цими фільтрами немає. Нові результати завантажуються кнопкою синхронізації оцінок у журналі.</p>{% endfor %}

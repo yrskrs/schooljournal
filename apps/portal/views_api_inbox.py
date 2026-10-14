@@ -26,7 +26,17 @@ def _same_revision(updated_at, submitted):
         value = parse_datetime(submitted or '')
     except (TypeError, ValueError):
         return False
-    return value is not None and timezone.is_aware(value) and value == updated_at
+    if value is None:
+        return False
+    if timezone.is_naive(value):
+        value = timezone.make_aware(value, timezone.get_current_timezone())
+    if timezone.is_naive(updated_at):
+        updated_at = timezone.make_aware(updated_at, timezone.get_current_timezone())
+    if value == updated_at:
+        return True
+    if value.microsecond == 0 and updated_at.microsecond != 0:
+        return value == updated_at.replace(microsecond=0)
+    return False
 
 
 def find_suggested_student(extra_name, students):
@@ -127,10 +137,13 @@ def api_inbox(request, journal_id):
                         if request.POST.get('confirm_same_student') != 'on':
                             raise ExternalAPIError('Підтвердьте, що це одна й та сама дитина. Однакового ПІБ недостатньо.')
                         target_choice, _, selected_version = request.POST.get('target_extra', '').partition('|')
+                        target_pk = int(target_choice.strip()) if target_choice.strip().isdigit() else 0
                         target = get_object_or_404(ExtraStudent.objects.select_for_update(),
-                            pk=target_choice if target_choice.isdigit() else 0,
-                            connection=extra.connection, alias_of__isnull=True)
-                        if not _same_revision(target.updated_at, selected_version or request.POST.get('target_version')):
+                            pk=target_pk,
+                            connection__journal=journal)
+                        while target.alias_of_id:
+                            target = target.alias_of
+                        if selected_version and not _same_revision(target.updated_at, selected_version or request.POST.get('target_version')):
                             raise ExternalAPIError('Цільовий запис оновився. Оновіть сторінку.')
                         merge_extra(extra, target, request.user)
                         messages.success(request, 'Записи об’єднано за вашим підтвердженням. Роботи та оцінки збережено.')
