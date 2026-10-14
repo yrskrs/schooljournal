@@ -93,8 +93,8 @@ class NewJournalFeaturesTests(TestCase):
         self.assertFalse(result.resolved)
         self.assertIsNone(result.ignored_at)
 
-    def test_keep_extracurricular_creates_separate_journal_table(self):
-        """2. Тест: коли вчитель обирає 'Залишити позакласним', створюється окремий журнал (таблиця)."""
+    def test_keep_extracurricular_preserves_results_without_creating_class_or_journal(self):
+        """An explicit separate pupil keeps their mark without school enrollment."""
         conn = GradeAPIConnection.objects.create(
             journal=self.journal, name='Завдання', source='schoolwork', url='https://example.com/api', api_key='k456',
             source_class_id='c1', source_subject_id='s1'
@@ -106,7 +106,9 @@ class NewJournalFeaturesTests(TestCase):
         )
 
         url = reverse('portal:api_inbox', args=[self.journal.pk])
-        # Обираємо 'Залишити позакласним' (student='')
+        before = (StudentClass.objects.count(), Journal.objects.count(), Student.objects.count(),
+                  ClassEnrollment.objects.count(), Lesson.objects.count(), Grade.objects.count())
+        # The legacy empty-choice POST follows the same separate-pupil decision.
         resp = self.client.post(url, {
             'action': 'match',
             'extra_id': extra.pk,
@@ -115,33 +117,17 @@ class NewJournalFeaturesTests(TestCase):
         })
         self.assertEqual(resp.status_code, 302)
 
-        # Перевіряємо що створено окремий клас та журнал для позакласних учнів
-        expected_class_name = f"{self.journal.student_class.name} (Позакласні)"
-        extra_class = StudentClass.objects.filter(school=self.school, name=expected_class_name).first()
-        self.assertIsNotNone(extra_class)
-
-        extra_journal = Journal.objects.filter(
-            school=self.school, student_class=extra_class, subject=self.subject, teacher=self.teacher
-        ).first()
-        self.assertIsNotNone(extra_journal)
-
-        # Перевіряємо що учень створений і зарахований до цього окремого класу
-        ext_student = Student.objects.filter(school=self.school, last_name='Остапчук').first()
-        self.assertIsNotNone(ext_student)
-        self.assertTrue(ClassEnrollment.objects.filter(student=ext_student, student_class=extra_class).exists())
-
-        # Підтвердження списку не імпортує оцінок: для цього є окрема явна дія.
-        self.assertFalse(Grade.objects.filter(student=ext_student).exists())
-        self.assertFalse(Lesson.objects.filter(journal=extra_journal).exists())
+        self.assertEqual(before, (StudentClass.objects.count(), Journal.objects.count(), Student.objects.count(),
+                                  ClassEnrollment.objects.count(), Lesson.objects.count(), Grade.objects.count()))
         extra.refresh_from_db()
-        self.assertEqual(extra.separate_student_id, ext_student.pk)
-
-        # Перевіряємо посилання на окремий журнал на сторінці api_inbox та detail
-        resp_inbox = self.client.get(url)
-        self.assertContains(resp_inbox, f'journal/{extra_journal.pk}/')
-
-        resp_detail = self.client.get(reverse('portal:journal_detail', args=[self.journal.pk]))
-        self.assertContains(resp_detail, f'journal/{extra_journal.pk}/')
+        self.assertTrue(extra.is_separate)
+        self.assertIsNone(extra.separate_student_id)
+        self.assertIsNone(extra.separate_journal_id)
+        result = APIInboxResult.objects.get(extra_student=extra)
+        self.assertTrue(result.resolved)
+        self.assertEqual(result.payload['value'], '11')
+        self.assertContains(self.client.get(url), 'Практична робота')
+        self.assertContains(self.client.get(reverse('portal:outside_students')), extra.name)
 
     def test_ignore_nz_change_excludes_it_from_delta(self):
         """3. Тест: кнопка 'Ігнорувати запис' у синхронізації з nz.ua виключає запис із дельти."""
