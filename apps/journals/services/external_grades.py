@@ -140,6 +140,20 @@ def import_grade_records(connection, rows, user, date_from, date_to):
                         inbox.save(update_fields=['resolved', 'reason'])
                         counts['ignored'] += 1
                         continue
+                elif inbox.extra_student and inbox.extra_student.matched_student_id:
+                    if not journal_students(journal).filter(pk=inbox.extra_student.matched_student_id).exists():
+                        from apps.curriculum.models import ClassEnrollment
+                        other_enr = ClassEnrollment.objects.filter(student_id=inbox.extra_student.matched_student_id, is_active=True).first()
+                        if other_enr:
+                            other_j = Journal.objects.filter(
+                                school=journal.school,
+                                academic_year=journal.academic_year,
+                                student_class=other_enr.student_class,
+                                subject=journal.subject,
+                                teacher=journal.teacher,
+                            ).first()
+                            if other_j and has_journal_access(user, other_j, write=True):
+                                target_journal = other_j
                 if ignored_student_ids:
                     try:
                         mapped_student_id = resolve_student(connection, row)
@@ -169,6 +183,8 @@ def import_grade_records(connection, rows, user, date_from, date_to):
                     continue
                 candidates = [student for student in journal_students(target_journal)
                     if student.pk == row['student_id']]
+                if not candidates and inbox.extra_student and inbox.extra_student.matched_student_id == row.get('student_id'):
+                    candidates = [inbox.extra_student.matched_student]
             else:
                 raw_student_id = str(json_field(row, connection.student_key))
                 candidates = students.get(raw_student_id, [])

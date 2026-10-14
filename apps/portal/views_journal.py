@@ -289,12 +289,27 @@ def journal_detail(request, journal_id):
         teacher=journal.teacher,
     ).first()
 
+    mismatched_connections = []
+    for conn in journal.grade_apis.filter(enabled=True, contract_version=2):
+        if conn.source_class_id and conn.roster_cache:
+            classes = conn.roster_cache.get('classes', [])
+            c_name = next((c['name'] for c in classes if str(c['id']) == str(conn.source_class_id)), None)
+            if c_name:
+                def _cl(s): return ''.join(ch for ch in s.casefold() if ch.isalnum())
+                if _cl(c_name) != _cl(journal.student_class.name):
+                    mismatched_connections.append({
+                        'connection': conn,
+                        'source_class_name': c_name,
+                        'journal_class_name': journal.student_class.name,
+                    })
+
     context = {
         'integration_date_from': integration_start.isoformat(),
         'integration_date_to': integration_end.isoformat(),
         'journal': journal,
         'extra_journal': extra_journal,
         'extra_parent': extra_parent(journal),
+        'mismatched_connections': mismatched_connections,
         'can_edit': can_edit,
         'can_manage': can_manage,
         'show_withdrawn': show_withdrawn,

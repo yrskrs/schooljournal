@@ -63,8 +63,17 @@
           </a>
         {% endif %}
         <details class="journal-tools" id="journalTools">
-          <summary class="btn btn-secondary btn-sm">Підключення та імпорт ▾</summary>
+          <summary class="btn btn-secondary btn-sm">Підключення та імпорт ▾{% if mismatched_connections %} <span style="color: #f59e0b;" title="Є невідповідність підключеного класу">⚠️</span>{% endif %}</summary>
           <div class="journal-tools-menu">
+        {% if mismatched_connections %}
+          <div style="flex-basis: 100%; background: #fffbeb; border: 1px solid #fde68a; color: #92400e; padding: 0.5rem 0.75rem; border-radius: 6px; font-size: 0.85rem; margin-bottom: 0.5rem;">
+            ⚠️ <strong>Увага:</strong> до цього журналу ({{ journal.student_class.name }}) підключено інший клас із джерела:
+            {% for m in mismatched_connections %}
+              <strong>«{{ m.source_class_name }}»</strong> ({{ m.connection.get_source_display }}).
+            {% endfor %}
+            <a href="{% url 'portal:connect_source' journal.id %}" style="text-decoration: underline; font-weight: 600; color: #b45309;">Виправити в налаштуваннях</a>
+          </div>
+        {% endif %}
         <a class="btn btn-outline-primary btn-sm" href="{% url 'portal:connect_source' journal.id %}">Підключити тести / завдання</a>
         <a class="btn btn-outline-primary btn-sm" href="{% url 'portal:journal_integrations' journal.id %}">Профілі та API</a>
         <a class="btn btn-outline-primary btn-sm" href="{% url 'portal:external_grade_review' journal.id %}">Оцінки з робіт{% if external_review_count %} ({{ external_review_count }}){% endif %}</a>

@@ -10,6 +10,7 @@ from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 from django.views.decorators.http import require_http_methods
 
+from apps.curriculum.models import Student, ClassEnrollment
 from apps.journals.models import ExtraStudent, APIInboxResult, Journal, AuditLog, Lesson, LessonType
 from apps.journals.services.assessment import journal_students
 from apps.journals.services.external_grades import import_grade_records, ExternalAPIError
@@ -70,13 +71,38 @@ def api_inbox(request, journal_id):
                         separate, created = keep_separate(extra, request.user)
                         messages.success(request, f'Учня «{extra.name}» додано до журналу позакласних учнів «{separate.student_class.name}». Теми уроків та оцінки перенесено.')
                     else:
-                        student = journal_students(journal).filter(pk=int(choice)).first() if str(choice or '').isdigit() else None
+                        student = Student.objects.filter(school=journal.school, pk=int(choice)).first() if str(choice or '').isdigit() else None
                         if not student:
-                            raise ExternalAPIError('Оберіть учня цього журналу для підтвердження відповідності.')
+                            raise ExternalAPIError('Оберіть учня цього журналу або школи для підтвердження відповідності.')
                         match_student(extra, student, request.user)
-                        # The identity is confirmed; grade writes remain an explicit separate action.
-                        extra.results.filter(resolved=False, is_ignored=False).update(reason='Відповідність підтверджено. Додайте збережений результат або натисніть синхронізацію оцінок.')
-                        messages.success(request, f'Відповідність підтверджено: «{extra.name}» → «{student.get_full_name_ukr()}». Оцінки додайте кнопкою синхронізації або «Додати збережений результат».')
+                        is_current = journal_students(journal).filter(pk=student.pk).exists()
+                        if is_current:
+                            extra.results.filter(resolved=False, is_ignored=False).update(
+                                reason='Відповідність підтверджено. Додайте збережений результат або натисніть синхронізацію оцінок.'
+                            )
+                            messages.success(request, f'Відповідність підтверджено: «{extra.name}» → «{student.get_full_name_ukr()}». Оцінки додайте кнопкою синхронізації або «Додати збережений результат».')
+                        else:
+                            enr = ClassEnrollment.objects.filter(student=student, is_active=True).select_related('student_class').first()
+                            cls_name = enr.student_class.name if enr else 'іншого класу'
+                            other_j = Journal.objects.filter(
+                                school=journal.school,
+                                academic_year=journal.academic_year,
+                                student_class=enr.student_class if enr else None,
+                                subject=journal.subject,
+                                teacher=journal.teacher,
+                            ).first() if enr else None
+                            if other_j:
+                                extra.results.filter(resolved=False, is_ignored=False).update(
+                                    resolved=True,
+                                    reason=f'Учень належить до класу {cls_name}. Журнал: {other_j.student_class.name}.'
+                                )
+                                messages.success(request, f'Відповідність підтверджено: «{extra.name}» → «{student.get_full_name_ukr()} ({cls_name})». Учень закріплений за класом {cls_name}.')
+                            else:
+                                extra.results.filter(resolved=False, is_ignored=False).update(
+                                    resolved=True,
+                                    reason=f'Учень належить до класу {cls_name}.'
+                                )
+                                messages.success(request, f'Відповідність підтверджено: «{extra.name}» → «{student.get_full_name_ukr()} ({cls_name})».')
                 elif action == 'ignore_result':
                     result = get_object_or_404(APIInboxResult.objects.select_for_update(),
                         pk=request.POST.get('result_id') if str(request.POST.get('result_id', '')).isdigit() else 0,
@@ -109,7 +135,22 @@ def api_inbox(request, journal_id):
                         raise ExternalAPIError('Результат змінився після перегляду. Оновіть сторінку.')
                     payload = dict(result.payload)
                     lesson_id = request.POST.get('lesson')
-                    target_journal = result.extra_student.separate_journal if result.extra_student and result.extra_student.separate_journal_id else journal
+                    target_journal = journal
+                    if result.extra_student and result.extra_student.separate_journal_id:
+                        target_journal = result.extra_student.separate_journal
+                    elif result.extra_student and result.extra_student.matched_student_id:
+                        if not journal_students(journal).filter(pk=result.extra_student.matched_student_id).exists():
+                            other_enr = ClassEnrollment.objects.filter(student_id=result.extra_student.matched_student_id, is_active=True).first()
+                            if other_enr:
+                                other_j = Journal.objects.filter(
+                                    school=journal.school,
+                                    academic_year=journal.academic_year,
+                                    student_class=other_enr.student_class,
+                                    subject=journal.subject,
+                                    teacher=journal.teacher,
+                                ).first()
+                                if other_j and has_journal_access(request.user, other_j, write=True):
+                                    target_journal = other_j
                     if lesson_id:
                         lesson = target_journal.lessons.filter(pk=int(lesson_id)).first() if str(lesson_id).isdigit() else None
                         if not lesson or lesson.date.isoformat() != payload.get('date'):
@@ -147,6 +188,58 @@ def api_inbox(request, journal_id):
         return redirect(request.get_full_path())
 
     students = list(journal_students(journal))
+    journal_student_ids = set(s.pk for s in students)
+
+    other_enrollments = ClassEnrollment.objects.filter(
+        student_class__school=journal.school,
+        student_class__academic_year=journal.academic_year,
+        is_active=True
+    ).exclude(
+        student_id__in=journal_student_ids
+    ).exclude(
+        student_class__letter='ПК'
+    ).select_related('student', 'student_class').order_by(
+        'student_class__grade_level', 'student_class__name', 'student__last_name', 'student__first_name'
+    )
+
+    other_school_students = []
+    seen_student_ids = set()
+    for enr in other_enrollments:
+        if enr.student_id not in seen_student_ids:
+            st = enr.student
+            st.current_class_name = enr.student_class.name
+            st.current_class_id = enr.student_class_id
+            other_school_students.append(st)
+            seen_student_ids.add(enr.student_id)
+
+    remaining_students = Student.objects.filter(
+        school=journal.school,
+        status=Student.Status.ACTIVE
+    ).exclude(
+        pk__in=journal_student_ids
+    ).exclude(
+        pk__in=seen_student_ids
+    ).order_by('last_name', 'first_name')
+
+    for st in remaining_students:
+        st.current_class_name = 'Без класу'
+        st.current_class_id = None
+        other_school_students.append(st)
+
+    mismatched_connections = []
+    for conn in journal.grade_apis.filter(enabled=True, contract_version=2):
+        if conn.source_class_id and conn.roster_cache:
+            classes = conn.roster_cache.get('classes', [])
+            c_name = next((c['name'] for c in classes if str(c['id']) == str(conn.source_class_id)), None)
+            if c_name:
+                def _cl(s): return ''.join(ch for ch in s.casefold() if ch.isalnum())
+                if _cl(c_name) != _cl(journal.student_class.name):
+                    mismatched_connections.append({
+                        'connection': conn,
+                        'source_class_name': c_name,
+                        'journal_class_name': journal.student_class.name,
+                    })
+
     show_all = request.GET.get('all') == '1'
     visible_results = APIInboxResult.objects.filter(extra_student=OuterRef('pk'), is_ignored=False)
     extras = ExtraStudent.objects.filter(connection__journal=journal, connection__enabled=True, alias_of__isnull=True).select_related('connection', 'matched_student', 'separate_student', 'separate_journal')
@@ -187,7 +280,23 @@ def api_inbox(request, journal_id):
         inbox = inbox.filter(connection__source=source_filter)
     result_page = Paginator(inbox, 50).get_page(request.GET.get('results_page'))
     for result in result_page:
-        result.target_journal = result.extra_student.separate_journal if result.extra_student and result.extra_student.separate_journal_id else journal
+        target_journal = journal
+        if result.extra_student and result.extra_student.separate_journal_id:
+            target_journal = result.extra_student.separate_journal
+        elif result.extra_student and result.extra_student.matched_student_id:
+            if not journal_students(journal).filter(pk=result.extra_student.matched_student_id).exists():
+                enr = ClassEnrollment.objects.filter(student_id=result.extra_student.matched_student_id, is_active=True).first()
+                if enr:
+                    oj = Journal.objects.filter(
+                        school=journal.school,
+                        academic_year=journal.academic_year,
+                        student_class=enr.student_class,
+                        subject=journal.subject,
+                        teacher=journal.teacher,
+                    ).first()
+                    if oj:
+                        target_journal = oj
+        result.target_journal = target_journal
         result.lessons = list(result.target_journal.lessons.filter(date=result.payload.get('date')))
 
     ignored_results = APIInboxResult.objects.filter(
@@ -203,7 +312,6 @@ def api_inbox(request, journal_id):
         teacher=journal.teacher,
     ).first()
 
-
     filters = request.GET.copy()
     for key in ('page', 'results_page', 'ignored_page'):
         filters.pop(key, None)
@@ -216,6 +324,8 @@ def api_inbox(request, journal_id):
         'ignored_results': ignored_results,
         'extra_journal': extra_journal,
         'students': students,
+        'other_school_students': other_school_students,
+        'mismatched_connections': mismatched_connections,
         'show_all': request.GET.get('all') == '1',
         'can_edit': has_journal_access(request.user, journal, write=True),
         'search': search, 'source_filter': source_filter, 'student_filter': student_filter,

@@ -36,7 +36,10 @@ def _initial_context(connection):
     ]:
         rows = connection.roster_cache.get(kind, [])
         def normalized(value):
-            return ''.join(c for c in value.casefold().translate(str.maketrans('abcehiktmx', 'авсенік тмх'.replace(' ', ''))) if c.isalnum())
+            # Only exact homoglyphs; do not map Latin 'b' to Cyrillic 'в' because
+            # Ukrainian classes use letter B for Б or В, and b->в causes 8-B to bind to 8-В!
+            table = str.maketrans('aceikmox', 'асеікмох')
+            return ''.join(c for c in value.casefold().translate(table) if c.isalnum())
         matches = [row['id'] for row in rows if normalized(row['name']) == normalized(name)]
         values[field] = current if any(row['id'] == current for row in rows) else matches[0] if len(matches) == 1 else ''
     return values
@@ -339,8 +342,17 @@ def connect_source(request, journal_id):
         if connection.source_class_id and connection.source_subject_id:
             mapping = mapping or ConfirmStudentsForm(connection=connection, initial={'version': roster_version(connection)})
     mapped_keys = set(connection.student_mappings.values_list('external_id', flat=True)) if connection else set()
+    source_class_name = None
+    is_class_mismatched = False
+    if connection and connection.source_class_id and connection.roster_cache:
+        classes = connection.roster_cache.get('classes', [])
+        source_class_name = next((c['name'] for c in classes if str(c['id']) == str(connection.source_class_id)), None)
+        if source_class_name:
+            def _cl(s): return ''.join(ch for ch in s.casefold() if ch.isalnum())
+            is_class_mismatched = _cl(source_class_name) != _cl(journal.student_class.name)
     response = render(request, 'portal/journal/connect_source.html', {'journal': journal, 'connection': connection,
         'setup_form': setup, 'context_form': context, 'mapping_form': mapping,
+        'source_class_name': source_class_name, 'is_class_mismatched': is_class_mismatched,
         'connections': journal.grade_apis.filter(contract_version=2).order_by('source', 'pk'), 'available_sources': available,
         'needs_mapping': bool(connection and any(row['id'] not in mapped_keys for row in selected_students(connection)))})
     response['Cache-Control'] = 'no-store'

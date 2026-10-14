@@ -24,6 +24,20 @@
     </div>
   {% endif %}
 
+  {% if mismatched_connections %}
+    {% for m in mismatched_connections %}
+      <div class="alert alert-warning" style="background: #fffbeb; border: 1px solid #fde68a; color: #92400e; padding: 0.85rem 1rem; border-radius: 8px; margin-bottom: 1rem; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.5rem;">
+        <div>
+          <strong>⚠️ Зверніть увагу:</strong> у джерелі «{{ m.connection.get_source_display }}» до цього журналу ({{ m.journal_class_name }}) підключено інший клас: <strong>«{{ m.source_class_name }}»</strong>.
+          Через це сюди надходять учні з іншого класу.
+        </div>
+        <a href="{% url 'portal:connect_source' journal.pk %}?connection={{ m.connection.pk }}" class="btn btn-sm btn-outline-warning" style="white-space: nowrap; font-weight: 600;">
+          Виправити підключений клас &rarr;
+        </a>
+      </div>
+    {% endfor %}
+  {% endif %}
+
   <p>Тут зберігаються учні джерел, яких ще немає серед підтверджених учнів класу, та результати, що потребують рішення. Вони не додаються до класу й не вивантажуються в nz.ua автоматично. Джерело має власну базу й продовжує працювати без журналу.</p>
   <p>Учні поза підтвердженим списком автоматично зберігаються окремо зі своїми роботами й оцінками, без створення класу або уроків. Якщо це ваш учень з помилкою в імені, оберіть справжнього учня класу й натисніть <strong>«Підтвердити відповідність»</strong>.</p>
   <p><strong>«Видалити позакласний запис»</strong> прибирає його та збережені результати назавжди в цьому журналі. Видалений запис не повернеться після синхронізації. Профіль і роботи на сайті джерела видаляйте окремо на тому сайті. Учні основного класу та їхні вже імпортовані оцінки зберігаються.</p>
@@ -72,24 +86,44 @@
           {% csrf_token %}
           <input type="hidden" name="extra_id" value="{{ extra.pk }}">
           <input type="hidden" name="version" value="{{ extra.updated_at|date:'c' }}">
-          <label>Це учень мого класу: 
+          <label>Це учень мого класу або школи: 
             <select name="student" required>
-              <option value="__choose__" disabled {% if not extra.matched_student_id %}selected{% endif %}>Оберіть справжнього учня класу</option>
-              {% for student in students %}
-                <option value="{{ student.pk }}" {% if extra.matched_student_id == student.pk %}selected{% endif %}>{{ student.get_full_name_ukr }}</option>
-              {% endfor %}
+              <option value="__choose__" disabled {% if not extra.matched_student_id %}selected{% endif %}>Оберіть учня для підтвердження</option>
+              <optgroup label="Учні цього класу ({{ journal.student_class.name }})">
+                {% for student in students %}
+                  <option value="{{ student.pk }}" {% if extra.matched_student_id == student.pk %}selected{% endif %}>{{ student.get_full_name_ukr }}</option>
+                {% endfor %}
+              </optgroup>
+              {% if other_school_students %}
+                <optgroup label="Учні інших класів школи">
+                  {% for student in other_school_students %}
+                    <option value="{{ student.pk }}" {% if extra.matched_student_id == student.pk %}selected{% endif %}>{{ student.get_full_name_ukr }} ({{ student.current_class_name }})</option>
+                  {% endfor %}
+                </optgroup>
+              {% endif %}
             </select>
           </label> 
           <button class="btn btn-primary" name="action" value="match">Підтвердити відповідність</button>
         </form>
-        {% if not extra.matched_student and not extra.separate_student %}
-          <form method="post" style="margin-top: 0.5rem;">
+        <div style="display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: center; margin-top: 0.5rem;">
+          {% if not extra.matched_student and not extra.separate_student %}
+            <form method="post" style="margin: 0;">
+              {% csrf_token %}
+              <input type="hidden" name="extra_id" value="{{ extra.pk }}">
+              <input type="hidden" name="version" value="{{ extra.updated_at|date:'c' }}">
+              <button class="btn btn-outline-primary" name="action" value="keep_separate">📘 Залишити позакласним (додати до журналу)</button>
+            </form>
+          {% endif %}
+          <form method="post" style="margin: 0;" onsubmit="return confirm('Вилучити учня «{{ extra.name }}» з черги цього журналу? Його збережені результати буде видалено, і він більше не з’являтиметься в цьому журналі.');">
             {% csrf_token %}
             <input type="hidden" name="extra_id" value="{{ extra.pk }}">
             <input type="hidden" name="version" value="{{ extra.updated_at|date:'c' }}">
-            <button class="btn btn-outline-primary" name="action" value="keep_separate">📘 Залишити позакласним (додати до журналу)</button>
+            <input type="hidden" name="confirm_delete" value="on">
+            <button class="btn btn-outline-danger btn-sm" name="action" value="delete_extra" title="Вилучити з черги цього журналу, якщо учень потрапив сюди помилково">
+              🗑 Не учень цього класу (вилучити з черги)
+            </button>
           </form>
-        {% endif %}
+        </div>
         {% endif %}
         {% if extra.merge_candidates and not extra.separate_student and not extra.matched_student %}
         <details><summary>Це повторний запис тієї самої дитини</summary>

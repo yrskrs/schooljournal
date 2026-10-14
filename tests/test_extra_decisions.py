@@ -22,7 +22,9 @@ class ExtraDecisionTests(TestCase):
             'action': action, 'extra_id': extra.pk, 'version': extra.updated_at.isoformat(), **values}, follow=True)
 
     def extra(self, **values):
-        return ExtraStudent.objects.create(connection=self.connection(), external_key='99', name='Вигаданий Профіль', **values)
+        values.setdefault('external_key', '99')
+        values.setdefault('name', 'Вигаданий Профіль')
+        return ExtraStudent.objects.create(connection=self.connection(), **values)
 
     def legacy_separate(self, extra):
         # Reproduce the previous schema behavior to check existing grade history.
@@ -195,3 +197,44 @@ class ExtraDecisionTests(TestCase):
         self.assertContains(response, 'Це не окремий позакласний журнал')
         self.assertTrue(Student.objects.filter(pk=self.student.pk).exists())
         self.assertEqual(self.client.get(url).status_code, 405)
+
+    def test_other_class_students_selectable_and_matchable(self):
+        other_class = StudentClass.objects.create(school=self.school, academic_year=self.year, name='8-Б', grade_level=8, letter='Б')
+        other_student = Student.objects.create(school=self.school, last_name='Шевченко', first_name='Тарас')
+        ClassEnrollment.objects.create(student=other_student, student_class=other_class, is_active=True)
+        extra = self.extra(name='Шевченко Тарас')
+
+        # Verify other-class student appears in dropdown with their class name
+        resp = self.client.get(self.url('?all=1'))
+        self.assertContains(resp, 'Шевченко Тарас (8-Б)')
+
+        # Match to the other-class student
+        match_resp = self.decision(extra, student=other_student.pk)
+        self.assertContains(match_resp, 'Шевченко Тарас (8-Б)')
+        extra.refresh_from_db()
+        self.assertEqual(extra.matched_student_id, other_student.pk)
+
+    def test_mismatched_connection_warning_displayed(self):
+        conn = self.connection()
+        conn.source_class_id = '999'
+        conn.roster_cache = {
+            'classes': [{'id': '999', 'name': '8-Б'}],
+            'subjects': [{'id': '10', 'name': 'Алгебра'}],
+            'students': [],
+        }
+        conn.save()
+
+        # Check in api_inbox
+        inbox_resp = self.client.get(self.url())
+        self.assertContains(inbox_resp, 'підключено інший клас')
+        self.assertContains(inbox_resp, '8-Б')
+
+        # Check in connect_source
+        connect_url = reverse('portal:connect_source', args=[self.journal.pk]) + f'?connection={conn.pk}'
+        connect_resp = self.client.get(connect_url)
+        self.assertContains(connect_resp, 'Увага: невідповідність класу!')
+
+        # Check in journal_detail
+        detail_url = reverse('portal:journal_detail', args=[self.journal.pk])
+        detail_resp = self.client.get(detail_url)
+        self.assertContains(detail_resp, 'підключено інший клас із джерела')
