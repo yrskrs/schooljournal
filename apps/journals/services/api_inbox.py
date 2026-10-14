@@ -59,7 +59,8 @@ def keep_result(connection, row, start, end):
         name = row.get('student_name')
         if not isinstance(name, str) or not name.strip():
             name = next((s['name'] for s in connection.roster_cache.get('students', []) if s['id'] == identity), 'Учень, що потребує перевірки')
-        extra, created = ExtraStudent.objects.get_or_create(connection=connection, external_key=identity, defaults={'name': name.strip()[:200]})
+        extra, created = ExtraStudent.objects.get_or_create(connection=connection, external_key=identity,
+            defaults={'name': name.strip()[:200], 'is_separate': True})
         if not created and extra.name != name.strip()[:200]:
             extra.name = name.strip()[:200]
             extra.save(update_fields=['name', 'updated_at'])
@@ -103,6 +104,7 @@ def keep_roster_extras(connection):
         if mapping:
             if extra and not extra.matched_student_id and not extra.separate_student_id:
                 extra.matched_student = mapping.student
-                extra.save(update_fields=['matched_student', 'updated_at'])
+                extra.is_separate = False
+                extra.save(update_fields=['matched_student', 'is_separate', 'updated_at'])
         elif extra is None:
-            ExtraStudent.objects.create(connection=connection, external_key=row['id'], name=row['name'][:200])
+            ExtraStudent.objects.create(connection=connection, external_key=row['id'], name=row['name'][:200], is_separate=True)

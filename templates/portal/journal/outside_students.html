@@ -4,6 +4,7 @@
 <h1>Окремі учні та їхні оцінки</h1>
 <p>Учні поза підтвердженими списками ваших журналів, зокрема під час замін. Їхні результати зберігаються без створення навчального класу.</p>
 <form method="get">
+  {% if selected_journal %}<input type="hidden" name="journal" value="{{ selected_journal }}"><a href="{% url 'portal:outside_students' %}">Показати з усіх моїх журналів</a>{% endif %}
   <label>Пошук учня <input name="q" value="{{ search }}"></label>
   <label>Джерело <select name="source"><option value="">Усі джерела</option><option value="schoolwork"{% if source == 'schoolwork' %} selected{% endif %}>Завдання</option><option value="schooltest"{% if source == 'schooltest' %} selected{% endif %}>Тести</option></select></label>
   <button class="btn btn-primary">Показати</button>
@@ -18,7 +19,7 @@
   {% endfor %}
 </article>
 {% empty %}<p>Окремих учнів за цими фільтрами немає. Нові результати завантажуються кнопкою синхронізації оцінок у журналі.</p>{% endfor %}
-{% if page_obj.has_previous %}<a href="?page={{ page_obj.previous_page_number }}&amp;q={{ search|urlencode }}&amp;source={{ source|urlencode }}">Назад</a>{% endif %}
+{% if page_obj.has_previous %}<a href="?page={{ page_obj.previous_page_number }}&amp;q={{ search|urlencode }}&amp;source={{ source|urlencode }}&amp;journal={{ selected_journal }}">Назад</a>{% endif %}
 <span>{{ page_obj.number }} / {{ page_obj.paginator.num_pages }}</span>
-{% if page_obj.has_next %}<a href="?page={{ page_obj.next_page_number }}&amp;q={{ search|urlencode }}&amp;source={{ source|urlencode }}">Далі</a>{% endif %}
+{% if page_obj.has_next %}<a href="?page={{ page_obj.next_page_number }}&amp;q={{ search|urlencode }}&amp;source={{ source|urlencode }}&amp;journal={{ selected_journal }}">Далі</a>{% endif %}
 {% endblock %}

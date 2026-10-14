@@ -129,7 +129,7 @@ def api_inbox(request, journal_id):
     students = list(journal_students(journal))
     show_all = request.GET.get('all') == '1'
     visible_results = APIInboxResult.objects.filter(extra_student=OuterRef('pk'), is_ignored=False)
-    extras = ExtraStudent.objects.filter(connection__journal=journal, alias_of__isnull=True).select_related('connection', 'matched_student', 'separate_student', 'separate_journal')
+    extras = ExtraStudent.objects.filter(connection__journal=journal, connection__enabled=True, alias_of__isnull=True).select_related('connection', 'matched_student', 'separate_student', 'separate_journal')
     extras = extras.annotate(
         has_results=Exists(APIInboxResult.objects.filter(extra_student=OuterRef('pk'))),
         has_visible_results=Exists(visible_results),
@@ -156,7 +156,7 @@ def api_inbox(request, journal_id):
             alias_of__isnull=True, matched_student__isnull=True, separate_student__isnull=True).exclude(pk=extra.pk)[:100])
 
     inbox = APIInboxResult.objects.filter(
-        connection__journal=journal, resolved=False, is_ignored=False
+        connection__journal=journal, connection__enabled=True, resolved=False, is_ignored=False
     ).select_related('connection', 'extra_student')
     if student_filter.isdigit():
         inbox = APIInboxResult.objects.filter(connection__journal=journal, extra_student_id=int(student_filter),
@@ -182,6 +182,9 @@ def api_inbox(request, journal_id):
         subject=journal.subject,
         teacher=journal.teacher,
     ).first()
+    if extra_journal and not (extra_journal.lessons.filter(grades__isnull=False).exists()
+            or extra_journal.summary_grades.exists() or extra_journal.lessons.filter(attendances__isnull=False).exists()):
+        extra_journal = None
 
     filters = request.GET.copy()
     for key in ('page', 'results_page', 'ignored_page'):

@@ -12,6 +12,17 @@ from .external_grades import ExternalAPIError, validate_api_url
 SOURCES = {'schooltest': 'Тести', 'schoolwork': 'Завдання'}
 
 
+def existing_source_connection(journal, source, url, payload):
+    """A changed LAN address is still the same verified source instance."""
+    candidates = journal.grade_apis.filter(source=source, contract_version=2)
+    instance = payload.get('instance_id')
+    if instance:
+        same = list(candidates.filter(roster_cache__instance_id=instance))
+        if same:
+            return sorted(same, key=lambda c: (not c.enabled, c.pk))[0]
+    return candidates.filter(url=url).order_by('pk').first()
+
+
 def ensure_same_source(connection, payload):
     previous = connection.roster_cache.get('instance_id')
     if previous and payload.get('instance_id') != previous:

@@ -87,6 +87,9 @@ def journal_detail(request, journal_id):
     - Швидке внесення оцінок та відвідування
     """
     journal = _get_journal_or_403(request.user, journal_id, write=False)
+    parent = extra_parent(journal)
+    if parent and not journal.lessons.filter(grades__isnull=False).exists() and not journal.summary_grades.exists() and not journal.lessons.filter(attendances__isnull=False).exists():
+        return redirect(reverse('portal:outside_students') + '?journal=' + str(parent.pk))
     can_edit = has_journal_access(request.user, journal, write=True)
     can_manage = can_manage_journal(request.user, journal)
     show_withdrawn = request.GET.get('withdrawn') == '1'
@@ -325,7 +328,7 @@ def journal_detail(request, journal_id):
         'unsynced_attendances_count': unsynced_attendances_count,
         'unsynced_lessons_count': unsynced_lessons_count,
         'nz_account': nz_account,
-        'external_review_count': ExternalGrade.objects.filter(connection__journal=journal,
+        'external_review_count': ExternalGrade.objects.filter(connection__journal=journal, connection__enabled=True,
             status__in=[ExternalGrade.Status.PENDING, ExternalGrade.Status.CONFLICT]).count(),
     }
     return render(request, 'portal/journal/detail.html', context)

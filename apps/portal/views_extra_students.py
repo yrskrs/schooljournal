@@ -18,10 +18,13 @@ from apps.portal.views_journal import _get_journal_or_403
 def outside_students(request):
     journals = [row for row in get_user_journals(request.user).select_related('nz_owner__user', 'local_profile')
                 if has_journal_access(request.user, row)]
-    extras = ExtraStudent.objects.filter(connection__journal_id__in=[row.pk for row in journals],
+    extras = ExtraStudent.objects.filter(connection__journal_id__in=[row.pk for row in journals], connection__enabled=True,
         alias_of__isnull=True, matched_student__isnull=True).select_related(
             'connection__journal__student_class', 'connection__journal__subject', 'separate_journal')
     search = request.GET.get('q', '').strip()
+    journal_id = request.GET.get('journal', '')
+    if journal_id.isdigit():
+        extras = extras.filter(connection__journal_id=int(journal_id))
     source = request.GET.get('source', '')
     if search:
         extras = extras.filter(name__icontains=search)
@@ -39,6 +42,7 @@ def outside_students(request):
     return render(request, 'portal/journal/outside_students.html', {
         'page_obj': Paginator(list(groups.values()), 25).get_page(request.GET.get('page')),
         'search': search, 'source': source,
+        'selected_journal': journal_id,
     })
 
 

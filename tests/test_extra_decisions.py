@@ -164,7 +164,7 @@ class ExtraDecisionTests(TestCase):
         extra.refresh_from_db()
         student = extra.separate_student
         detail = reverse('portal:journal_detail', args=[extra.separate_journal_id])
-        self.assertContains(self.client.get(detail), 'Видалити позакласного учня та оцінки')
+        self.assertRedirects(self.client.get(detail), reverse('portal:outside_students') + '?journal=' + str(self.journal.pk))
         url = reverse('portal:delete_extracurricular_student', args=[extra.separate_journal_id, student.pk])
         response = self.client.post(url, {'confirm_delete':'on', 'version':student.updated_at.isoformat()}, follow=True)
         self.assertContains(response, 'локальні записи видалено')

@@ -284,6 +284,30 @@ class ExternalIntegrationTests(TestCase):
         grade.refresh_from_db(); self.assertEqual(grade.value, '')
         self.assertEqual(log.counts['conflicts'], 1)
 
+    def test_identical_manual_mark_is_unchanged_without_taking_ownership(self):
+        grade = Grade.objects.create(lesson=self.l1, student=self.student, value='10',
+            is_approved=True, is_synced_to_nz=True, created_by=self.teacher)
+        before = (grade.import_record_id, grade.created_by_id, grade.is_synced_to_nz)
+        for _ in range(2):
+            log = self.pull()
+            self.assertEqual((log.counts['conflicts'], log.counts['unchanged']), (0, 1))
+        grade.refresh_from_db()
+        self.assertEqual(before, (grade.import_record_id, grade.created_by_id, grade.is_synced_to_nz))
+        self.assertEqual(self.record().status, 'APPLIED')
+
+    def test_old_conflict_resolves_when_teacher_has_entered_same_mark(self):
+        grade = Grade.objects.create(lesson=self.l1, student=self.student, value='8', is_approved=True)
+        self.pull()
+        self.assertEqual(self.record().status, 'CONFLICT')
+        grade.value = '10'; grade.save()
+        self.assertEqual(self.pull().counts['unchanged'], 1)
+        self.assertEqual(self.record().status, 'APPLIED')
+
+    def test_identical_mark_with_absence_remains_a_conflict(self):
+        Grade.objects.create(lesson=self.l1, student=self.student, value='10', is_approved=True)
+        Attendance.objects.create(lesson=self.l1, student=self.student, status='ABSENT_UNEXCUSED')
+        self.assertEqual(self.pull().counts['conflicts'], 1)
+
     def test_attendance_conflict_is_preserved(self):
         Attendance.objects.create(lesson=self.l1, student=self.student, status='ABSENT_UNEXCUSED')
         self.assertEqual(self.pull().counts['conflicts'], 1)
