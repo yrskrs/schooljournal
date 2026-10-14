@@ -1,14 +1,60 @@
 {% extends 'base.html' %}
 {% block title %}Окремі учні та їхні оцінки{% endblock %}
 {% block content %}
-<h1>Окремі учні та їхні оцінки</h1>
-<p>Учні поза підтвердженими списками ваших журналів, зокрема під час замін. Їхні результати зберігаються без створення навчального класу.</p>
-<form method="get">
-  {% if selected_journal %}<input type="hidden" name="journal" value="{{ selected_journal }}"><a href="{% url 'portal:outside_students' %}">Показати з усіх моїх журналів</a>{% endif %}
-  <label>Пошук учня <input name="q" value="{{ search }}"></label>
+<div class="outside-page-header">
+  <div><h1>Окремі учні та їхні оцінки</h1>
+  {% if journal %}<p class="text-muted">{{ journal.student_class.name }} · {{ journal.subject.name }} · {{ journal.academic_year.name }}</p>{% endif %}</div>
+  {% if journal %}<a class="btn btn-secondary" href="{% url 'portal:journal_detail' journal.pk %}">← До основного журналу</a>{% endif %}
+</div>
+<p>Учні — у рядках, дати й теми уроків — у стовпцях. Тут збережені результати поза списком класу, зокрема під час замін. Призупинення підключення не приховує історію. Перегляд таблиці не створює класів і не відправляє оцінки на nz.ua.</p>
+<form method="get" class="outside-filters">
+  <label>Журнал <select name="journal" onchange="this.form.submit()"><option value="">Усі мої журнали</option>{% for item in journals %}<option value="{{ item.pk }}"{% if selected_journal == item.pk|stringformat:'s' %} selected{% endif %}>{{ item.student_class.name }} · {{ item.subject.name }} · {{ item.academic_year.name }}</option>{% endfor %}</select></label>
+  <label>Пошук учня <input type="search" name="q" value="{{ search }}" placeholder="Прізвище або ім’я"></label>
   <label>Джерело <select name="source"><option value="">Усі джерела</option><option value="schoolwork"{% if source == 'schoolwork' %} selected{% endif %}>Завдання</option><option value="schooltest"{% if source == 'schooltest' %} selected{% endif %}>Тести</option></select></label>
+  {% if semesters %}<label>Період <select name="semester_id"><option value="all">Весь рік</option>{% for semester in semesters %}<option value="{{ semester.pk }}"{% if selected_semester.pk == semester.pk %} selected{% endif %}>{{ semester.number }} семестр</option>{% endfor %}</select></label>{% endif %}
+  <label>Місяць <input type="month" name="month" value="{{ selected_month }}"></label>
   <button class="btn btn-primary">Показати</button>
+  <a class="btn btn-secondary" href="{% url 'portal:outside_students' %}{% if selected_journal %}?journal={{ selected_journal }}{% endif %}">Скинути пошук і період</a>
+  {% if selected_journal %}<a href="{% url 'portal:outside_students' %}">Показати з усіх моїх журналів</a>{% endif %}
 </form>
+{% for table in tables %}
+<section class="outside-gradebook" data-outside-journal="{{ table.journal.pk }}">
+  <div class="outside-table-header">
+    <h2>{{ table.journal.student_class.name }} · {{ table.journal.subject.name }} <span class="text-muted">({{ table.rows|length }} учнів)</span></h2>
+    <div class="outside-table-actions">
+      <a href="{% url 'portal:api_inbox' table.journal.pk %}?all=1" class="btn btn-secondary btn-sm">Відповідності та всі роботи</a>
+      {% for legacy in table.legacy_journals %}<a href="{% url 'portal:journal_detail' legacy.pk %}" class="btn btn-secondary btn-sm">Відкрити окремий журнал для редагування</a>{% endfor %}
+    </div>
+  </div>
+  <p class="text-muted outside-table-hint">У клітинці показані оцінки та роботи за цю дату. Роботи без однозначного номера уроку мають окремий стовпець. Збережені оцінки окремого журналу враховують ручні виправлення.</p>
+  <div class="journal-scroll-wrapper outside-table-scroll" role="region" aria-label="Оцінки окремих учнів {{ table.journal.student_class.name }}" tabindex="0">
+    <table class="journal-table outside-grades-table">
+      <thead><tr>
+        <th class="sticky-col-num" scope="col">№</th><th class="sticky-col-name" scope="col">Учень</th>
+        {% for column in table.columns %}<th class="outside-lesson-th" scope="col"><span>{{ column.date|date:'d.m.Y'|default:'Без дати' }}</span>{% if column.number %}<small>Урок {{ column.number }}</small>{% else %}<small>Роботи</small>{% endif %}<span class="outside-lesson-topic" title="{{ column.topic }}">{{ column.topic|default:'Без теми' }}</span></th>{% empty %}<th>Оцінки</th>{% endfor %}
+        <th scope="col">Рішення</th>
+      </tr></thead>
+      <tbody>
+        {% for row in table.rows %}<tr>
+          <td class="sticky-col-num">{{ forloop.counter }}</td><th class="sticky-col-name" scope="row">{{ row.name }}</th>
+          {% for cell in row.cells %}<td class="outside-grade-cell">
+            {% for mark in cell %}<div class="outside-grade-mark" title="{{ mark.title }} · {{ mark.source }}">
+              {% if mark.extra_id %}<a href="{% url 'portal:api_inbox' table.journal.pk %}?student={{ mark.extra_id }}&amp;all=1" class="outside-grade-value">{{ mark.value }}</a>{% else %}<strong class="outside-grade-value">{{ mark.value }}</strong>{% endif %}
+              <small>{{ mark.title }}</small>
+            </div>{% empty %}<span class="text-muted">—</span>{% endfor %}
+          </td>{% empty %}<td class="text-muted">Оцінок ще немає</td>{% endfor %}
+          <td class="outside-row-decision"><span>{% if row.is_separate %}Залишено окремим{% else %}Потребує підтвердження{% endif %}</span>
+            {% if row.extra %}<a href="{% url 'portal:api_inbox' table.journal.pk %}?student={{ row.extra.pk }}&amp;all=1">Перевірити роботи</a>{% endif %}
+            {% if row.legacy_journal %}<a href="{% url 'portal:journal_detail' row.legacy_journal.pk %}">Редагувати в окремому журналі</a>{% endif %}
+          </td>
+        </tr>{% empty %}<tr><td colspan="{{ table.column_count }}" class="outside-empty-cell">Окремих учнів за цими фільтрами немає. Календар уроків цього журналу показано вище. Перевірте пошук і джерело або відкрийте «Відповідності та всі роботи».</td></tr>{% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% empty %}<p>За цими фільтрами окремих учнів немає. Оберіть конкретний журнал, щоб переглянути його таблицю й календар уроків.</p>{% endfor %}
+{% if page_obj %}
+<details class="outside-work-details" id="outsideWorkDetails"><summary>Картки учнів та останні роботи</summary>
 {% for pupil in page_obj %}
 <article class="schedule-card" style="margin-bottom: 1.25rem;">
   <div style="display: flex; justify-content: space-between; align-items: baseline; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 0.5rem;">
@@ -20,8 +66,9 @@
       <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.5rem;">
         <div>
           <strong style="color: #1e293b;">{{ context.extra.connection.journal.student_class.name }}</strong> · <span>{{ context.extra.connection.journal.subject.name }}</span>
-          {% if context.extra.separate_student %}
-            <span class="badge" style="background: #e0f2fe; color: #0369a1; padding: 2px 8px; border-radius: 4px; font-size: 0.78rem; font-weight: 700; margin-left: 0.4rem;">📘 Додано до журналу: {{ context.extra.separate_journal.student_class.name }}</span>
+          {% if not context.extra.connection.enabled %}<span class="badge">Підключення призупинено · історію збережено</span>{% endif %}
+          {% if context.extra.is_separate %}
+            <span class="badge" style="background: #e0f2fe; color: #0369a1; padding: 2px 8px; border-radius: 4px; font-size: 0.78rem; font-weight: 700; margin-left: 0.4rem;">Залишено окремим{% if context.extra.separate_journal %}: {{ context.extra.separate_journal.student_class.name }}{% endif %}</span>
           {% else %}
             <span class="badge" style="background: #fef3c7; color: #92400e; padding: 2px 8px; border-radius: 4px; font-size: 0.78rem; font-weight: 700; margin-left: 0.4rem;">⏳ Очікує рішення вчителя</span>
           {% endif %}
@@ -44,7 +91,9 @@
   {% endfor %}
 </article>
 {% empty %}<p>Окремих учнів за цими фільтрами немає. Нові результати завантажуються кнопкою синхронізації оцінок у журналі.</p>{% endfor %}
-{% if page_obj.has_previous %}<a href="?page={{ page_obj.previous_page_number }}&amp;q={{ search|urlencode }}&amp;source={{ source|urlencode }}&amp;journal={{ selected_journal }}">Назад</a>{% endif %}
+</details>
+{% endif %}
+{% if page_obj.has_previous %}<a href="?page={{ page_obj.previous_page_number }}&amp;q={{ search|urlencode }}&amp;source={{ source|urlencode }}&amp;journal={{ selected_journal }}&amp;month={{ selected_month }}&amp;semester_id={{ selected_semester_param }}">Назад</a>{% endif %}
 <span>{{ page_obj.number }} / {{ page_obj.paginator.num_pages }}</span>
-{% if page_obj.has_next %}<a href="?page={{ page_obj.next_page_number }}&amp;q={{ search|urlencode }}&amp;source={{ source|urlencode }}&amp;journal={{ selected_journal }}">Далі</a>{% endif %}
+{% if page_obj.has_next %}<a href="?page={{ page_obj.next_page_number }}&amp;q={{ search|urlencode }}&amp;source={{ source|urlencode }}&amp;journal={{ selected_journal }}&amp;month={{ selected_month }}&amp;semester_id={{ selected_semester_param }}">Далі</a>{% endif %}
 {% endblock %}

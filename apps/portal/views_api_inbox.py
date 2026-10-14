@@ -337,7 +337,7 @@ def api_inbox(request, journal_id):
 
     show_all = request.GET.get('all') == '1'
     visible_results = APIInboxResult.objects.filter(extra_student=OuterRef('pk'), is_ignored=False)
-    extras = ExtraStudent.objects.filter(connection__journal=journal, connection__enabled=True, alias_of__isnull=True).select_related('connection', 'matched_student', 'separate_student', 'separate_journal')
+    extras = ExtraStudent.objects.filter(connection__journal=journal, alias_of__isnull=True).select_related('connection', 'matched_student', 'separate_student', 'separate_journal')
     extras = extras.annotate(
         has_results=Exists(APIInboxResult.objects.filter(extra_student=OuterRef('pk'))),
         has_visible_results=Exists(visible_results),

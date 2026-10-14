@@ -77,7 +77,8 @@
         <a class="btn btn-outline-primary btn-sm" href="{% url 'portal:connect_source' journal.id %}">Підключити тести / завдання</a>
         <a class="btn btn-outline-primary btn-sm" href="{% url 'portal:journal_integrations' journal.id %}">Профілі та API</a>
         <a class="btn btn-outline-primary btn-sm" href="{% url 'portal:external_grade_review' journal.id %}">Оцінки з робіт{% if external_review_count %} ({{ external_review_count }}){% endif %}</a>
-        <a class="btn btn-outline-primary btn-sm" href="{% url 'portal:api_inbox' journal.id %}">Позакласні учні та результати</a>
+        <a class="btn btn-outline-primary btn-sm" href="{% url 'portal:outside_students' %}?journal={{ journal.id }}">Таблиця окремих учнів</a>
+        <a class="btn btn-outline-primary btn-sm" href="{% url 'portal:api_inbox' journal.id %}">Відповідності та роботи поза списком</a>
         {% if extra_journal %}
           <a class="btn btn-outline-success btn-sm" href="{% url 'portal:journal_detail' extra_journal.id %}">📘 Журнал позакласних учнів</a>
         {% endif %}

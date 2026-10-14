@@ -1,0 +1,45 @@
+# Disposable outside-gradebook checks; no working ports, env files or volumes.
+services:
+  journaldb:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: outside_grid_checks
+      POSTGRES_USER: outside_check
+      POSTGRES_PASSWORD: synthetic-outside-check
+    tmpfs: [/var/lib/postgresql/data]
+    healthcheck:
+      test: [CMD-SHELL, pg_isready -U outside_check -d outside_grid_checks]
+      interval: 2s
+      retries: 30
+  journal:
+    image: schooljournal-outside-grid-check:1.3.25
+    environment:
+      SECRET_KEY: synthetic-outside-grid-check-only
+      ALLOWED_HOSTS: journal,nginx,localhost,127.0.0.1
+      INITIAL_SETUP_ENABLED: 'False'
+      SEED_DEMO_DATA: 'False'
+      DB_ENGINE: django.db.backends.postgresql
+      POSTGRES_DB: outside_grid_checks
+      POSTGRES_USER: outside_check
+      POSTGRES_PASSWORD: synthetic-outside-check
+      POSTGRES_HOST: journaldb
+      POSTGRES_PORT: '5432'
+      ROSTER_PEERS: '[]'
+    depends_on:
+      journaldb: {condition: service_healthy}
+    volumes:
+      - outside_static:/app/staticfiles
+    healthcheck:
+      test: [CMD, curl, --fail, --silent, http://localhost:8000/healthz/]
+      interval: 2s
+      retries: 30
+      start_period: 20s
+  nginx:
+    image: nginx:1.27-alpine
+    volumes:
+      - ./outside_grid.nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - outside_static:/staticfiles:ro
+    depends_on:
+      journal: {condition: service_healthy}
+volumes:
+  outside_static:
