@@ -17,6 +17,9 @@ from .external_grades import ExternalAPIError, validate_api_url
 
 
 def roster_request(connection):
+    from .extra_students import extra_parent
+    if extra_parent(connection.journal):
+        raise ExternalAPIError('Позакласні учні зберігаються окремо. Службовий журнал не можна передавати як навчальний клас.')
     origin = operate(lambda engine, store: engine.origin)
     namespace = UUID(origin)
     journal = connection.journal

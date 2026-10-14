@@ -40,6 +40,8 @@ def validate(payload):
             or not 1 <= group['grade_level'] <= 12 or not isinstance(group.get('letter', ''), str)
             or len(group.get('letter', '')) > 10):
         raise SyncError('Некоректна назва класу.')
+    if group.get('letter') == 'ПК' and group['name'].endswith(' (Позакласні)'):
+        raise SyncError('Окремі учні не є навчальним класом. Службову таблицю передавати заборонено.')
     rows = payload.get('students')
     if not isinstance(rows, list) or len(rows) > 5000:
         raise SyncError('Очікується список до 5000 учнів.')

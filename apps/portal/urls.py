@@ -18,6 +18,7 @@ def root_redirect(request):
     return redirect('portal:teacher_dashboard')
 
 urlpatterns = [
+    path('outside-students/', views_extra_students.outside_students, name='outside_students'),
     path('help/', views_public.guide, name='guide'),
     path('versions/', views_public.versions, name='versions'),
     path('updates/', views_updates.system_updates_view, name='system_updates'),

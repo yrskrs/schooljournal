@@ -124,6 +124,12 @@ def import_grade_records(connection, rows, user, date_from, date_to):
                 if inbox is None or inbox.is_ignored:
                     counts['ignored'] += 1
                     continue
+                if inbox.extra_student and inbox.extra_student.is_separate and not inbox.extra_student.separate_student_id:
+                    inbox.resolved = True
+                    inbox.reason = 'Збережено для окремого учня без зарахування до класу.'
+                    inbox.save(update_fields=['resolved', 'reason'])
+                    counts['added' if inbox.payload_created else 'updated' if inbox.payload_changed else 'unchanged'] += 1
+                    continue
                 if inbox.extra_student and inbox.extra_student.separate_journal_id:
                     target_journal = Journal.objects.select_for_update().get(pk=inbox.extra_student.separate_journal_id)
                     if not has_journal_access(user, target_journal, write=True):

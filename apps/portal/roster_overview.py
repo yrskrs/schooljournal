@@ -12,6 +12,8 @@ def context(user, selected_class_id=None):
                 .order_by('-academic_year__start_date', 'student_class__grade_level', 'student_class__name', 'subject__name')
                 if has_journal_access(user, journal)]
     classes = {}
+    from apps.journals.services.extra_students import extra_parent
+    journals = [journal for journal in journals if not extra_parent(journal)]
     for journal in journals:
         classes.setdefault(journal.student_class_id, {
             'id': journal.student_class_id, 'name': journal.student_class.name,

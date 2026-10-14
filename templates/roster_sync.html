@@ -3,6 +3,7 @@
 {% block content %}
 <div class="roster-page">
 <h1>Списки та синхронізація</h1>
+<p><a href="{% url 'portal:outside_students' %}">Окремі учні з усіх моїх журналів</a></p>
 <p class="text-muted">Передавайте учнів зі своїх журналів у тести та завдання. Отримання оцінок — окрема дія в журналі.</p>
 <section class="card roster-intro">
   <h2>1. Виберіть клас</h2>
@@ -27,6 +28,7 @@
   {% for journal in teacher_roster_journals %}
   <article class="roster-journal">
     <div class="roster-journal-heading"><h3>{{ journal.subject.name }}</h3><a href="{% url 'portal:journal_detail' journal.pk %}">Відкрити журнал</a></div>
+    <p><a href="{% url 'portal:api_inbox' journal.pk %}">Окремі учні та їхні оцінки</a></p>
     <p class="text-muted">Учитель: {{ journal.teacher.get_full_name_ukr }}. Ігнорування в цьому журналі: {{ journal.roster_ignored_count }} учн.</p>
     {% for item in journal.roster_connections %}
     <div class="roster-connection">
