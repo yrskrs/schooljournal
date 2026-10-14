@@ -63,7 +63,7 @@ def connect_source(request, journal_id):
     context = mapping = None
     available = []
     known = set()
-    for item in GradeAPIConnection.objects.filter(contract_version=2, enabled=True, journal__is_archived=False).filter(
+    for item in GradeAPIConnection.objects.filter(contract_version=2, journal__is_archived=False).filter(
             Q(journal__teacher=request.user) | Q(journal__nz_owner__user=request.user) | Q(journal__local_profile=request.user)).exclude(journal=journal).select_related('journal'):
         identity = (item.source, item.url, item.api_key)
         if identity not in known and has_journal_access(request.user, item.journal, write=True):
