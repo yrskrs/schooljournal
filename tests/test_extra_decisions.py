@@ -2,8 +2,8 @@
 from django.test import TestCase, Client
 from django.urls import reverse
 from apps.accounts.models import User
-from apps.curriculum.models import Student, ClassEnrollment
-from apps.journals.models import ExtraStudent, APIInboxResult, Grade, Lesson, AuditLog, DeletedAPIIdentity, GradeStudentMapping
+from apps.curriculum.models import Student, StudentClass, ClassEnrollment
+from apps.journals.models import Journal, ExtraStudent, APIInboxResult, Grade, Lesson, AuditLog, DeletedAPIIdentity, GradeStudentMapping
 from apps.journals.services.api_inbox import keep_roster_extras, resolve_student
 from tests import test_simple_exchange as exchange
 
@@ -23,6 +23,17 @@ class ExtraDecisionTests(TestCase):
 
     def extra(self, **values):
         return ExtraStudent.objects.create(connection=self.connection(), external_key='99', name='Вигаданий Профіль', **values)
+
+    def legacy_separate(self, extra):
+        # Reproduce the previous schema behavior to check existing grade history.
+        group = StudentClass.objects.create(school=self.school, academic_year=self.year,
+            name=f'{self.group.name} (Позакласні)', grade_level=self.group.grade_level, letter='ПК')
+        journal = Journal.objects.create(school=self.school, academic_year=self.year,
+            student_class=group, subject=self.subject, teacher=self.teacher)
+        student = Student.objects.create(school=self.school, last_name='Вигаданий', first_name='Учень')
+        ClassEnrollment.objects.create(student=student, student_class=group)
+        extra.separate_student, extra.separate_journal = student, journal
+        extra.save()
 
     def test_placeholder_requires_choice_without_creating_another_journal(self):
         extra = self.extra()
@@ -58,9 +69,10 @@ class ExtraDecisionTests(TestCase):
         extra = self.extra()
         response = self.decision(extra, action='keep_separate')
         extra.refresh_from_db()
-        self.assertIsNotNone(extra.separate_student_id)
-        self.assertEqual(list(response.context['extra_page']), [])
-        self.assertContains(self.client.get(self.url('?all=1')), '✓ Залишено позакласним')
+        self.assertTrue(extra.is_separate)
+        self.assertIsNone(extra.separate_student_id)
+        self.assertEqual(list(response.context['extra_page']), [extra])
+        self.assertContains(self.client.get(self.url('?all=1')), 'Окремий учень')
         original_id = extra.separate_student_id
         self.decision(extra, action='keep_separate')
         extra.refresh_from_db()
@@ -72,7 +84,7 @@ class ExtraDecisionTests(TestCase):
         self.pull(connection, self.row())
         extra = ExtraStudent.objects.get()
         ordinary = Student.objects.create(school=self.school, last_name='Вигаданий', first_name='У.')
-        self.decision(extra, action='keep_separate')
+        self.legacy_separate(extra)
         extra.refresh_from_db()
         self.assertNotEqual(extra.separate_student_id, ordinary.pk)
         self.assertFalse(Grade.objects.exists())
@@ -114,7 +126,7 @@ class ExtraDecisionTests(TestCase):
 
     def test_delete_separate_identity_removes_its_own_pupil_and_marks(self):
         extra = self.extra()
-        self.decision(extra, action='keep_separate')
+        self.legacy_separate(extra)
         extra.refresh_from_db()
         pk = extra.separate_student_id
         lesson = Lesson.objects.create(journal=extra.separate_journal, date=self.l1.date, lesson_number=1)
@@ -148,7 +160,7 @@ class ExtraDecisionTests(TestCase):
 
     def test_number_menu_deletes_new_separate_profile_and_source_identity(self):
         extra = self.extra()
-        self.decision(extra, action='keep_separate')
+        self.legacy_separate(extra)
         extra.refresh_from_db()
         student = extra.separate_student
         detail = reverse('portal:journal_detail', args=[extra.separate_journal_id])
@@ -161,7 +173,7 @@ class ExtraDecisionTests(TestCase):
 
     def test_old_separate_table_profile_can_be_deleted_by_id_without_name_linking(self):
         extra = self.extra()
-        self.decision(extra, action='keep_separate')
+        self.legacy_separate(extra)
         extra.refresh_from_db()
         student, separate = extra.separate_student, extra.separate_journal
         # Old releases created these rows without any stable link from the inbox.

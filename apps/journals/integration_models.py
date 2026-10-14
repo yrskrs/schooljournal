@@ -129,6 +129,8 @@ class ExtraStudent(models.Model):
     connection = models.ForeignKey(GradeAPIConnection, on_delete=models.CASCADE, related_name='extra_students')
     external_key = models.CharField(max_length=200)
     name = models.CharField(max_length=200)
+    is_separate = models.BooleanField(default=False)
+    alias_of = models.ForeignKey('self', on_delete=models.PROTECT, null=True, blank=True, related_name='aliases')
     matched_student = models.ForeignKey('curriculum.Student', on_delete=models.PROTECT, null=True, blank=True)
     separate_student = models.OneToOneField('curriculum.Student', on_delete=models.PROTECT,
         null=True, blank=True, related_name='api_extra_identity')

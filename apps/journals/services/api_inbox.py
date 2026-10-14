@@ -1,9 +1,21 @@
 """Keep unmapped identities and unusable grades without changing class lists."""
 import datetime as dt
+from uuid import UUID
 from apps.journals.models import APIInboxResult, ExtraStudent, DeletedAPIIdentity
 
 
 def student_key(row):
+    outside = row.get('outside_student_id')
+    if outside is not None:
+        if row.get('student_id') is not None:
+            raise ValueError('Суперечлива ідентичність позакласного учня.')
+        try:
+            expected = 'outside:' + str(UUID(outside))
+        except (ValueError, TypeError, AttributeError):
+            raise ValueError('Некоректна стала ідентичність позакласного учня.') from None
+        if row.get('student_key') != expected:
+            raise ValueError('Суперечлива ідентичність учня джерела.')
+        return expected
     value = row.get('student_id')
     if value is not None:
         if isinstance(value, bool) or not str(value).isdigit() or int(value) < 1:
@@ -51,14 +63,23 @@ def keep_result(connection, row, start, end):
         if not created and extra.name != name.strip()[:200]:
             extra.name = name.strip()[:200]
             extra.save(update_fields=['name', 'updated_at'])
-    record, _ = APIInboxResult.objects.update_or_create(connection=connection, external_id=str(raw_id),
+    if extra and extra.alias_of_id:
+        extra = extra.alias_of
+    record, created = APIInboxResult.objects.get_or_create(connection=connection, external_id=str(raw_id),
         defaults={'extra_student': extra, 'payload': row})
+    changed = record.payload != row or record.extra_student_id != (extra.pk if extra else None)
+    if changed:
+        record.payload, record.extra_student = row, extra
+        record.save(update_fields=['payload', 'extra_student', 'updated_at'])
+    record.payload_created, record.payload_changed = created, created or changed
     return record
 
 
 def resolve_student(connection, row):
     identity = student_key(row)
     extra = ExtraStudent.objects.filter(connection=connection, external_key=identity).first()
+    if extra and extra.alias_of_id:
+        extra = extra.alias_of
     if extra:
         if extra.separate_student_id:
             return extra.separate_student_id

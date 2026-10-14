@@ -1,6 +1,6 @@
 """Teacher decisions about one stable source identity, never a name match."""
 from django.db.models import Q
-from apps.curriculum.models import Student, StudentClass, ClassEnrollment
+from apps.curriculum.models import Student
 from apps.journals.models import Journal, ExtraStudent, DeletedAPIIdentity, AuditLog, GradeStudentMapping, ExternalGrade
 from apps.portal.permissions import has_journal_access
 from .external_grades import ExternalAPIError
@@ -65,7 +65,8 @@ def match_student(extra, student, user):
         raise ExternalAPIError('Відповідність уже має імпортовану історію іншого учня. Переприв’язування заборонено.')
     previous = extra.matched_student_id
     extra.matched_student = student
-    extra.save(update_fields=['matched_student', 'updated_at'])
+    extra.is_separate = False
+    extra.save(update_fields=['matched_student', 'is_separate', 'updated_at'])
     audit(extra, user, AuditLog.Action.UPDATE, f'Підтверджено відповідність «{extra.name}»: «{student.get_full_name_ukr()}».',
         matched_student={'old': previous, 'new': student.pk})
 
@@ -75,24 +76,29 @@ def keep_separate(extra, user):
         raise ExternalAPIError('Учень уже має відповідність класу або імпортовану історію. Її перенесення потребує окремого рішення.')
     if extra.separate_student_id:
         return extra.separate_journal, False
-    journal = extra.connection.journal
-    group, _ = StudentClass.objects.get_or_create(school=journal.school, academic_year=journal.academic_year,
-        name=f'{journal.student_class.name} (Позакласні)',
-        defaults={'grade_level': journal.student_class.grade_level, 'letter': 'ПК'})
-    separate, _ = Journal.objects.get_or_create(school=journal.school, academic_year=journal.academic_year,
-        student_class=group, subject=journal.subject, defaults={'teacher': journal.teacher})
-    if not has_journal_access(user, separate, write=True):
-        raise ExternalAPIError('Окремий журнал належить іншому вчителю. Зверніться до адміністратора.')
-    names = extra.name.strip().split(None, 1)
-    # Reuse only this stored identity, never an existing pupil with the same name.
-    student = Student.objects.create(school=journal.school, last_name=names[0] if names else 'Учень',
-        first_name=names[1] if len(names) > 1 else '', notes=f'Позакласний учень ({journal.student_class.name})')
-    ClassEnrollment.objects.create(student=student, student_class=group)
-    extra.separate_student, extra.separate_journal = student, separate
-    extra.save(update_fields=['separate_student', 'separate_journal', 'updated_at'])
-    audit(extra, user, AuditLog.Action.CREATE, f'Учня «{extra.name}» залишено в окремому журналі.',
-        separate_student=student.pk, separate_journal=separate.pk)
-    return separate, True
+    created = not extra.is_separate
+    extra.is_separate = True
+    extra.save(update_fields=['is_separate', 'updated_at'])
+    extra.results.filter(is_ignored=False).update(resolved=True, reason='Збережено для окремого учня без зарахування до класу.')
+    if created:
+        audit(extra, user, AuditLog.Action.CREATE, f'Учня «{extra.name}» залишено окремим учнем без створення класу.')
+    return None, created
+
+
+def merge_extra(extra, target, user):
+    """Only a teacher's explicit decision may connect old per-work identities."""
+    if (extra.pk == target.pk or extra.connection_id != target.connection_id
+            or extra.alias_of_id or target.alias_of_id or extra.aliases.exists()
+            or extra.matched_student_id or target.matched_student_id
+            or extra.separate_student_id or target.separate_student_id
+            or identity_records(extra).exists() or identity_records(target).exists()):
+        raise ExternalAPIError('Об’єднання недоступне: виберіть два окремі записи одного підключення без імпортованої історії класу.')
+    extra.results.update(extra_student=target)
+    extra.alias_of = target
+    extra.save(update_fields=['alias_of', 'updated_at'])
+    if target.is_separate:
+        target.results.filter(is_ignored=False).update(resolved=True, reason='Збережено для окремого учня без зарахування до класу.')
+    audit(extra, user, AuditLog.Action.UPDATE, 'Учитель підтвердив, що два записи належать одному окремому учню.', canonical_extra=target.pk)
 
 
 def delete_extra(extra, user):
@@ -116,6 +122,9 @@ def delete_extra(extra, user):
     if student:
         imported.filter(student=student, lesson__journal=extra.separate_journal).delete()
     DeletedAPIIdentity.objects.get_or_create(connection=extra.connection, external_key=extra.external_key)
+    for alias in extra.aliases.all():
+        DeletedAPIIdentity.objects.get_or_create(connection=alias.connection, external_key=alias.external_key)
+    extra.aliases.all().delete()
     audit(extra, user, AuditLog.Action.DELETE, f'Видалено позакласний запис «{extra.name}» та збережені результати ({results}).',
         results_deleted=results, separate_student_deleted=student.pk if student else None,
         imported_grades_preserved=preserved)

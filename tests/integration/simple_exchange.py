@@ -46,7 +46,7 @@ print(j.pk)""")
             code('test', """from app.database import SessionLocal
 from app.models import Test,TestSession
 with SessionLocal() as db:
- t=Test(teacher_id=1,title='Самостійний тест',class_name='10-В',subject='Вигаданий предмет',max_grade=12);db.add(t);db.flush()
+ t=Test(teacher_id=1,title='Самостійний тест',class_name='10-В',subject='Вигаданий предмет',max_grade=12,allow_outside_class=True);db.add(t);db.flush()
  db.add(TestSession(test_id=t.id,access_code='TEN1',is_active=True));db.commit()""")
             dc('stop','journal','work','worker')
             roster=get('test','/api/session-roster?code=TEN1').json()

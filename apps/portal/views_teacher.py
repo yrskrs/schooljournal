@@ -71,7 +71,8 @@ def teacher_dashboard(request):
             return (1, saved_class_order.index(j.student_class_id), j.subject.name)
         return (2, j.student_class.grade_level, j.student_class.name, j.subject.name)
 
-    my_journals = sorted(my_journals, key=journal_sort_key)
+    from apps.journals.services.extra_students import extra_parent
+    my_journals = sorted((journal for journal in my_journals if not extra_parent(journal)), key=journal_sort_key)
 
     class_groups = OrderedDict()
     for j in my_journals:
