@@ -154,6 +154,39 @@ class OutsideStudentsTests(TestCase):
         source.refresh_from_db()
         self.assertEqual(source.alias_of_id, target.pk)
 
+    def test_merge_two_already_separate_extras(self):
+        from apps.journals.models import GradeAPIConnection
+        conn1 = self.connection()
+        conn2 = GradeAPIConnection.objects.create(
+            journal=self.journal, source='schooltest', name='Тести',
+            contract_version=2, url=conn1.url, source_class_id='7',
+            source_subject_id='3', roster_cache=conn1.roster_cache
+        )
+        self.pull(conn1, self.row(id='work-1', attempt_id=1, student_key='unmapped:1'))
+        self.pull(conn2, self.row(id='test-1', attempt_id=2, student_key='unmapped:2'))
+        source = ExtraStudent.objects.get(connection=conn1)
+        target = ExtraStudent.objects.get(connection=conn2)
+        keep_separate(source, self.teacher)
+        keep_separate(target, self.teacher)
+
+        url = reverse('portal:api_inbox', args=[self.journal.pk])
+        data = {
+            'action': 'merge_extra',
+            'extra_id': source.pk,
+            'version': source.updated_at.isoformat(),
+            'target_extra': f'{target.pk}|{target.updated_at.isoformat()}',
+            'confirm_same_student': 'on',
+        }
+        resp = self.client.post(url, data, follow=True)
+        self.assertEqual(resp.status_code, 200)
+        source.refresh_from_db()
+        target.refresh_from_db()
+        self.assertEqual(source.alias_of_id, target.pk)
+        self.assertIsNone(source.separate_student_id)
+        self.assertIsNotNone(target.separate_student_id)
+        self.assertTrue(target.is_separate)
+        self.assertEqual(APIInboxResult.objects.filter(extra_student=target).count(), 2)
+
     def test_keep_separate_with_nz_owner_or_linked_profile_synchronizes_access(self):
         from apps.accounts.models import User
         from apps.journals.models import NZAccount

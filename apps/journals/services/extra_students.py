@@ -266,14 +266,24 @@ def merge_extra(extra, target, user):
     if extra.alias_of_id:
         raise ExternalAPIError('Запис уже об’єднано з іншим записом.')
 
+    extra_results = list(extra.results.filter(is_ignored=False))
+
     extra.results.update(extra_student=target)
     extra.alias_of = target
-    extra.save(update_fields=['alias_of', 'updated_at'])
+
+    old_sep_student = extra.separate_student
+    old_sep_journal = extra.separate_journal
+    extra.separate_student = None
+    extra.separate_journal = None
 
     if target.matched_student_id:
         extra.matched_student = target.matched_student
         extra.is_separate = False
-        extra.save(update_fields=['matched_student', 'is_separate', 'updated_at'])
+        extra.save(update_fields=['alias_of', 'matched_student', 'separate_student', 'separate_journal', 'is_separate', 'updated_at'])
+        if old_sep_student:
+            if old_sep_journal:
+                old_sep_student.grades.filter(lesson__journal=old_sep_journal).delete()
+            old_sep_student.delete()
         try:
             GradeStudentMapping.objects.filter(connection=extra.connection, student=target.matched_student).exclude(external_id=extra.external_key).delete()
             GradeStudentMapping.objects.update_or_create(
@@ -287,14 +297,23 @@ def merge_extra(extra, target, user):
         except Exception:
             pass
         target.results.filter(is_ignored=False).update(resolved=False, reason='Відповідність підтверджено. Роботи об’єднано.')
-    elif target.separate_student_id:
-        extra.separate_student = target.separate_student
-        extra.separate_journal = target.separate_journal
+    elif target.separate_student_id or (not target.separate_student_id and old_sep_student):
+        if not target.separate_student_id and old_sep_student:
+            target.separate_student = old_sep_student
+            target.separate_journal = old_sep_journal
+            target.is_separate = True
+            target.save(update_fields=['separate_student', 'separate_journal', 'is_separate', 'updated_at'])
+            old_sep_student = None
+            old_sep_journal = None
+
         extra.is_separate = True
-        extra.save(update_fields=['separate_student', 'separate_journal', 'is_separate', 'updated_at'])
-        target.results.filter(is_ignored=False).update(resolved=True, reason='Збережено для окремого учня без зарахування до класу.')
+        extra.save(update_fields=['alias_of', 'separate_student', 'separate_journal', 'is_separate', 'updated_at'])
+
         if target.separate_journal:
-            for res in extra.results.filter(is_ignored=False):
+            main_j = target.connection.journal
+            sync_topics_from_main_journal(target.separate_journal, main_j)
+
+            for res in extra_results:
                 payload = res.payload
                 d_str = payload.get('date')
                 val = payload.get('value')
@@ -304,14 +323,47 @@ def merge_extra(extra, target, user):
                     except (ValueError, TypeError):
                         continue
                     lesson = target.separate_journal.lessons.filter(date=lesson_date).first()
-                    if lesson:
-                        Grade.objects.update_or_create(
-                            lesson=lesson,
-                            student=target.separate_student,
-                            defaults={'value': str(val), 'is_approved': True}
+                    if not lesson:
+                        main_lesson = main_j.lessons.filter(date=lesson_date).first()
+                        topic = main_lesson.topic if main_lesson else (payload.get('title') or 'Позакласна робота')
+                        homework = main_lesson.homework if main_lesson else ''
+                        l_type = main_lesson.lesson_type if main_lesson else LessonType.ORDINARY
+                        sem = main_lesson.semester if main_lesson else None
+                        l_num = main_lesson.lesson_number if main_lesson else 1
+                        lesson = Lesson.objects.create(
+                            journal=target.separate_journal,
+                            date=lesson_date,
+                            lesson_number=l_num,
+                            topic=topic,
+                            homework=homework,
+                            lesson_type=l_type,
+                            semester=sem,
+                            created_by=user
                         )
-    elif target.is_separate:
+                    Grade.objects.update_or_create(
+                        lesson=lesson,
+                        student=target.separate_student,
+                        defaults={'value': str(val), 'is_approved': True}
+                    )
+                    res.resolved = True
+                    res.reason = 'Оцінку збережено в журналі позакласних учнів.'
+                    res.save(update_fields=['resolved', 'reason', 'updated_at'])
+
+        if old_sep_student and target.separate_student_id and old_sep_student.pk != target.separate_student_id:
+            if old_sep_journal:
+                old_sep_student.grades.filter(lesson__journal=old_sep_journal).delete()
+            old_sep_student.delete()
+
         target.results.filter(is_ignored=False).update(resolved=True, reason='Збережено для окремого учня без зарахування до класу.')
+    else:
+        extra.is_separate = target.is_separate
+        extra.save(update_fields=['alias_of', 'separate_student', 'separate_journal', 'is_separate', 'updated_at'])
+        if old_sep_student:
+            if old_sep_journal:
+                old_sep_student.grades.filter(lesson__journal=old_sep_journal).delete()
+            old_sep_student.delete()
+        if target.is_separate:
+            target.results.filter(is_ignored=False).update(resolved=True, reason='Збережено для окремого учня без зарахування до класу.')
 
     audit(extra, user, AuditLog.Action.UPDATE, f'Учитель об’єднав запис «{extra.name}» із «{target.name}».', canonical_extra=target.pk)
 

@@ -1,4 +1,5 @@
 import datetime as dt
+import logging
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.db import transaction
@@ -18,6 +19,8 @@ from apps.portal.permissions import has_journal_access
 from apps.portal.views_journal import _get_journal_or_403
 from school_sync.journal_roster import similar
 from apps.journals.services.extra_students import match_student, keep_separate, delete_extra, merge_extra
+
+logger = logging.getLogger(__name__)
 
 
 def _same_revision(updated_at, submitted):
@@ -274,6 +277,9 @@ def api_inbox(request, journal_id):
                     raise ExternalAPIError('Оберіть дію зі списку.')
         except ExternalAPIError as error:
             messages.error(request, str(error))
+        except Exception as error:
+            logger.exception("Помилка виконання дії в черзі робіт: %s", error)
+            messages.error(request, f'Не вдалося виконати дію: {error}')
         return redirect(request.get_full_path())
 
     students = list(journal_students(journal))
