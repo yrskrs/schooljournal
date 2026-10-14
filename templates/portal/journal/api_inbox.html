@@ -51,15 +51,39 @@
   </form>
   <p><a href="{% if show_all %}?{% else %}?all=1{% endif %}">{% if show_all %}Лише без відповідності{% else %}Також показати підтверджені відповідності{% endif %}</a></p>
 
+  {% if auto_matched_count and can_edit %}
+    <div style="background: #ecfdf5; border: 1px solid #6ee7b7; border-radius: 8px; padding: 0.85rem 1.25rem; margin-bottom: 1rem; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 0.75rem;">
+      <div>
+        <strong style="color: #065f46; font-size: 1rem;">✨ Знайдено збіги за прізвищами ({{ auto_matched_count }})</strong>
+        <p style="margin: 0.25rem 0 0 0; color: #047857; font-size: 0.85rem;">
+          Система автоматично підібрала учнів класу за прізвищами з джерела. Після підтвердження вони запам'ятаються назавжди і більше не запитуватимуться.
+        </p>
+      </div>
+      <form method="post" style="margin: 0;">
+        {% csrf_token %}
+        <button class="btn btn-success" name="action" value="batch_match" style="font-weight: 600; padding: 0.5rem 1rem;">
+          ✅ Підтвердити всі підібрані ({{ auto_matched_count }})
+        </button>
+      </form>
+    </div>
+  {% endif %}
+
   {% for extra in extra_page %}
     <article class="schedule-card">
-      <h3>{{ extra.name }}</h3>
+      <div style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 0.5rem;">
+        <h3 style="margin: 0;">{{ extra.name }}</h3>
+        {% if extra.suggested_student and not extra.matched_student and not extra.separate_student %}
+          <span style="font-size: 0.82rem; color: #0284c7; background: #e0f2fe; padding: 3px 8px; border-radius: 4px; font-weight: 600;">
+            ★ Знайдено збіг: {{ extra.suggested_student.get_full_name_ukr }}
+          </span>
+        {% endif %}
+      </div>
       {% if extra.separate_student %}
         <p role="status" style="color: #15803d; font-weight: 600;">✓ Залишено позакласним: <a href="{% url 'portal:journal_detail' extra.separate_journal_id %}">📘 {{ extra.separate_journal.student_class.name }}</a></p>
       {% elif extra.is_separate %}
         <p role="status">Окремий учень · без зарахування до класу.</p>
       {% endif %}
-      <p><a href="?student={{ extra.pk }}&amp;all=1">Усі роботи й оцінки цього учня</a> · {{ extra.connection.get_source_display }}{% if extra.matched_student %} · Підтверджено: {{ extra.matched_student.get_full_name_ukr }}{% endif %}</p>
+      <p><a href="?student={{ extra.pk }}&amp;all=1">Усі роботи й оцінки цього учня</a> · {{ extra.connection.get_source_display }}{% if extra.matched_student %} · <strong style="color: #15803d;">Підтверджено: {{ extra.matched_student.get_full_name_ukr }}</strong>{% endif %}</p>
       {% if extra.suggestions %}<p>Схожі імена, які варто перевірити: {{ extra.suggestions|join:', ' }}.</p>{% endif %}
 
       {% for result in extra.recent_results %}
@@ -81,72 +105,111 @@
       {% endfor %}
 
       {% if can_edit %}
-        {% if not extra.separate_student %}
-        <form method="post" style="margin-top: 0.75rem;">
-          {% csrf_token %}
-          <input type="hidden" name="extra_id" value="{{ extra.pk }}">
-          <input type="hidden" name="version" value="{{ extra.updated_at|date:'c' }}">
-          <label>Це учень мого класу або школи: 
-            <select name="student" required>
-              <option value="__choose__" disabled {% if not extra.matched_student_id %}selected{% endif %}>Оберіть учня для підтвердження</option>
-              <optgroup label="Учні цього класу ({{ journal.student_class.name }})">
-                {% for student in students %}
-                  <option value="{{ student.pk }}" {% if extra.matched_student_id == student.pk %}selected{% endif %}>{{ student.get_full_name_ukr }}</option>
-                {% endfor %}
-              </optgroup>
-              {% if other_school_students %}
-                <optgroup label="Учні інших класів школи">
-                  {% for student in other_school_students %}
-                    <option value="{{ student.pk }}" {% if extra.matched_student_id == student.pk %}selected{% endif %}>{{ student.get_full_name_ukr }} ({{ student.current_class_name }})</option>
+        {% if extra.matched_student or extra.separate_student %}
+          <div style="display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: center; margin-top: 0.5rem;">
+            <form method="post" style="margin: 0;">
+              {% csrf_token %}
+              <input type="hidden" name="extra_id" value="{{ extra.pk }}">
+              <input type="hidden" name="version" value="{{ extra.updated_at|date:'c' }}">
+              <button class="btn btn-outline-warning btn-sm" name="action" value="unmatch" title="Скасувати встановлену відповідність і повернути запис до черги">
+                ↩️ Зняти відповідність (повернути до черги)
+              </button>
+            </form>
+          </div>
+        {% else %}
+          <form method="post" style="margin-top: 0.65rem;">
+            {% csrf_token %}
+            <input type="hidden" name="extra_id" value="{{ extra.pk }}">
+            <input type="hidden" name="version" value="{{ extra.updated_at|date:'c' }}">
+            <div style="display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;">
+              <label style="margin: 0; font-weight: 600; font-size: 0.9rem;">
+                Це учень класу {{ journal.student_class.name }}:
+                <select name="student" required style="padding: 0.35rem 0.5rem; border-radius: 4px; border: 1px solid #cbd5e1; font-weight: 500;">
+                  <option value="__choose__" disabled {% if not extra.matched_student_id and not extra.suggested_student_id %}selected{% endif %}>Оберіть учня для підтвердження</option>
+                  {% for student in students %}
+                    <option value="{{ student.pk }}" {% if extra.matched_student_id == student.pk or not extra.matched_student_id and extra.suggested_student_id == student.pk %}selected{% endif %}>
+                      {{ student.get_full_name_ukr }}{% if not extra.matched_student_id and extra.suggested_student_id == student.pk %} ★ (підібрано){% endif %}
+                    </option>
                   {% endfor %}
-                </optgroup>
-              {% endif %}
-            </select>
-          </label> 
-          <button class="btn btn-primary" name="action" value="match">Підтвердити відповідність</button>
-        </form>
-        <div style="display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: center; margin-top: 0.5rem;">
-          {% if not extra.matched_student and not extra.separate_student %}
+                </select>
+              </label> 
+              <button class="btn btn-primary" name="action" value="match">Підтвердити відповідність</button>
+            </div>
+          </form>
+
+          {% if other_school_students %}
+            <details style="margin-top: 0.4rem; font-size: 0.85rem;">
+              <summary style="cursor: pointer; color: #64748b;">🔍 Учень навчається в іншому класі школи?</summary>
+              <form method="post" style="margin-top: 0.4rem; padding: 0.5rem; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px;">
+                {% csrf_token %}
+                <input type="hidden" name="extra_id" value="{{ extra.pk }}">
+                <input type="hidden" name="version" value="{{ extra.updated_at|date:'c' }}">
+                <div style="display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;">
+                  <label style="margin: 0;">Оберіть учня з іншого класу:
+                    <select name="student" required style="max-width: 320px;">
+                      <option value="" disabled selected>Оберіть зі списку школи</option>
+                      {% for student in other_school_students %}
+                        <option value="{{ student.pk }}">{{ student.get_full_name_ukr }} ({{ student.current_class_name }})</option>
+                      {% endfor %}
+                    </select>
+                  </label>
+                  <button class="btn btn-outline-secondary btn-sm" name="action" value="match">Підтвердити учня з іншого класу</button>
+                </div>
+              </form>
+            </details>
+          {% endif %}
+
+          <div style="display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: center; margin-top: 0.5rem;">
             <form method="post" style="margin: 0;">
               {% csrf_token %}
               <input type="hidden" name="extra_id" value="{{ extra.pk }}">
               <input type="hidden" name="version" value="{{ extra.updated_at|date:'c' }}">
               <button class="btn btn-outline-primary" name="action" value="keep_separate">📘 Залишити позакласним (додати до журналу)</button>
             </form>
-          {% endif %}
-          <form method="post" style="margin: 0;" onsubmit="return confirm('Вилучити учня «{{ extra.name }}» з черги цього журналу? Його збережені результати буде видалено, і він більше не з’являтиметься в цьому журналі.');">
+            <form method="post" style="margin: 0;" onsubmit="return confirm('Вилучити учня «{{ extra.name|escapejs }}» з черги цього журналу? Його збережені результати буде видалено, і він більше не з’являтиметься в цьому журналі.');">
+              {% csrf_token %}
+              <input type="hidden" name="extra_id" value="{{ extra.pk }}">
+              <input type="hidden" name="version" value="{{ extra.updated_at|date:'c' }}">
+              <input type="hidden" name="confirm_delete" value="on">
+              <button class="btn btn-outline-danger btn-sm" name="action" value="delete_extra" title="Вилучити з черги цього журналу, якщо учень потрапив сюди помилково">
+                🗑 Не учень цього класу (вилучити з черги)
+              </button>
+            </form>
+          </div>
+        {% endif %}
+
+        {% if extra.merge_candidates %}
+          <details style="margin-top: 0.5rem;"><summary style="cursor: pointer; font-size: 0.85rem; color: #475569;">🔗 Це повторний запис тієї самої дитини (об'єднати записи)</summary>
+            <form method="post" style="margin-top: 0.4rem; padding: 0.5rem; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px;">
+              {% csrf_token %}
+              <input type="hidden" name="extra_id" value="{{ extra.pk }}">
+              <input type="hidden" name="version" value="{{ extra.updated_at|date:'c' }}">
+              <label style="font-size: 0.85rem;">Приєднати роботи до запису: 
+                <select name="target_extra" required>
+                  <option value="" disabled selected>Оберіть цільовий запис цієї дитини</option>
+                  {% for candidate in extra.merge_candidates %}
+                    <option value="{{ candidate.pk }}|{{ candidate.updated_at|date:'c' }}">{{ candidate.name }} (№{{ candidate.pk }}{% if candidate.matched_student %}, підтверджено: {{ candidate.matched_student.get_full_name_ukr }}{% elif candidate.separate_student %}, окремий позакласний{% endif %})</option>
+                  {% endfor %}
+                </select>
+              </label>
+              <div style="margin-top: 0.35rem;">
+                <label style="font-size: 0.82rem;"><input type="checkbox" name="confirm_same_student" required> Підтверджую: це та сама дитина. Роботи буде об’єднано.</label>
+              </div>
+              <button class="btn btn-outline-primary btn-sm" name="action" value="merge_extra" style="margin-top: 0.35rem;">Об'єднати роботи</button>
+            </form>
+          </details>
+        {% endif %}
+
+        <details style="margin-top: 0.5rem;">
+          <summary style="cursor: pointer; font-size: 0.85rem; color: #dc2626;">🗑 Видалити позакласний запис назавжди</summary>
+          <form method="post" style="margin-top: 0.4rem; padding: 0.5rem; background: #fef2f2; border: 1px solid #fecaca; border-radius: 6px;">
             {% csrf_token %}
             <input type="hidden" name="extra_id" value="{{ extra.pk }}">
             <input type="hidden" name="version" value="{{ extra.updated_at|date:'c' }}">
-            <input type="hidden" name="confirm_delete" value="on">
-            <button class="btn btn-outline-danger btn-sm" name="action" value="delete_extra" title="Вилучити з черги цього журналу, якщо учень потрапив сюди помилково">
-              🗑 Не учень цього класу (вилучити з черги)
-            </button>
-          </form>
-        </div>
-        {% endif %}
-        {% if extra.merge_candidates and not extra.separate_student and not extra.matched_student %}
-        <details><summary>Це повторний запис тієї самої дитини</summary>
-          <form method="post">{% csrf_token %}
-            <input type="hidden" name="extra_id" value="{{ extra.pk }}">
-            <input type="hidden" name="version" value="{{ extra.updated_at|date:'c' }}">
-            <label>Приєднати роботи до запису <select name="target_extra" required>
-              <option value="" disabled selected>Оберіть запис тієї самої дитини</option>
-              {% for candidate in extra.merge_candidates %}<option value="{{ candidate.pk }}|{{ candidate.updated_at|date:'c' }}">{{ candidate.name }} · запис №{{ candidate.pk }}</option>{% endfor %}
-            </select></label>
-            <label><input type="checkbox" name="confirm_same_student" required> Підтверджую: це та сама дитина. Роботи буде об’єднано.</label>
-            <button class="btn btn-outline-primary" name="action" value="merge_extra">Приєднати до цього запису</button>
-          </form>
-        </details>
-        {% endif %}
-        <details style="margin-top: 0.75rem;">
-          <summary>Видалити позакласний запис</summary>
-          <form method="post" style="margin-top: 0.5rem;">
-            {% csrf_token %}
-            <input type="hidden" name="extra_id" value="{{ extra.pk }}">
-            <input type="hidden" name="version" value="{{ extra.updated_at|date:'c' }}">
-            <label><input type="checkbox" name="confirm_delete" required> Видалити цей запис та всі його збережені результати. {% if extra.separate_student %}Також видалити його профіль і оцінки в окремому журналі.{% else %}Оцінки підтвердженого учня основного класу збережуться.{% endif %}</label>
-            <button class="btn btn-danger" name="action" value="delete_extra">Видалити назавжди</button>
+            <label style="font-size: 0.82rem; color: #991b1b;"><input type="checkbox" name="confirm_delete" required> Видалити цей запис та всі його збережені результати. {% if extra.separate_student %}Також видалити його профіль і оцінки в окремому журналі.{% else %}Оцінки підтвердженого учня основного класу збережуться.{% endif %}</label>
+            <div style="margin-top: 0.35rem;">
+              <button class="btn btn-danger btn-sm" name="action" value="delete_extra">Видалити назавжди</button>
+            </div>
           </form>
         </details>
       {% endif %}

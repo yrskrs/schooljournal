@@ -1269,3 +1269,171 @@ def sync_extra_topics(request, journal_id):
     return redirect('portal:journal_detail', journal_id=journal.pk)
 
 
+@login_required
+@require_POST
+def merge_journal_student(request, journal_id, student_id):
+    journal = _get_journal_or_403(request.user, journal_id, write=True)
+    source_student = _student_for_journal(journal, student_id)
+    target_student_id = request.POST.get('target_student_id')
+    if not target_student_id or not str(target_student_id).isdigit():
+        messages.error(request, 'Оберіть учня, з яким потрібно об’єднати.')
+        return redirect('portal:journal_detail', journal_id=journal.pk)
+
+    target_student = _student_for_journal(journal, int(target_student_id))
+    if source_student.pk == target_student.pk:
+        messages.error(request, 'Не можна об’єднати учня із самим собою.')
+        return redirect('portal:journal_detail', journal_id=journal.pk)
+
+    source_name = source_student.get_full_name_ukr()
+    target_name = target_student.get_full_name_ukr()
+
+    with transaction.atomic():
+        # 1. Transfer Grades in this journal's lessons
+        for grade in Grade.objects.filter(student=source_student, lesson__journal=journal):
+            target_grade = Grade.objects.filter(student=target_student, lesson=grade.lesson).first()
+            if not target_grade:
+                grade.student = target_student
+                grade.save(update_fields=['student', 'updated_at'])
+            else:
+                if not target_grade.value and grade.value:
+                    target_grade.value = grade.value
+                    target_grade.comment = grade.comment or target_grade.comment
+                    target_grade.save(update_fields=['value', 'comment', 'updated_at'])
+                grade.delete()
+
+        # 2. Transfer Attendances
+        for att in Attendance.objects.filter(student=source_student, lesson__journal=journal):
+            target_att = Attendance.objects.filter(student=target_student, lesson=att.lesson).first()
+            if not target_att:
+                att.student = target_student
+                att.save(update_fields=['student', 'updated_at'])
+            else:
+                att.delete()
+
+        # 3. Transfer SummaryGrades
+        for sgrade in SummaryGrade.objects.filter(student=source_student, journal=journal):
+            target_sg = SummaryGrade.objects.filter(
+                student=target_student, journal=journal,
+                grade_type=sgrade.grade_type, semester=sgrade.semester,
+                thematic_name=sgrade.thematic_name
+            ).first()
+            if not target_sg:
+                sgrade.student = target_student
+                sgrade.save(update_fields=['student', 'updated_at'])
+            else:
+                if not target_sg.value and sgrade.value:
+                    target_sg.value = sgrade.value
+                    target_sg.save(update_fields=['value', 'updated_at'])
+                sgrade.delete()
+
+        # 4. Transfer ExternalGrade
+        ExternalGrade.objects.filter(student=source_student, lesson__journal=journal).update(student=target_student)
+
+        # 5. Transfer GradeStudentMapping
+        from apps.journals.models import GradeStudentMapping, ExtraStudent
+        for mapping in GradeStudentMapping.objects.filter(student=source_student):
+            if not GradeStudentMapping.objects.filter(connection=mapping.connection, external_id=mapping.external_id, student=target_student).exists():
+                mapping.student = target_student
+                mapping.save(update_fields=['student'])
+            else:
+                mapping.delete()
+
+        # 6. Update ExtraStudent references
+        ExtraStudent.objects.filter(matched_student=source_student).update(matched_student=target_student)
+        ExtraStudent.objects.filter(separate_student=source_student).update(separate_student=target_student)
+
+        # 7. Clean up ignored students
+        if source_student in journal.ignored_students.all():
+            journal.ignored_students.remove(source_student)
+
+        # 8. Remove ClassEnrollment of source_student in this class
+        ClassEnrollment.objects.filter(student=source_student, student_class=journal.student_class).delete()
+
+        # 9. Clean up duplicate Student record if no other references exist
+        has_other_enrollments = ClassEnrollment.objects.filter(student=source_student).exists()
+        has_other_grades = Grade.objects.filter(student=source_student).exists()
+        has_other_att = Attendance.objects.filter(student=source_student).exists()
+        has_other_summaries = SummaryGrade.objects.filter(student=source_student).exists()
+        deleted_student_record = False
+        if not (has_other_enrollments or has_other_grades or has_other_att or has_other_summaries):
+            source_student.delete()
+            deleted_student_record = True
+
+        AuditLog.objects.create(
+            school=journal.school,
+            user=request.user,
+            action=AuditLog.Action.UPDATE,
+            target_model='Student',
+            target_id=str(target_student.pk),
+            description=f'Об’єднано дублікат учня «{source_name}» в «{target_name}».',
+            changes={
+                'journal_id': journal.pk,
+                'source_student_id': student_id,
+                'target_student_id': target_student.pk,
+                'deleted_duplicate_record': deleted_student_record
+            }
+        )
+
+    messages.success(request, f'Учня «{source_name}» успішно об’єднано з «{target_name}». Усі оцінки перенесено.')
+    return redirect('portal:journal_detail', journal_id=journal.pk)
+
+
+@login_required
+@require_POST
+def delete_journal_student(request, journal_id, student_id):
+    journal = _get_journal_or_403(request.user, journal_id, write=True)
+    student = _student_for_journal(journal, student_id)
+    student_name = student.get_full_name_ukr()
+
+    with transaction.atomic():
+        parent = extra_parent(journal)
+        if parent:
+            from apps.journals.services.extra_students import delete_separate_student
+            try:
+                delete_separate_student(journal, student, request.user)
+                messages.success(request, f'Позакласного учня «{student_name}» та його оцінки видалено з журналу.')
+            except Exception as e:
+                messages.error(request, str(e))
+            return redirect('portal:journal_detail', journal_id=journal.pk)
+
+        # Delete grades, attendances, summaries in this journal
+        Grade.objects.filter(student=student, lesson__journal=journal).delete()
+        Attendance.objects.filter(student=student, lesson__journal=journal).delete()
+        SummaryGrade.objects.filter(student=student, journal=journal).delete()
+        ExternalGrade.objects.filter(student=student, lesson__journal=journal).delete()
+
+        if student in journal.ignored_students.all():
+            journal.ignored_students.remove(student)
+
+        # Remove class enrollment for this class
+        ClassEnrollment.objects.filter(student=student, student_class=journal.student_class).delete()
+
+        # Remove mappings and extra student links for this journal's connections
+        from apps.journals.models import GradeStudentMapping, ExtraStudent
+        GradeStudentMapping.objects.filter(connection__journal=journal, student=student).delete()
+        ExtraStudent.objects.filter(connection__journal=journal, matched_student=student).update(
+            matched_student=None, is_separate=True
+        )
+
+        # Clean up Student record if no other references exist
+        has_other_enrollments = ClassEnrollment.objects.filter(student=student).exists()
+        has_other_grades = Grade.objects.filter(student=student).exists()
+        has_other_att = Attendance.objects.filter(student=student).exists()
+        has_other_summaries = SummaryGrade.objects.filter(student=student).exists()
+        if not (has_other_enrollments or has_other_grades or has_other_att or has_other_summaries):
+            student.delete()
+
+        AuditLog.objects.create(
+            school=journal.school,
+            user=request.user,
+            action=AuditLog.Action.DELETE,
+            target_model='Student',
+            target_id=str(student_id),
+            description=f'Вилучено учня «{student_name}» з журналу {journal.student_class.name}.',
+            changes={'journal_id': journal.pk, 'student_id': student_id}
+        )
+
+    messages.success(request, f'Учня «{student_name}» вилучено з цього журналу.')
+    return redirect('portal:journal_detail', journal_id=journal.pk)
+
+

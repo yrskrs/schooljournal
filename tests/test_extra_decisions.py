@@ -3,7 +3,10 @@ from django.test import TestCase, Client
 from django.urls import reverse
 from apps.accounts.models import User
 from apps.curriculum.models import Student, StudentClass, ClassEnrollment
-from apps.journals.models import Journal, ExtraStudent, APIInboxResult, Grade, Lesson, AuditLog, DeletedAPIIdentity, GradeStudentMapping
+from apps.journals.models import (
+    Journal, ExtraStudent, APIInboxResult, Grade, Lesson, AuditLog, DeletedAPIIdentity,
+    GradeStudentMapping, Attendance, SummaryGrade, SummaryGradeType, ExternalGrade
+)
 from apps.journals.services.api_inbox import keep_roster_extras, resolve_student
 from tests import test_simple_exchange as exchange
 
@@ -238,3 +241,58 @@ class ExtraDecisionTests(TestCase):
         detail_url = reverse('portal:journal_detail', args=[self.journal.pk])
         detail_resp = self.client.get(detail_url)
         self.assertContains(detail_resp, 'підключено інший клас із джерела')
+
+    def test_auto_match_suggestion_and_batch_match(self):
+        extra = self.extra(external_key='101', name=self.student.last_name)
+        resp = self.client.get(self.url())
+        self.assertContains(resp, 'Знайдено збіг')
+        self.assertContains(resp, '★ (підібрано)')
+        self.assertContains(resp, 'Підтвердити всі підібрані')
+
+        batch_resp = self.client.post(self.url(), {'action': 'batch_match'}, follow=True)
+        self.assertContains(batch_resp, 'Успішно підтверджено 1 учнів за прізвищами')
+        extra.refresh_from_db()
+        self.assertEqual(extra.matched_student_id, self.student.pk)
+        self.assertTrue(GradeStudentMapping.objects.filter(connection=extra.connection, external_id='101', student=self.student).exists())
+
+    def test_match_creates_grade_student_mapping_and_unmatch_clears_it(self):
+        extra = self.extra(external_key='102', name=f'{self.student.last_name} {self.student.first_name}')
+        self.decision(extra, student=self.student.pk)
+        extra.refresh_from_db()
+        self.assertEqual(extra.matched_student_id, self.student.pk)
+        self.assertTrue(GradeStudentMapping.objects.filter(connection=extra.connection, external_id='102', student=self.student).exists())
+
+        unmatch_resp = self.decision(extra, action='unmatch')
+        self.assertContains(unmatch_resp, 'скасовано')
+        extra.refresh_from_db()
+        self.assertIsNone(extra.matched_student_id)
+        self.assertTrue(extra.is_separate)
+        self.assertFalse(GradeStudentMapping.objects.filter(connection=extra.connection, external_id='102').exists())
+
+    def test_merge_journal_students(self):
+        dup_student = Student.objects.create(school=self.school, last_name=self.student.last_name, first_name='Дублікат')
+        ClassEnrollment.objects.create(student=dup_student, student_class=self.group)
+        Grade.objects.create(student=dup_student, lesson=self.l1, value='11')
+        Attendance.objects.create(student=dup_student, lesson=self.l1, status=Attendance.Status.ABSENT_EXCUSED)
+        SummaryGrade.objects.create(student=dup_student, journal=self.journal, grade_type=SummaryGradeType.THEMATIC, thematic_name='Тема 1', value='10')
+
+        url = reverse('portal:merge_journal_student', args=[self.journal.pk, dup_student.pk])
+        resp = self.client.post(url, {'target_student_id': str(self.student.pk)}, follow=True)
+        self.assertContains(resp, 'успішно об’єднано')
+
+        self.assertEqual(Grade.objects.filter(student=self.student, lesson=self.l1).first().value, '11')
+        self.assertEqual(Attendance.objects.filter(student=self.student, lesson=self.l1).first().status, Attendance.Status.ABSENT_EXCUSED)
+        self.assertEqual(SummaryGrade.objects.filter(student=self.student, journal=self.journal).first().value, '10')
+        self.assertFalse(Student.objects.filter(pk=dup_student.pk).exists())
+
+    def test_delete_journal_student(self):
+        st = Student.objects.create(school=self.school, last_name='Тестовий', first_name='Учень')
+        ClassEnrollment.objects.create(student=st, student_class=self.group)
+        Grade.objects.create(student=st, lesson=self.l1, value='7')
+
+        url = reverse('portal:delete_journal_student', args=[self.journal.pk, st.pk])
+        resp = self.client.post(url, follow=True)
+        self.assertContains(resp, 'вилучено з цього журналу')
+        self.assertFalse(Grade.objects.filter(student=st).exists())
+        self.assertFalse(ClassEnrollment.objects.filter(student=st).exists())
+        self.assertFalse(Student.objects.filter(pk=st.pk).exists())

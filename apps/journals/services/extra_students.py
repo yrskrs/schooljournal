@@ -124,6 +124,20 @@ def match_student(extra, student, user):
         if sep_journal:
             sep_student.grades.filter(lesson__journal=sep_journal).delete()
         sep_student.delete()
+
+    try:
+        GradeStudentMapping.objects.filter(connection=extra.connection, student=student).exclude(external_id=extra.external_key).delete()
+        GradeStudentMapping.objects.update_or_create(
+            connection=extra.connection, external_id=extra.external_key, defaults={'student': student}
+        )
+        for alias in extra.aliases.all():
+            GradeStudentMapping.objects.filter(connection=alias.connection, student=student).exclude(external_id=alias.external_key).delete()
+            GradeStudentMapping.objects.update_or_create(
+                connection=alias.connection, external_id=alias.external_key, defaults={'student': student}
+            )
+    except Exception:
+        pass
+
     audit(extra, user, AuditLog.Action.UPDATE, f'Підтверджено відповідність «{extra.name}»: «{student.get_full_name_ukr()}».',
         matched_student={'old': previous, 'new': student.pk})
 
@@ -233,18 +247,39 @@ def keep_separate(extra, user):
 
 def merge_extra(extra, target, user):
     """Only a teacher's explicit decision may connect old per-work identities."""
-    if (extra.pk == target.pk or extra.connection_id != target.connection_id
-            or extra.alias_of_id or target.alias_of_id or extra.aliases.exists()
-            or extra.matched_student_id or target.matched_student_id
-            or extra.separate_student_id or target.separate_student_id
-            or identity_records(extra).exists() or identity_records(target).exists()):
-        raise ExternalAPIError('Об’єднання недоступне: виберіть два окремі записи одного підключення без імпортованої історії класу.')
+    if extra.pk == target.pk or extra.connection_id != target.connection_id or extra.alias_of_id:
+        raise ExternalAPIError('Об’єднання недоступне: виберіть два дійсні записи одного підключення.')
+    while target.alias_of_id:
+        target = target.alias_of
+    if extra.pk == target.pk:
+        raise ExternalAPIError('Не можна об’єднати запис із самим собою.')
+
     extra.results.update(extra_student=target)
     extra.alias_of = target
     extra.save(update_fields=['alias_of', 'updated_at'])
-    if target.is_separate:
+
+    if target.matched_student_id:
+        extra.matched_student = target.matched_student
+        extra.is_separate = False
+        extra.save(update_fields=['matched_student', 'is_separate', 'updated_at'])
+        try:
+            GradeStudentMapping.objects.filter(connection=extra.connection, student=target.matched_student).exclude(external_id=extra.external_key).delete()
+            GradeStudentMapping.objects.update_or_create(
+                connection=extra.connection, external_id=extra.external_key, defaults={'student': target.matched_student}
+            )
+        except Exception:
+            pass
+        target.results.filter(is_ignored=False).update(resolved=False, reason='Відповідність підтверджено. Роботи об’єднано.')
+    elif target.separate_student_id:
+        extra.separate_student = target.separate_student
+        extra.separate_journal = target.separate_journal
+        extra.is_separate = True
+        extra.save(update_fields=['separate_student', 'separate_journal', 'is_separate', 'updated_at'])
         target.results.filter(is_ignored=False).update(resolved=True, reason='Збережено для окремого учня без зарахування до класу.')
-    audit(extra, user, AuditLog.Action.UPDATE, 'Учитель підтвердив, що два записи належать одному окремому учню.', canonical_extra=target.pk)
+    elif target.is_separate:
+        target.results.filter(is_ignored=False).update(resolved=True, reason='Збережено для окремого учня без зарахування до класу.')
+
+    audit(extra, user, AuditLog.Action.UPDATE, f'Учитель об’єднав запис «{extra.name}» із «{target.name}».', canonical_extra=target.pk)
 
 
 def delete_extra(extra, user):
@@ -271,6 +306,9 @@ def delete_extra(extra, user):
     for alias in extra.aliases.all():
         DeletedAPIIdentity.objects.get_or_create(connection=alias.connection, external_key=alias.external_key)
     extra.aliases.all().delete()
+    GradeStudentMapping.objects.filter(connection=extra.connection, external_id=extra.external_key).delete()
+    for alias in extra.aliases.all():
+        GradeStudentMapping.objects.filter(connection=alias.connection, external_id=alias.external_key).delete()
     audit(extra, user, AuditLog.Action.DELETE, f'Видалено позакласний запис «{extra.name}» та збережені результати ({results}).',
         results_deleted=results, separate_student_deleted=student.pk if student else None,
         imported_grades_preserved=preserved)
@@ -279,3 +317,4 @@ def delete_extra(extra, user):
     if student:
         student.delete()
     return results, preserved
+

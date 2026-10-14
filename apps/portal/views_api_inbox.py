@@ -29,6 +29,43 @@ def _same_revision(updated_at, submitted):
     return value is not None and timezone.is_aware(value) and value == updated_at
 
 
+def find_suggested_student(extra_name, students):
+    if not extra_name or not students:
+        return None
+    name_clean = ' '.join(extra_name.strip().casefold().split())
+    parts = name_clean.split()
+    if not parts:
+        return None
+
+    # 1. Exact full name match
+    for s in students:
+        s_full = ' '.join(s.get_full_name_ukr().strip().casefold().split())
+        if s_full == name_clean:
+            return s
+
+    # 2. Exact (last_name + first_name)
+    if len(parts) >= 2:
+        for s in students:
+            s_last = s.last_name.strip().casefold()
+            s_first = s.first_name.strip().casefold()
+            if (parts[0] == s_last and parts[1] == s_first) or (parts[0] == s_first and parts[1] == s_last):
+                return s
+            if parts[0] == s_last and s_first and parts[1][0] == s_first[0]:
+                return s
+
+    # 3. Surname match only (if unique in this class!)
+    matching_surname = [s for s in students if s.last_name.strip().casefold() == parts[0] or (len(parts) > 1 and s.last_name.strip().casefold() == parts[-1])]
+    if len(matching_surname) == 1:
+        return matching_surname[0]
+
+    # 4. Fuzzy similarity
+    candidates = [s for s in students if similar(extra_name, s.get_full_name_ukr())]
+    if len(candidates) == 1:
+        return candidates[0]
+
+    return None
+
+
 @login_required
 @require_http_methods(['GET', 'POST'])
 def api_inbox(request, journal_id):
@@ -40,7 +77,46 @@ def api_inbox(request, journal_id):
                 if not has_journal_access(request.user, journal, write=True):
                     raise PermissionDenied('Доступ до журналу змінився.')
                 action = request.POST.get('action')
-                if action in ('match', 'keep_separate', 'delete_extra', 'merge_extra'):
+                if action == 'batch_match':
+                    count = 0
+                    class_students = list(journal_students(journal))
+                    unmatched_extras = ExtraStudent.objects.select_for_update().filter(
+                        connection__journal=journal, alias_of__isnull=True, matched_student__isnull=True, separate_student__isnull=True
+                    )
+                    for ext in unmatched_extras:
+                        sug = find_suggested_student(ext.name, class_students)
+                        if sug:
+                            match_student(ext, sug, request.user)
+                            ext.results.filter(resolved=False, is_ignored=False).update(
+                                reason='Відповідність підтверджено автоматично. Оцінки синхронізуються.'
+                            )
+                            count += 1
+                    messages.success(request, f'Успішно підтверджено {count} учнів за прізвищами! Надалі вони синхронізуватимуться автоматично без запиту.')
+                elif action == 'unmatch':
+                    extra = get_object_or_404(ExtraStudent.objects.select_for_update(),
+                        pk=request.POST.get('extra_id') if str(request.POST.get('extra_id', '')).isdigit() else 0,
+                        connection__journal=journal, alias_of__isnull=True)
+                    if not _same_revision(extra.updated_at, request.POST.get('version')):
+                        raise ExternalAPIError('Запис оновився після перегляду. Оновіть сторінку.')
+                    name = extra.name
+                    if extra.matched_student_id:
+                        from apps.journals.models import GradeStudentMapping
+                        GradeStudentMapping.objects.filter(connection=extra.connection, external_id=extra.external_key).delete()
+                        for alias in extra.aliases.all():
+                            GradeStudentMapping.objects.filter(connection=alias.connection, external_id=alias.external_key).delete()
+                        extra.matched_student = None
+                        extra.is_separate = True
+                        extra.save(update_fields=['matched_student', 'is_separate', 'updated_at'])
+                        extra.results.filter(is_ignored=False).update(resolved=False, reason='Відповідність скасовано. Оберіть учня знову.')
+                        messages.success(request, f'Відповідність для «{name}» скасовано. Запис повернуто до черги.')
+                    elif extra.separate_student_id:
+                        extra.separate_student = None
+                        extra.separate_journal = None
+                        extra.is_separate = True
+                        extra.save(update_fields=['separate_student', 'separate_journal', 'is_separate', 'updated_at'])
+                        extra.results.filter(is_ignored=False).update(resolved=False, reason='Позакласний статус скасовано. Запис повернуто до черги.')
+                        messages.success(request, f'Позакласний статус для «{name}» скасовано. Запис повернуто до черги.')
+                elif action in ('match', 'keep_separate', 'delete_extra', 'merge_extra'):
                     extra = get_object_or_404(ExtraStudent.objects.select_for_update(),
                         pk=request.POST.get('extra_id') if str(request.POST.get('extra_id', '')).isdigit() else 0,
                         connection__journal=journal, alias_of__isnull=True)
@@ -261,12 +337,15 @@ def api_inbox(request, journal_id):
     page = Paginator(extras, 50).get_page(request.GET.get('page'))
     for extra in page:
         extra.suggestions = [s.get_full_name_ukr() for s in students if similar(extra.name, s.get_full_name_ukr())][:5]
+        sug = find_suggested_student(extra.name, students)
+        extra.suggested_student = sug
+        extra.suggested_student_id = sug.pk if sug else None
         results = extra.results.filter(is_ignored=False)
         if not show_all and not extra.is_separate:
             results = results.filter(resolved=False)
         extra.recent_results = list(results.order_by('-updated_at')[:5])
-        extra.merge_candidates = list(ExtraStudent.objects.filter(connection=extra.connection,
-            alias_of__isnull=True, matched_student__isnull=True, separate_student__isnull=True).exclude(pk=extra.pk)[:100])
+        extra.merge_candidates = list(ExtraStudent.objects.filter(connection__journal=journal,
+            alias_of__isnull=True).exclude(pk=extra.pk)[:100])
 
     inbox = APIInboxResult.objects.filter(
         connection__journal=journal, connection__enabled=True, resolved=False, is_ignored=False
@@ -316,6 +395,12 @@ def api_inbox(request, journal_id):
     for key in ('page', 'results_page', 'ignored_page'):
         filters.pop(key, None)
 
+    unconfirmed_all = ExtraStudent.objects.filter(
+        connection__journal=journal, connection__enabled=True,
+        alias_of__isnull=True, matched_student__isnull=True, separate_student__isnull=True
+    )
+    auto_matched_count = sum(1 for e in unconfirmed_all if find_suggested_student(e.name, students))
+
     return render(request, 'portal/journal/api_inbox.html', {
         'journal': journal,
         'decision_logs': AuditLog.objects.filter(school=journal.school, target_model__in=['ExtraStudent', 'Student'], changes__journal_id=journal.pk).select_related('user')[:20],
@@ -324,6 +409,7 @@ def api_inbox(request, journal_id):
         'ignored_results': ignored_results,
         'extra_journal': extra_journal,
         'students': students,
+        'auto_matched_count': auto_matched_count,
         'other_school_students': other_school_students,
         'mismatched_connections': mismatched_connections,
         'show_all': request.GET.get('all') == '1',

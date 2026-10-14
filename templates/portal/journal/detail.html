@@ -305,12 +305,26 @@
                         ☐ Ігноровано (сімейна форма)
                       {% endif %}
                     </button>
+                    <button type="button" class="student-action-item" role="menuitem"
+                            style="width: 100%; padding: 0.5rem 0.75rem; background: transparent; border: none; text-align: left; font-size: 0.82rem; cursor: pointer; display: flex; align-items: center; gap: 0.5rem; color: #2563eb;"
+                            onclick="openMergeStudentModal({{ row.student.id }}, '{{ row.student.get_full_name_ukr|escapejs }}')">
+                      🔗 Об’єднати з іншим учнем...
+                    </button>
                     {% if extra_parent %}
-                      <form method="post" action="{% url 'portal:delete_extracurricular_student' journal.id row.student.id %}" onsubmit="return confirm('Видалити цього позакласного учня та всі його оцінки в окремому журналі? Дію буде записано в історії.');">
+                      <form method="post" action="{% url 'portal:delete_extracurricular_student' journal.id row.student.id %}" onsubmit="return confirm('Видалити цього позакласного учня та всі його оцінки в окремому журналі? Дію буде записано в історії.');" style="margin: 0;">
                         {% csrf_token %}
                         <input type="hidden" name="confirm_delete" value="on">
                         <input type="hidden" name="version" value="{{ row.student.updated_at|date:'c' }}">
-                        <button class="student-action-item" role="menuitem" type="submit">Видалити позакласного учня та оцінки</button>
+                        <button class="student-action-item" role="menuitem" type="submit" style="color: #dc2626; width: 100%; text-align: left; border: none; background: transparent; padding: 0.5rem 0.75rem; font-size: 0.82rem; cursor: pointer; display: flex; align-items: center; gap: 0.5rem;">
+                          🗑 Видалити позакласного учня та оцінки
+                        </button>
+                      </form>
+                    {% else %}
+                      <form method="post" action="{% url 'portal:delete_journal_student' journal.id row.student.id %}" onsubmit="return confirm('Вилучити учня «{{ row.student.get_full_name_ukr|escapejs }}» з цього журналу? Його оцінки в цьому журналі буде видалено, а запис вилучено зі списку.');" style="margin: 0;">
+                        {% csrf_token %}
+                        <button class="student-action-item" role="menuitem" type="submit" style="color: #dc2626; width: 100%; text-align: left; border: none; background: transparent; padding: 0.5rem 0.75rem; font-size: 0.82rem; cursor: pointer; display: flex; align-items: center; gap: 0.5rem;">
+                          🗑 Вилучити учня з журналу
+                        </button>
                       </form>
                     {% endif %}
                   </div>
@@ -848,6 +862,58 @@
   </div>
 </div>
 {% endif %}
+
+<div id="mergeStudentModal" class="modal-overlay">
+  <div class="modal-card">
+    <div class="modal-header">
+      <h3 class="modal-title">🔗 Об’єднати учня (усунення дубліката)</h3>
+      <button type="button" class="modal-close" onclick="closeModal('mergeStudentModal')">&times;</button>
+    </div>
+    <p style="margin-top: 0.5rem; font-size: 0.9rem;">
+      Ви збираєтеся об’єднати повторний запис учня <strong id="mergeSourceStudentName"></strong>.
+    </p>
+    <p style="font-size: 0.85rem; color: #64748b;">
+      Усі оцінки, відвідуваність та збережені результати тестів/завдань буде перенесено до обраного основного учня, а дублікат вилучено з журналу.
+    </p>
+    <form method="post" id="mergeStudentForm" action="">
+      {% csrf_token %}
+      <div class="form-group" style="margin-top: 1rem;">
+        <label class="form-label" for="mergeTargetStudentSelect">Оберіть основного учня, до якого приєднати дані:</label>
+        <select name="target_student_id" id="mergeTargetStudentSelect" class="form-select" required>
+          <option value="" disabled selected>Оберіть учня зі списку...</option>
+          {% for r in student_rows %}
+            <option value="{{ r.student.id }}" data-student-id="{{ r.student.id }}">{{ r.student.get_full_name_ukr }} (№{{ r.display_number }})</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div style="display: flex; justify-content: flex-end; gap: 0.5rem; margin-top: 1.5rem;">
+        <button type="button" class="btn btn-secondary" onclick="closeModal('mergeStudentModal')">Скасувати</button>
+        <button type="submit" class="btn btn-primary">Об’єднати учнів</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<script>
+function openMergeStudentModal(sourceStudentId, sourceStudentName) {
+  if (typeof closeAllStudentActionMenus === 'function') {
+    closeAllStudentActionMenus();
+  }
+  const form = document.getElementById('mergeStudentForm');
+  const nameEl = document.getElementById('mergeSourceStudentName');
+  const select = document.getElementById('mergeTargetStudentSelect');
+  if (form) form.action = `/journal/{{ journal.id }}/student/${sourceStudentId}/merge/`;
+  if (nameEl) nameEl.textContent = sourceStudentName;
+  if (select) {
+    select.value = '';
+    Array.from(select.options).forEach(opt => {
+      opt.disabled = (opt.dataset.studentId === String(sourceStudentId));
+    });
+  }
+  openModal('mergeStudentModal');
+}
+</script>
+
 {{ lesson_choices|json_script:"journal-lesson-data" }}
 </div>
 {% endblock %}
