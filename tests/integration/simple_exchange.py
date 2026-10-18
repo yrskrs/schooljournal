@@ -86,13 +86,16 @@ for s in rows:
                 assert response.status_code==200
             state=json.loads(code('journal',f"from apps.journals.models import Grade,ExtraStudent,APIInboxResult;import json;print(json.dumps({{'grades':list(Grade.objects.filter(lesson__journal_id={journal_id}).order_by('lesson__date').values_list('value',flat=True)),'extras':list(ExtraStudent.objects.filter(connection__journal_id={journal_id}).values_list('name',flat=True)),'pending':APIInboxResult.objects.filter(connection__journal_id={journal_id},resolved=False).count()}}))"))
             assert state['grades']==['10','8'],state
-            assert set(state['extras'])=={'Коваленк І.','Коваленк Ін.'} and state['pending']==2,state
+            # Current policy retains outside results as resolved separate entries;
+            # only a teacher can match them to a class pupil.
+            assert set(state['extras'])=={'Коваленк І.','Коваленк Ін.'} and state['pending']==0,state
+            assert code('journal', f'from apps.journals.models import ExtraStudent;print(ExtraStudent.objects.filter(connection__journal_id={journal_id},is_separate=True,matched_student__isnull=True,results__isnull=False).distinct().count())') == '2'
             response=get('journal',f'/journal/{journal_id}/api-inbox/')
             assert 'Коваленк І.' in response.text and 'Коваленко Ірина' in response.text
             soup=BeautifulSoup(response.text,'html.parser')
             form=next(f for f in soup.select('form') if f.select_one('button[value=match]') and f.find_parent('article').find('h3').get_text(strip=True)=='Коваленк І.')
             data={field['name']:field.get('value','') for field in form.select('input[name]')}
-            data.update(action='match',student=next(o['value'] for o in form.select('option') if o.get_text()=='Коваленко Ірина'))
+            data.update(action='match',student=next(o['value'] for o in form.select('option') if o.get_text(strip=True).startswith('Коваленко Ірина')))
             assert post('journal',f'/journal/{journal_id}/api-inbox/',data).status_code==200
             assert code('journal',f'from apps.journals.models import Grade;print(Grade.objects.filter(lesson__journal_id={journal_id}).count())')=='2'
             assert code('journal',f"from apps.journals.models import ExtraStudent;print(ExtraStudent.objects.get(connection__journal_id={journal_id},name='Коваленк І.').matched_student_id is not None)") == 'True'

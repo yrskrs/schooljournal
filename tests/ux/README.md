@@ -1,11 +1,11 @@
 # Синхронізація, прокрутка та індикатори — Docker-перевірки
 
-Окремий проєкт `schooljournal-ux-checks`, PostgreSQL у tmpfs, лише вигадані дані. Робочі `.env`, БД і томи не використовуються. Потрібні локальні образи тестів 1.5.7 та завдань 4.4.5 (або явно задані CHECK_TEST_IMAGE / CHECK_WORK_IMAGE). Порти 19100/19180/19185/19186 доступні лише через 127.0.0.1.
+Окремий проєкт `schooljournal-ux-checks`, PostgreSQL у tmpfs, лише вигадані дані. Робочі `.env`, БД і томи не використовуються. Потрібні локальні образи тестів 1.6.7 та завдань 4.5.6 (або явно задані CHECK_TEST_IMAGE / CHECK_WORK_IMAGE). Порти 19100/19180/19185/19186 доступні лише через 127.0.0.1.
 
 З кореня репозиторію:
 
 ```bash
-docker build -t schooljournal-ux-check:1.3.13 --build-arg APP_VERSION=1.3.13 .
+docker build -t schooljournal-web:1.3.30 --build-arg APP_VERSION=1.3.30 .
 docker compose -f tests/ux/compose.yaml up -d --wait --wait-timeout 120
 python tests/ux/http_check.py
 docker compose -f tests/ux/compose.yaml exec -T journal python manage.py test tests school_sync.tests --noinput
@@ -48,7 +48,7 @@ docker compose -f tests/ux/compose.yaml down
 Окрема перевірка відтворює звичайні серверні налаштування без фонового обміну. Виконуйте на свіжих тестових БД після завершення попереднього проєкту:
 
 ```bash
-docker build -t schooljournal-roster-check:1.3.13 --build-arg APP_VERSION=1.3.13 .
+docker build -t schooljournal-roster-check:1.3.30 --build-arg APP_VERSION=1.3.30 .
 docker compose -f tests/ux/compose.yaml -f tests/ux/roster_page.compose.yaml up -d --wait journal nginx
 docker compose -f tests/ux/compose.yaml -f tests/ux/roster_page.compose.yaml exec -T journal python manage.py shell < tests/ux/seed_roster_page.py
 docker run --rm --network host \
