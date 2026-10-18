@@ -50,6 +50,14 @@ def get_current_version():
     return read_version(ROOT)
 
 
+def make_release_metadata_readable(root):
+    paths = [Path(root) / name for name in ('VERSION', 'RELEASES.json', 'CHANGELOG.md')]
+    if any(path.is_symlink() or not path.is_file() for path in paths):
+        raise ValueError('Release metadata must be regular files.')
+    for path in paths:
+        path.chmod(0o644)
+
+
 def save_status():
     STATUS_FILE.parent.mkdir(parents=True, exist_ok=True)
     temporary = STATUS_FILE.with_suffix('.tmp')
@@ -265,6 +273,7 @@ def perform_rollback(deployment, backup, old_image, old_commit, old_version):
     run_command(['bash', str(ROOT / 'scripts/restore.sh'), str(backup), *flags], deployment.env, 600)
     run_command(['python3', str(ROOT / 'scripts/configure_integration_network.py')], deployment.env, 90)
     run_command(['git', 'reset', '--hard', old_commit], deployment.env, 60)
+    make_release_metadata_readable(ROOT)
     deployment.select_image(old_image)
     verify_deployment(deployment, old_image, old_version)
     update_state(rolled_back=True, current_version=old_version)
@@ -369,6 +378,8 @@ def execute_update_job(target_ref='origin/main', target_ver=None, releases_list=
                          '--entrypoint', 'python', image, 'manage.py', 'check'], deployment.env, 120)
         run_command(['git', 'worktree', 'remove', '--force', str(worktree)], deployment.env, 60)
         worktree = None
+        if PROJECT == 'schooljournal':
+            run_command(['python3', str(ROOT / 'scripts/archive.py'), 'check-target', str(ROOT)], deployment.env, 60)
         update_state(step=3, progress=55, step_name='Зупинка запису та створення резервної копії')
         append_log('Крок 3/5: Зупиняємо запис і створюємо перевірений знімок…')
         writers_stopped = True
@@ -394,6 +405,7 @@ def execute_update_job(target_ref='origin/main', target_ver=None, releases_list=
         append_log('Крок 4/5: Застосовуємо ревізію і запускаємо зібраний образ…')
         deploy_started = True
         run_command(['git', 'merge', '--ff-only', commit], deployment.env, 60)
+        make_release_metadata_readable(ROOT)
         deployment.select_image(image)
         if PROJECT != 'schooltest5':
             deployment.dc('run', '--rm', '--no-deps', '-T', '-e', 'SKIP_INIT=1', APP_SERVICE,

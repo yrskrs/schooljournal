@@ -7,6 +7,7 @@ import sys
 import tempfile
 import unittest
 from unittest.mock import patch
+from scripts import updater_service
 
 SCRIPTS = Path(__file__).resolve().parent
 spec = importlib.util.spec_from_file_location('fetch_update', SCRIPTS / 'fetch_update.py')
@@ -54,6 +55,52 @@ class UpdateHelpers(unittest.TestCase):
             result = subprocess.run([sys.executable, str(SCRIPTS / 'select_release_image.py'), 'schooltest5'], cwd=root, capture_output=True)
             self.assertNotEqual(result.returncode, 0)
             self.assertEqual((root / '.env').read_text(), pinned)
+
+
+class ReleaseMetadataPermissions(unittest.TestCase):
+    def setUp(self):
+        self.directory = tempfile.TemporaryDirectory(prefix='synthetic-release-permissions-')
+        self.addCleanup(self.directory.cleanup)
+        self.root = Path(self.directory.name)
+        self.paths = [self.root / name for name in ('VERSION', 'RELEASES.json', 'CHANGELOG.md')]
+        for path in self.paths:
+            path.write_text('synthetic-public-metadata')
+            path.chmod(0o600)
+        self.secret = self.root / '.env'
+        self.secret.write_text('SYNTHETIC_SECRET=keep-private\n')
+        self.secret.chmod(0o600)
+        binary = self.root / 'bin'
+        binary.mkdir()
+        docker = binary / 'docker'
+        docker.write_text('#!/bin/sh\nexit 0\n')
+        docker.chmod(0o755)
+        self.environment = {**os.environ, 'PATH': str(binary) + os.pathsep + os.environ['PATH'],
+                            'JOURNAL_ROOT': str(self.root), 'ENV_FILE': str(self.secret)}
+
+    def cli(self):
+        return subprocess.run(['bash', '-c', 'source "$1"; make_release_metadata_readable',
+                               'test', str(SCRIPTS / 'common.sh')],
+                              env=self.environment, capture_output=True, text=True, timeout=5)
+
+    def test_cli_and_web_updaters_make_only_public_metadata_readable(self):
+        for action in (lambda: updater_service.make_release_metadata_readable(self.root), self.cli):
+            for path in self.paths:
+                path.chmod(0o600)
+            result = action()
+            if result is not None:
+                self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertTrue(all(path.stat().st_mode & 0o777 == 0o644 for path in self.paths))
+            self.assertEqual(self.secret.stat().st_mode & 0o777, 0o600)
+            self.assertEqual(self.secret.read_text(), 'SYNTHETIC_SECRET=keep-private\n')
+
+    def test_symlink_to_private_file_is_rejected_without_changing_any_permissions(self):
+        self.paths[-1].unlink()
+        self.paths[-1].symlink_to(self.secret)
+        with self.assertRaises(ValueError):
+            updater_service.make_release_metadata_readable(self.root)
+        self.assertNotEqual(self.cli().returncode, 0)
+        self.assertEqual(self.secret.stat().st_mode & 0o777, 0o600)
+        self.assertEqual(self.paths[0].stat().st_mode & 0o777, 0o600)
 
 
 if __name__ == '__main__':

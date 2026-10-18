@@ -27,6 +27,7 @@ main() {
     trap cleanup_restore EXIT
     python3 "$JOURNAL_ROOT/scripts/archive.py" extract "$archive" "$work"
     dc exec -T db pg_restore --list < "$work/database.dump" > /dev/null
+    if [[ $keep_code -eq 0 ]]; then python3 "$JOURNAL_ROOT/scripts/archive.py" check-target "$JOURNAL_ROOT"; fi
     gzip -dc "$work/web-image.tar.gz" | docker image load >&2
     if [[ $no_safety -eq 0 ]]; then
         safety=$("$JOURNAL_ROOT/scripts/backup.sh")

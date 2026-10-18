@@ -39,6 +39,20 @@ proxy_set_header X-Forwarded-Proto https;
 
 ## Оновлення
 
+Версія 1.3.33 відновлює права читання 0644 тільки для публічних VERSION, RELEASES.json і CHANGELOG.md після Git-оновлення та перед перевіркою запуску. `.env` та резервні копії залишаються приватними. Перед зупинкою сервісу перевіряється можливість заміни тек коду під час відкату; теки іншого власника спочатку потрібно виправити адміністратору сервера.
+
+Для першого CLI-переходу зі старого оновлювача (до 1.3.33) запускайте нові скрипти з тимчасового каталогу, щоб вони діяли вже під час цього оновлення. Із чистого канонічного checkout:
+
+```bash
+git fetch origin main
+UPDATER_TOOLS=$(mktemp -d /tmp/schooljournal-updater.XXXXXX)
+git archive origin/main scripts | tar -x -C "$UPDATER_TOOLS"
+JOURNAL_ROOT="$PWD" bash "$UPDATER_TOOLS/scripts/update.sh" origin/main
+rm -rf -- "$UPDATER_TOOLS"
+```
+
+Цей запуск збирає опубліковану ревізію й створює штатну резервну копію до зміни checkout. Надалі використовуйте звичайний `./update.sh` або сторінку «Оновлення системи».
+
 Передумови: сервіс працює, Git checkout чистий, origin доступний, вистачає диска для двох образів, архіву та його тимчасової розпаковки. .env, media, backups і .release-image.yaml ігноруються Git.
 
 ~~~bash

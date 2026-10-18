@@ -33,7 +33,17 @@ lock_maintenance() {
         export MAINTENANCE_LOCK_HELD=1
     fi
 }
+make_release_metadata_readable() {
+    local filename
+    for filename in VERSION RELEASES.json CHANGELOG.md; do
+        [[ -f "$JOURNAL_ROOT/$filename" && ! -L "$JOURNAL_ROOT/$filename" ]] || {
+            echo "Release metadata must be regular files." >&2; return 1;
+        }
+    done
+    chmod 644 "$JOURNAL_ROOT/VERSION" "$JOURNAL_ROOT/RELEASES.json" "$JOURNAL_ROOT/CHANGELOG.md"
+}
 healthy() {
+    make_release_metadata_readable || return
     dc up -d --wait --wait-timeout "${HEALTH_WAIT_TIMEOUT:-180}" db web || return
     python3 "$JOURNAL_ROOT/scripts/configure_integration_network.py" || return
     # nginx resolves web at startup; reload it after web obtains a new address.

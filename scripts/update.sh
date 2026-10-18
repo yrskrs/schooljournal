@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
+UPDATE_SCRIPTS_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 source "$(dirname -- "${BASH_SOURCE[0]}")/common.sh"
 main() {
     local ref="${1:-origin/main}" old_commit target
@@ -41,6 +42,7 @@ main() {
     local candidate="schooljournal-candidate:${target:0:12}"
     docker build --build-arg VCS_REF="$target" -t "$candidate" "$workdir"
     dc config --format json | python3 "$JOURNAL_ROOT/scripts/check_candidate.py" "$candidate"
+    python3 "$UPDATE_SCRIPTS_DIR/archive.py" check-target "$JOURNAL_ROOT"
     # Закриваємо запис перед узгодженою резервною копією.
     dc stop nginx web
     if ! backup=$("$JOURNAL_ROOT/scripts/backup.sh" --quiesced); then
@@ -51,6 +53,7 @@ main() {
     update_started=1
     echo "Pre-update backup: $backup"
     git merge --ff-only "$target"
+    make_release_metadata_readable
     rm -f -- "$JOURNAL_ROOT/.release-image.yaml"
     printf 'services:\n  web:\n    image: %s\n    pull_policy: never\n' "$candidate" > "$JOURNAL_ROOT/.release-image.yaml"
     dc run --rm --no-deps -T -e SKIP_INIT=1 web python manage.py collectstatic --noinput --clear

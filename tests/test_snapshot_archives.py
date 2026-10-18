@@ -5,6 +5,7 @@ import tarfile
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 spec = importlib.util.spec_from_file_location('snapshot_archives', Path(__file__).resolve().parents[1] / 'scripts/archive.py')
 snapshot = importlib.util.module_from_spec(spec)
@@ -112,3 +113,25 @@ class SnapshotSafetyTests(unittest.TestCase):
         self.assertTrue((destination / 'school_sync' / '__init__.py').exists())
         self.assertFalse((destination / 'school_sync' / '__pycache__').exists())
         self.assertFalse((destination / 'school_sync' / 'obsolete.py').exists())
+
+    def test_unwritable_source_is_rejected_before_any_file_is_removed(self):
+        destination = Path(self.tmp.name) / 'blocked-source'
+        blocked = destination / 'apps' / 'journals' / 'management'
+        blocked.mkdir(parents=True)
+        marker = destination / 'apps' / 'keep.py'
+        marker.write_text('# keep this source')
+        with patch.object(snapshot.os, 'access', side_effect=lambda path, mode: Path(path) != blocked):
+            with self.assertRaises(PermissionError):
+                snapshot.install_source(self.work / 'source.tar.gz', destination)
+        self.assertEqual(marker.read_text(), '# keep this source')
+        self.assertTrue(blocked.is_dir())
+
+    def test_source_symlink_is_rejected_before_another_directory_is_removed(self):
+        destination = Path(self.tmp.name) / 'linked-source'
+        (destination / 'apps').mkdir(parents=True)
+        marker = destination / 'apps' / 'keep.py'
+        marker.write_text('# keep this source')
+        (destination / 'config').symlink_to(self.root, target_is_directory=True)
+        with self.assertRaises(ValueError):
+            snapshot.install_source(self.work / 'source.tar.gz', destination)
+        self.assertTrue(marker.exists())

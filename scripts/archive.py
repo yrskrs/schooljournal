@@ -121,11 +121,30 @@ def extract(archive_path, destination):
                     raise ValueError('Source version mismatch')
 
 
+def check_source_target(root):
+    """Reject unreadable/unwritable source trees before any destructive restore."""
+    root = Path(root)
+    def check_directory(path):
+        if not os.access(path, os.R_OK | os.W_OK | os.X_OK):
+            raise PermissionError('Source directory cannot be replaced: ' + str(path))
+    check_directory(root)
+    for directory in DIRECTORIES:
+        target = root / directory
+        if target.is_symlink():
+            raise ValueError('Source directory must not be a symlink')
+        if target.exists():
+            def fail(error):
+                raise error
+            for current, _, _ in os.walk(target, onerror=fail, followlinks=False):
+                check_directory(current)
+
+
 def install_source(archive_path, root):
     with tarfile.open(archive_path, 'r:gz') as archive:
         members = checked_members(archive, source=True)
         if 'VERSION' not in {m.name for m in members}:
             raise ValueError('Source missing VERSION')
+        check_source_target(root)
         for directory in DIRECTORIES:
             # Older snapshots omitted school_sync; Git recovery may already
             # have restored it. Do not erase that package for those archives.
@@ -155,6 +174,8 @@ def main():
         extract(Path(args[0]), Path(args[1]))
     elif command == 'install-source':
         install_source(Path(args[0]), Path(args[1]))
+    elif command == 'check-target':
+        check_source_target(Path(args[0]))
     elif command == 'tag':
         metadata = json.loads(Path(args[0]).read_text())
         print('schooljournal-restored:' + metadata['image'].split(':')[1][:16])
