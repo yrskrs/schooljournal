@@ -109,7 +109,6 @@ class GradeStudentMapping(models.Model):
     class Meta:
         constraints = [
             models.UniqueConstraint(fields=['connection', 'external_id'], name='grade_mapping_external_unique'),
-            models.UniqueConstraint(fields=['connection', 'student'], name='grade_mapping_student_unique'),
         ]
 
 

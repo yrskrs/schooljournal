@@ -85,17 +85,12 @@ class ConfirmStudentsForm(forms.Form):
                 if names:
                     self.fields['pupil_' + row['id']].help_text = 'Можлива помилка або скорочення: ' + ', '.join(names[:5]) + '. Оберіть учня лише після перевірки.'
 
-    def clean(self):
-        data = super().clean()
-        selected = [value for key, value in data.items() if key.startswith('pupil_') and value and value != 'new']
-        if len(selected) != len(set(selected)):
-            raise forms.ValidationError('Різних учнів джерела не можна пов’язати з одним учнем журналу.')
-        return data
-
 
 class EditConnectionForm(forms.Form):
     name = forms.CharField(label='Назва підключення', max_length=100, required=True,
         widget=forms.TextInput(attrs={'class': 'form-control'}))
+    source = forms.ChoiceField(label='Тип сервісу джерела', choices=list(SOURCES.items()), required=False,
+        widget=forms.Select(attrs={'class': 'form-control'}))
     site_url = forms.URLField(label='Адреса сайту (IP і порт)', max_length=450, required=True,
         widget=forms.URLInput(attrs={'class': 'form-control'}),
         help_text='Повна адреса, наприклад http://192.168.1.13:8080')
@@ -120,6 +115,7 @@ class EditConnectionForm(forms.Form):
         self.connection = connection
         classes = connection.roster_cache.get('classes', []) if isinstance(connection.roster_cache, dict) else []
         subjects = connection.roster_cache.get('subjects', []) if isinstance(connection.roster_cache, dict) else []
+        self.fields['source'].initial = connection.source
         self.fields['source_class_id'].choices = [('', '— Не вибрано —')] + [(str(c['id']), c['name']) for c in classes]
         self.fields['source_subject_id'].choices = [('', '— Не вибрано —')] + [(str(s['id']), s['name']) for s in subjects]
         self.fields['server_group'].initial = connection.server_group

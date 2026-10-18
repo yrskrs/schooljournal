@@ -625,5 +625,94 @@ class ConnectionSetupTests(TestCase):
         self.assertContains(resp, 'toast-container')
         self.assertContains(resp, 'window.showToast')
 
+    def test_multiple_source_pupils_mapped_to_same_student(self):
+        payload = dict(self.payload)
+        payload['students'] = [
+            {'id': '41', 'class_id': '7', 'name': self.student.get_full_name_ukr()},
+            {'id': '42', 'class_id': '7', 'name': self.student.get_full_name_ukr() + ' (дублікат)'},
+        ]
+        with patch('apps.portal.views_connection_setup.fetch_source_roster', return_value=payload):
+            code = json.dumps({'source': 'schooltest', 'site_url': 'http://schooltest-api:8000', 'api_key': 'synthetic-private-export-key'})
+            self.client.post(self.url, {'action': 'connect', 'connection_code': code})
+            conn = GradeAPIConnection.objects.get(journal=self.journal)
+            self.context(conn)
+            conn.refresh_from_db()
+
+            mapping_data = {
+                'action': 'students',
+                'connection_id': conn.pk,
+                'version': roster_version(conn),
+                'pupil_41': str(self.student.pk),
+                'pupil_42': str(self.student.pk),
+                'confirm': 'on',
+            }
+            resp = self.client.post(self.url, mapping_data, follow=True)
+            self.assertEqual(resp.status_code, 200)
+            self.assertNotContains(resp, 'Різних учнів джерела не можна пов’язати')
+
+            # Check both mappings exist in DB pointing to the same student
+            mappings = list(conn.student_mappings.filter(student=self.student))
+            self.assertEqual(len(mappings), 2)
+            mapped_external_ids = {m.external_id for m in mappings}
+            self.assertEqual(mapped_external_ids, {'41', '42'})
+
+    def test_test_source_connection_auto_detects_source(self):
+        # Create connection as schoolwork
+        conn = GradeAPIConnection.objects.create(
+            journal=self.journal, source='schoolwork', contract_version=2,
+            name='тести дім дім', url='http://192.168.1.13:8000/api/v2/journal/grades/',
+            api_key='secret-key', enabled=True
+        )
+        test_url = reverse('portal:test_source_connection', kwargs={'journal_id': self.journal.pk, 'connection_id': conn.pk})
+
+        # Server actually returns source='schooltest'
+        test_payload = dict(self.payload)
+        test_payload['source'] = 'schooltest'
+
+        with patch('apps.portal.views_connection_setup.fetch_source_roster', return_value=test_payload):
+            resp = self.client.post(test_url, HTTP_X_REQUESTED_WITH='XMLHttpRequest')
+            self.assertEqual(resp.status_code, 200)
+            data = resp.json()
+            self.assertTrue(data['success'])
+            self.assertIn('автоматично оновлено на «Сайт тестування»', data['message'])
+
+            conn.refresh_from_db()
+            self.assertEqual(conn.source, 'schooltest')
+
+    def test_test_source_connection_hint_does_not_false_trigger_on_pidklyuchennya(self):
+        conn = GradeAPIConnection.objects.create(
+            journal=self.journal, source='schoolwork', contract_version=2,
+            name='тест', url='http://192.168.1.13:8000/api/v2/journal/grades/',
+            api_key='secret-key', enabled=True
+        )
+        test_url = reverse('portal:test_source_connection', kwargs={'journal_id': self.journal.pk, 'connection_id': conn.pk})
+
+        err_text = 'Сайт не підтримує це підключення. Оновіть його з GitHub; збережені дані журналу залишаються.'
+        with patch('apps.portal.views_connection_setup.fetch_source_roster', side_effect=ExternalAPIError(err_text)):
+            resp = self.client.post(test_url, HTTP_X_REQUESTED_WITH='XMLHttpRequest')
+            self.assertEqual(resp.status_code, 400)
+            data = resp.json()
+            # Hint should NOT falsely say the site rejected the API key!
+            self.assertNotIn('відхилив ключ', data['message'])
+
+    def test_edit_source_connection_change_source(self):
+        conn = GradeAPIConnection.objects.create(
+            journal=self.journal, source='schoolwork', contract_version=2,
+            name='Сервер', url='http://192.168.1.13:8000/api/v2/journal/grades/',
+            api_key='secret-key', enabled=True
+        )
+        edit_url = reverse('portal:edit_source_connection', kwargs={'journal_id': self.journal.pk, 'connection_id': conn.pk})
+
+        resp = self.client.post(edit_url, {
+            'name': 'Сервер',
+            'source': 'schooltest',
+            'site_url': 'http://192.168.1.13:8000',
+            'enabled': 'on',
+        }, follow=True)
+        self.assertEqual(resp.status_code, 200)
+        conn.refresh_from_db()
+        self.assertEqual(conn.source, 'schooltest')
+
+
 
 

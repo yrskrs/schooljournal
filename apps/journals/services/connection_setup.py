@@ -43,10 +43,20 @@ def source_urls(value):
     return base + '/api/v2/journal/grades/', base + '/api/v2/journal/roster/'
 
 
-def validate_roster(payload, source):
-    if not isinstance(payload, dict) or payload.get('schema_version') != 2 or payload.get('source') != source:
+def validate_roster(payload, source=None):
+    if not isinstance(payload, dict) or payload.get('schema_version') != 2:
         raise ExternalAPIError('Сайт не підтримує це підключення. Оновіть його з GitHub; збережені дані журналу залишаються.')
-    output = {'schema_version': 2, 'source': source}
+    payload_source = payload.get('source')
+    if source and payload_source != source:
+        source_labels = {'schooltest': 'Сайт тестів (SchoolTest)', 'schoolwork': 'Сайт завдань (SchoolWork)'}
+        remote_label = source_labels.get(payload_source, str(payload_source))
+        curr_label = source_labels.get(source, str(source))
+        raise ExternalAPIError(
+            f'Невідповідність типу сайту: це підключення налаштовано як «{curr_label}», '
+            f'але сервер за вказаною адресою повернув дані як «{remote_label}». '
+            f'Будь ласка, оберіть тип джерела «{remote_label}» у налаштуваннях підключення.'
+        )
+    output = {'schema_version': 2, 'source': payload_source or source}
     if isinstance(payload.get('capabilities'), list):
         output['capabilities'] = [item for item in payload['capabilities'] if item in ('journal_roster_import', 'journal_roster_ignore')]
     if 'instance_id' in payload:
@@ -77,7 +87,7 @@ def validate_roster(payload, source):
     return output
 
 
-def fetch_source_roster(url, key, source):
+def fetch_source_roster(url, key, source=None):
     _, roster_url = source_urls(url)
     try:
         validate_api_url(roster_url, resolve=True)

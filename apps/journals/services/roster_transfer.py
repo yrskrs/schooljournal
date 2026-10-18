@@ -108,11 +108,8 @@ def send_journal_roster(connection, user, resolutions=None):
             for row in mappings:
                 student = refs[row['journal_id']]
                 local_id = str(row['local_id'])
-                old = fresh.student_mappings.filter(student=student).first()
-                if old and old.external_id != local_id:
-                    raise ExternalAPIError('Джерело змінило підтверджений ID учня. Історію збережено.')
-                occupied = fresh.student_mappings.filter(external_id=local_id).first()
-                if occupied and occupied.student_id != student.pk:
+                occupied = fresh.student_mappings.filter(external_id=local_id).exclude(student=student).first()
+                if occupied:
                     raise ExternalAPIError('Джерело змінило належність підтвердженого учня. Прив’язки та історію збережено.')
                 GradeStudentMapping.objects.update_or_create(connection=fresh, external_id=local_id, defaults={'student': student})
             fresh.source_class_id, fresh.source_subject_id = class_id, subject_id

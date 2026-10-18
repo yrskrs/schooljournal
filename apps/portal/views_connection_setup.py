@@ -399,13 +399,31 @@ def test_source_connection(request, journal_id, connection_id):
     is_ajax = request.headers.get('x-requested-with') == 'XMLHttpRequest' or request.GET.get('format') == 'json'
 
     try:
-        payload = fetch_source_roster(connection.url, connection.api_key, connection.source)
+        payload = fetch_source_roster(connection.url, connection.api_key, source=None)
+        payload_source = payload.get('source')
+        source_switched = False
+        if payload_source and payload_source != connection.source:
+            if not connection.records.exists() and payload_source in ('schooltest', 'schoolwork'):
+                connection.source = payload_source
+                source_switched = True
+            else:
+                source_labels = {'schooltest': 'Сайт тестів (SchoolTest)', 'schoolwork': 'Сайт завдань (SchoolWork)'}
+                raise ExternalAPIError(
+                    f"Невідповідність типу сайту: це підключення налаштовано як «{connection.get_source_display()}», "
+                    f"але сервер повернув дані як «{source_labels.get(payload_source, payload_source)}». "
+                    f"Змініть тип джерела у формі редагування підключення."
+                )
+
         with transaction.atomic():
             _lock(journal, request.user)
             connection = journal.grade_apis.select_for_update().get(pk=connection.pk)
             connection.roster_cache = payload
             connection.roster_checked_at = timezone.now()
-            connection.save(update_fields=['roster_cache', 'roster_checked_at'])
+            fields_to_update = ['roster_cache', 'roster_checked_at']
+            if source_switched:
+                connection.source = payload_source
+                fields_to_update.append('source')
+            connection.save(update_fields=fields_to_update)
 
         caps = payload.get('capabilities', [])
         can_import = 'journal_roster_import' in caps
@@ -418,6 +436,8 @@ def test_source_connection(request, journal_id, connection_id):
             f"Отримано: {classes_cnt} класів, {subjects_cnt} предметів, {students_cnt} учнів. "
             f"{'Підтримується двостороння передача списків.' if can_import else 'Працює на отримання оцінок.'}"
         )
+        if source_switched:
+            msg += f" (Тип підключення автоматично оновлено на «{connection.get_source_display()}»)"
         if is_ajax:
             return JsonResponse({
                 'success': True,
@@ -436,12 +456,12 @@ def test_source_connection(request, journal_id, connection_id):
         low = err_msg.lower()
         if any(w in low for w in ('не відповідає', 'не вдалося', 'connection', 'refused', 'failed', 'timeout')):
             hint = "Перевірте, чи запущено сайт тестів/завдань та чи правильно вказано IP-адресу й порт (наприклад http://192.168.1.13:8080)."
-        elif any(w in low for w in ('ключ', '401', '403', 'авториз')):
+        elif any(w in low for w in ('неприйнятий ключ', 'відхилив ключ', 'недійсний ключ', 'невірний ключ', '401', '403', 'авториз')) or 'ключ не' in low:
             hint = "Сайт відхилив ключ API. Перейдіть у налаштування сайту тестування/завдань та створіть новий ключ для цього журналу."
         elif '404' in low or 'не знайдено' in low:
             hint = "Маршрут API не знайдено. Перевірте адресу сайту та оновіть джерело з GitHub."
 
-        full_msg = f"{err_msg} {hint}".strip()
+        full_msg = f"{err_msg} {hint}".strip() if hint and hint not in err_msg else err_msg
         if is_ajax:
             return JsonResponse({
                 'success': False,
@@ -518,6 +538,12 @@ def edit_source_connection(request, journal_id, connection_id):
             connection = journal.grade_apis.select_for_update().get(pk=connection.pk)
             connection.name = data['name']
             connection.url = data['grades_url']
+            if data.get('source') and data['source'] != connection.source:
+                if connection.records.exists():
+                    messages.error(request, 'Для цього підключення вже є збережені оцінки. Тип джерела змінити не можна.')
+                    next_url = request.POST.get('next') or reverse('portal:journal_integrations', kwargs={'journal_id': journal.pk})
+                    return redirect(next_url)
+                connection.source = data['source']
             if data.get('api_key'):
                 connection.api_key = data['api_key']
             connection.enabled = data['enabled']
