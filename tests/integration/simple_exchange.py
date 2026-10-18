@@ -95,7 +95,7 @@ for s in rows:
             soup=BeautifulSoup(response.text,'html.parser')
             form=next(f for f in soup.select('form') if f.select_one('button[value=match]') and f.find_parent('article').find('h3').get_text(strip=True)=='Коваленк І.')
             data={field['name']:field.get('value','') for field in form.select('input[name]')}
-            data.update(action='match',student=next(o['value'] for o in form.select('option') if o.get_text()=='Коваленко Ірина'))
+            data.update(action='match',student=next(o['value'] for o in form.select('option') if o.get_text(strip=True).startswith('Коваленко Ірина')))
             assert post('journal',f'/journal/{journal_id}/api-inbox/',data).status_code==200
             assert code('journal',f'from apps.journals.models import Grade;print(Grade.objects.filter(lesson__journal_id={journal_id}).count())')=='2'
             assert code('journal',f"from apps.journals.models import ExtraStudent;print(ExtraStudent.objects.get(connection__journal_id={journal_id},name='Коваленк І.').matched_student_id is not None)") == 'True'
