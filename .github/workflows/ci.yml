@@ -19,7 +19,7 @@ jobs:
       - run: python manage.py check --settings=config.test_settings
       - run: python manage.py makemigrations --check --dry-run --settings=config.test_settings
       - run: python manage.py test --settings=config.test_settings --noinput
-      - run: python -m unittest scripts.test_update_helpers
+      - run: python -m unittest scripts.test_update_helpers scripts.test_updater_jobs scripts.test_maintenance_lock
       - run: node tests/journal_scheduling_check.js
       - run: node tests/student_menu_check.js
       - run: node tests/site_lifecycle_check.js
