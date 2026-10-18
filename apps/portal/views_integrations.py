@@ -4,7 +4,7 @@ import secrets
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.core.exceptions import PermissionDenied
-from django.db import transaction, IntegrityError
+from django.db import transaction, IntegrityError, models
 from django.db.models import Q
 from django.http import JsonResponse, HttpResponseBadRequest
 from django.shortcuts import render, redirect, get_object_or_404
@@ -116,11 +116,19 @@ def journal_integrations(request, journal_id):
                 del_id = request.POST.get('connection_id')
                 conn_to_del = get_object_or_404(connections, pk=del_id if str(del_id).isdigit() else 0)
                 conn_name = conn_to_del.name or conn_to_del.get_source_display()
-                AuditLog.objects.create(school=journal.school, user=request.user, action=AuditLog.Action.DELETE,
-                    target_model='GradeAPIConnection', target_id=str(conn_to_del.pk),
-                    description=f'Видалено підключення API {conn_name} ({conn_to_del.url}) для журналу {journal.student_class.name}.')
-                conn_to_del.delete()
-                messages.success(request, f'Підключення «{conn_name}» видалено.')
+                try:
+                    with transaction.atomic():
+                        AuditLog.objects.create(school=journal.school, user=request.user, action=AuditLog.Action.DELETE,
+                            target_model='GradeAPIConnection', target_id=str(conn_to_del.pk),
+                            description=f'Видалено підключення API {conn_name} ({conn_to_del.url}) для журналу {journal.student_class.name}.')
+                        conn_to_del.delete()
+                    messages.success(request, f'Підключення «{conn_name}» видалено.')
+                except (models.RestrictedError, models.ProtectedError):
+                    messages.warning(
+                        request,
+                        f'Підключення «{conn_name}» не можна видалити повністю, оскільки з нього вже збережено історію оцінок. '
+                        f'Вимкніть його (перемикачем активності) або змініть адресу та ключ у формі нижче.'
+                    )
                 return redirect(destination)
             elif action == 'student_mapping':
                 connection = get_object_or_404(connections, pk=request.POST.get('mapping_connection_id') if

@@ -1,7 +1,7 @@
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.core.exceptions import PermissionDenied, ValidationError
-from django.db import transaction, IntegrityError
+from django.db import transaction, IntegrityError, models
 from django.db.models import Q
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
@@ -370,17 +370,24 @@ def delete_source_connection(request, journal_id, connection_id):
     """Швидке видалення підключення до API з журналу."""
     journal = _get_journal_or_403(request.user, journal_id, write=True)
     connection = get_object_or_404(journal.grade_apis, pk=connection_id)
-    with transaction.atomic():
-        _lock(journal, request.user)
-        conn_name = connection.name or connection.get_source_display()
-        url = connection.url
-        AuditLog.objects.create(
-            school=journal.school, user=request.user, action=AuditLog.Action.DELETE,
-            target_model='GradeAPIConnection', target_id=str(connection.pk),
-            description=f'Видалено підключення API {conn_name} ({url}) для журналу {journal.student_class.name}.'
+    conn_name = connection.name or connection.get_source_display()
+    try:
+        with transaction.atomic():
+            _lock(journal, request.user)
+            url = connection.url
+            AuditLog.objects.create(
+                school=journal.school, user=request.user, action=AuditLog.Action.DELETE,
+                target_model='GradeAPIConnection', target_id=str(connection.pk),
+                description=f'Видалено підключення API {conn_name} ({url}) для журналу {journal.student_class.name}.'
+            )
+            connection.delete()
+        messages.success(request, f'Підключення «{conn_name}» видалено.')
+    except (models.RestrictedError, models.ProtectedError):
+        messages.warning(
+            request,
+            f'Підключення «{conn_name}» не можна видалити з бази, оскільки з нього вже збережено історію оцінок. '
+            f'Щоб не використовувати його, просто вимкніть його (перемикачем активності) або змініть адресу/ключ у формі налаштувань.'
         )
-        connection.delete()
-    messages.success(request, f'Підключення «{conn_name}» видалено.')
     next_url = request.POST.get('next') or request.GET.get('next')
     if next_url:
         return redirect(next_url)
