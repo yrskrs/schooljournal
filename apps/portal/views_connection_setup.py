@@ -6,6 +6,7 @@ from django.db.models import Q
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.utils import timezone
+from django.http import JsonResponse
 from django.views.decorators.debug import sensitive_post_parameters
 from django.views.decorators.http import require_http_methods, require_POST
 
@@ -16,7 +17,7 @@ from apps.journals.services.connection_setup import fetch_source_roster, roster_
 from apps.journals.services.external_grades import ExternalAPIError
 from apps.journals.services.roster_transfer import send_journal_roster
 from apps.journals.services.api_inbox import keep_roster_extras
-from apps.portal.forms_connection_setup import ConnectSourceForm, SourceContextForm, ConfirmStudentsForm
+from apps.portal.forms_connection_setup import ConnectSourceForm, SourceContextForm, ConfirmStudentsForm, EditConnectionForm
 from apps.portal.permissions import has_journal_access, get_user_journals
 from apps.portal.views_journal import _get_journal_or_403
 
@@ -380,6 +381,195 @@ def delete_source_connection(request, journal_id, connection_id):
     if next_url:
         return redirect(next_url)
     return redirect('portal:connect_source', journal_id=journal.pk)
+
+
+@login_required
+@require_POST
+def test_source_connection(request, journal_id, connection_id):
+    """
+    Діагностика підключення: перевірка доступності сервера, правильності ключа
+    та сумісності контракту з чітким та зрозумілим поясненням для вчителя.
+    """
+    journal = _get_journal_or_403(request.user, journal_id, write=True)
+    connection = get_object_or_404(journal.grade_apis, pk=connection_id)
+    is_ajax = request.headers.get('x-requested-with') == 'XMLHttpRequest' or request.GET.get('format') == 'json'
+
+    try:
+        payload = fetch_source_roster(connection.url, connection.api_key, connection.source)
+        with transaction.atomic():
+            _lock(journal, request.user)
+            connection = journal.grade_apis.select_for_update().get(pk=connection.pk)
+            connection.roster_cache = payload
+            connection.roster_checked_at = timezone.now()
+            connection.save(update_fields=['roster_cache', 'roster_checked_at'])
+
+        caps = payload.get('capabilities', [])
+        can_import = 'journal_roster_import' in caps
+        classes_cnt = len(payload.get('classes', []))
+        subjects_cnt = len(payload.get('subjects', []))
+        students_cnt = len(payload.get('students', []))
+
+        msg = (
+            f"✅ Зв'язок успішний! Сервер «{connection.name or connection.get_source_display()}» онлайн. "
+            f"Отримано: {classes_cnt} класів, {subjects_cnt} предметів, {students_cnt} учнів. "
+            f"{'Підтримується двостороння передача списків.' if can_import else 'Працює на отримання оцінок.'}"
+        )
+        if is_ajax:
+            return JsonResponse({
+                'success': True,
+                'status': 'ok',
+                'message': msg,
+                'classes_count': classes_cnt,
+                'subjects_count': subjects_cnt,
+                'students_count': students_cnt,
+                'can_send_roster': can_import,
+                'checked_at': timezone.localtime(connection.roster_checked_at).strftime('%d.%m.%Y %H:%M:%S'),
+            })
+        messages.success(request, msg)
+    except ExternalAPIError as err:
+        err_msg = str(err)
+        hint = ""
+        low = err_msg.lower()
+        if any(w in low for w in ('не відповідає', 'не вдалося', 'connection', 'refused', 'failed', 'timeout')):
+            hint = "Перевірте, чи запущено сайт тестів/завдань та чи правильно вказано IP-адресу й порт (наприклад http://192.168.1.13:8080)."
+        elif any(w in low for w in ('ключ', '401', '403', 'авториз')):
+            hint = "Сайт відхилив ключ API. Перейдіть у налаштування сайту тестування/завдань та створіть новий ключ для цього журналу."
+        elif '404' in low or 'не знайдено' in low:
+            hint = "Маршрут API не знайдено. Перевірте адресу сайту та оновіть джерело з GitHub."
+
+        full_msg = f"{err_msg} {hint}".strip()
+        if is_ajax:
+            return JsonResponse({
+                'success': False,
+                'status': 'error',
+                'message': full_msg,
+                'raw_error': err_msg,
+                'hint': hint,
+            }, status=400)
+        messages.error(request, full_msg)
+    except Exception as err:
+        full_msg = f"Помилка перевірки зв'язку: {err}. Перевірте адресу сервера."
+        if is_ajax:
+            return JsonResponse({'success': False, 'status': 'error', 'message': full_msg}, status=400)
+        messages.error(request, full_msg)
+
+    next_url = request.POST.get('next') or request.META.get('HTTP_REFERER') or reverse('portal:journal_integrations', kwargs={'journal_id': journal.pk})
+    return redirect(next_url)
+
+
+@login_required
+@require_POST
+def quick_send_roster(request, journal_id, connection_id):
+    """Швидка передача актуального списку учнів журналу на сайт джерела в один клік."""
+    journal = _get_journal_or_403(request.user, journal_id, write=True)
+    connection = get_object_or_404(journal.grade_apis, pk=connection_id)
+    is_ajax = request.headers.get('x-requested-with') == 'XMLHttpRequest' or request.GET.get('format') == 'json'
+
+    try:
+        report = send_journal_roster(connection, request.user)
+        counts = report['counts']
+        msg = (
+            f"Список учнів успішно передано на «{connection.name or connection.get_source_display()}»: "
+            f"додано {counts['created']}, оновлено {counts['updated']}, "
+            f"виключено ігнорованих {counts.get('ignored', 0)}, "
+            f"потребують підтвердження {counts['needs_review']}, "
+            f"конфліктів {counts['conflicts']}."
+        )
+        if is_ajax:
+            return JsonResponse({
+                'success': True,
+                'message': msg,
+                'counts': counts,
+                'sent_at': timezone.localtime(connection.roster_sent_at).strftime('%d.%m.%Y %H:%M:%S') if connection.roster_sent_at else None
+            })
+        messages.success(request, msg)
+    except ExternalAPIError as err:
+        msg = f"Помилка передачі списку: {err}"
+        if is_ajax:
+            return JsonResponse({'success': False, 'message': msg}, status=400)
+        messages.error(request, msg)
+    except Exception as err:
+        msg = f"Не вдалося передати список: {err}"
+        if is_ajax:
+            return JsonResponse({'success': False, 'message': msg}, status=400)
+        messages.error(request, msg)
+
+    next_url = request.POST.get('next') or request.META.get('HTTP_REFERER') or reverse('portal:journal_integrations', kwargs={'journal_id': journal.pk})
+    return redirect(next_url)
+
+
+@login_required
+@require_POST
+@sensitive_post_parameters('api_key')
+def edit_source_connection(request, journal_id, connection_id):
+    """Зручне редагування параметрів підключення: назва, адреса, ключ, активність, клас, предмет."""
+    journal = _get_journal_or_403(request.user, journal_id, write=True)
+    connection = get_object_or_404(journal.grade_apis, pk=connection_id)
+    form = EditConnectionForm(request.POST, connection=connection)
+
+    if form.is_valid():
+        data = form.cleaned_data
+        with transaction.atomic():
+            _lock(journal, request.user)
+            connection = journal.grade_apis.select_for_update().get(pk=connection.pk)
+            connection.name = data['name']
+            connection.url = data['grades_url']
+            if data.get('api_key'):
+                connection.api_key = data['api_key']
+            connection.enabled = data['enabled']
+
+            # Якщо змінено клас і для нього ще немає збережених оцінок
+            if data['source_class_id'] and data['source_class_id'] != connection.source_class_id:
+                if connection.records.exists():
+                    messages.error(request, 'Для цього підключення вже є збережені оцінки. Клас змінити не можна.')
+                    next_url = request.POST.get('next') or reverse('portal:journal_integrations', kwargs={'journal_id': journal.pk})
+                    return redirect(next_url)
+                connection.source_class_id = data['source_class_id']
+                connection.student_mappings.all().delete()
+
+            if data['source_subject_id'] and data['source_subject_id'] != connection.source_subject_id:
+                if connection.records.exists():
+                    messages.error(request, 'Для цього підключення вже є збережені оцінки. Предмет змінити не можна.')
+                    next_url = request.POST.get('next') or reverse('portal:journal_integrations', kwargs={'journal_id': journal.pk})
+                    return redirect(next_url)
+                connection.source_subject_id = data['source_subject_id']
+
+            connection.save()
+            AuditLog.objects.create(
+                school=journal.school, user=request.user, action=AuditLog.Action.UPDATE,
+                target_model='GradeAPIConnection', target_id=str(connection.pk),
+                description=f'Оновлено налаштування підключення API {connection.name} ({connection.url}).'
+            )
+        messages.success(request, f'Налаштування підключення «{connection.name}» збережено.')
+    else:
+        err_msg = "; ".join(f"{f}: {', '.join(e)}" for f, e in form.errors.items())
+        messages.error(request, f'Помилка валідації налаштувань: {err_msg}')
+
+    next_url = request.POST.get('next') or reverse('portal:journal_integrations', kwargs={'journal_id': journal.pk})
+    return redirect(next_url)
+
+
+@login_required
+@require_POST
+def toggle_source_connection(request, journal_id, connection_id):
+    """Швидке увімкнення / вимкнення підключення до API."""
+    journal = _get_journal_or_403(request.user, journal_id, write=True)
+    connection = get_object_or_404(journal.grade_apis, pk=connection_id)
+    with transaction.atomic():
+        _lock(journal, request.user)
+        connection = journal.grade_apis.select_for_update().get(pk=connection.pk)
+        connection.enabled = not connection.enabled
+        connection.save(update_fields=['enabled'])
+        state_str = 'увімкнено' if connection.enabled else 'тимчасово вимкнено'
+        AuditLog.objects.create(
+            school=journal.school, user=request.user, action=AuditLog.Action.UPDATE,
+            target_model='GradeAPIConnection', target_id=str(connection.pk),
+            description=f'Підключення API {connection.name} {state_str}.'
+        )
+    messages.success(request, f'Підключення «{connection.name or connection.get_source_display()}» {state_str}.')
+    next_url = request.POST.get('next') or request.META.get('HTTP_REFERER') or reverse('portal:journal_integrations', kwargs={'journal_id': journal.pk})
+    return redirect(next_url)
+
 
 
 @login_required

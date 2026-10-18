@@ -87,3 +87,44 @@ class ConfirmStudentsForm(forms.Form):
         if len(selected) != len(set(selected)):
             raise forms.ValidationError('Різних учнів джерела не можна пов’язати з одним учнем журналу.')
         return data
+
+
+class EditConnectionForm(forms.Form):
+    name = forms.CharField(label='Назва підключення', max_length=100, required=True,
+        widget=forms.TextInput(attrs={'class': 'form-control'}))
+    site_url = forms.URLField(label='Адреса сайту (IP і порт)', max_length=450, required=True,
+        widget=forms.URLInput(attrs={'class': 'form-control'}),
+        help_text='Повна адреса, наприклад http://192.168.1.13:8080')
+    api_key = forms.CharField(label='Новий ключ API (залиште порожнім, щоб не змінювати)',
+        required=False, max_length=500,
+        widget=forms.PasswordInput(attrs={'class': 'form-control', 'autocomplete': 'new-password'}))
+    enabled = forms.BooleanField(label='Підключення активне (використовувати для синхронізації)', required=False)
+    source_class_id = forms.ChoiceField(label='Клас на сайті джерела', required=False,
+        widget=forms.Select(attrs={'class': 'form-control'}))
+    source_subject_id = forms.ChoiceField(label='Предмет на сайті джерела', required=False,
+        widget=forms.Select(attrs={'class': 'form-control'}))
+
+    def __init__(self, *args, connection, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.connection = connection
+        classes = connection.roster_cache.get('classes', []) if isinstance(connection.roster_cache, dict) else []
+        subjects = connection.roster_cache.get('subjects', []) if isinstance(connection.roster_cache, dict) else []
+        self.fields['source_class_id'].choices = [('', '— Не вибрано —')] + [(str(c['id']), c['name']) for c in classes]
+        self.fields['source_subject_id'].choices = [('', '— Не вибрано —')] + [(str(s['id']), s['name']) for s in subjects]
+
+    def clean_site_url(self):
+        url = self.cleaned_data['site_url']
+        try:
+            grades_url, _ = source_urls(url)
+            self.cleaned_data['grades_url'] = grades_url
+        except Exception as e:
+            raise forms.ValidationError(str(e))
+        return url
+
+    def clean(self):
+        data = super().clean()
+        key = data.get('api_key', '').strip()
+        if key and any(c in key for c in ('\r', '\n')):
+            self.add_error('api_key', 'Ключ не може містити переносів рядка.')
+        return data
+

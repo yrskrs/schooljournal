@@ -290,18 +290,59 @@ def journal_detail(request, journal_id):
     ).first()
 
     mismatched_connections = []
-    for conn in journal.grade_apis.filter(enabled=True, contract_version=2):
-        if conn.source_class_id and conn.roster_cache:
-            classes = conn.roster_cache.get('classes', [])
-            c_name = next((c['name'] for c in classes if str(c['id']) == str(conn.source_class_id)), None)
-            if c_name:
-                def _cl(s): return ''.join(ch for ch in s.casefold() if ch.isalnum())
-                if _cl(c_name) != _cl(journal.student_class.name):
-                    mismatched_connections.append({
-                        'connection': conn,
-                        'source_class_name': c_name,
-                        'journal_class_name': journal.student_class.name,
-                    })
+    journal_apis = []
+    test_connection = None
+    work_connection = None
+
+    for conn in journal.grade_apis.all().order_by('source', 'pk'):
+        classes = conn.roster_cache.get('classes', []) if isinstance(conn.roster_cache, dict) else []
+        subjects = conn.roster_cache.get('subjects', []) if isinstance(conn.roster_cache, dict) else []
+        caps = conn.roster_cache.get('capabilities', []) if isinstance(conn.roster_cache, dict) else []
+        c_name = next((c['name'] for c in classes if str(c['id']) == str(conn.source_class_id)), None) if conn.source_class_id else None
+        s_name = next((s['name'] for s in subjects if str(s['id']) == str(conn.source_subject_id)), None) if conn.source_subject_id else None
+
+        is_mismatched = False
+        if c_name:
+            def _cl(s): return ''.join(ch for ch in s.casefold() if ch.isalnum())
+            is_mismatched = _cl(c_name) != _cl(journal.student_class.name)
+
+        if conn.enabled and conn.contract_version == 2 and is_mismatched:
+            mismatched_connections.append({
+                'connection': conn,
+                'source_class_name': c_name,
+                'journal_class_name': journal.student_class.name,
+            })
+
+        site_url = conn.url.rsplit('/api/v2/journal/grades/', 1)[0] if '/api/v2/journal/grades/' in conn.url else conn.url
+        last_log = conn.pull_logs.order_by('-created_at', '-pk').first()
+        status = 'disabled' if not conn.enabled else ('mismatch' if is_mismatched else ('needs_setup' if not conn.source_class_id else 'ok'))
+
+        api_info = {
+            'connection': conn,
+            'id': conn.pk,
+            'source': conn.source,
+            'source_display': conn.get_source_display(),
+            'name': conn.name or conn.get_source_display(),
+            'url': conn.url,
+            'site_url': site_url,
+            'masked_key': conn.masked_key,
+            'enabled': conn.enabled,
+            'status': status,
+            'source_class_name': c_name,
+            'source_subject_name': s_name,
+            'is_class_mismatched': is_mismatched,
+            'can_send_roster': 'journal_roster_import' in caps,
+            'mappings_count': conn.student_mappings.count(),
+            'last_pulled_at': conn.last_pulled_at,
+            'roster_sent_at': conn.roster_sent_at,
+            'roster_checked_at': conn.roster_checked_at,
+            'last_log': last_log,
+        }
+        journal_apis.append(api_info)
+        if conn.source == 'schooltest' and (test_connection is None or (not test_connection['enabled'] and conn.enabled)):
+            test_connection = api_info
+        elif conn.source == 'schoolwork' and (work_connection is None or (not work_connection['enabled'] and conn.enabled)):
+            work_connection = api_info
 
     context = {
         'integration_date_from': integration_start.isoformat(),
@@ -310,6 +351,9 @@ def journal_detail(request, journal_id):
         'extra_journal': extra_journal,
         'extra_parent': extra_parent(journal),
         'mismatched_connections': mismatched_connections,
+        'journal_apis': journal_apis,
+        'test_connection': test_connection,
+        'work_connection': work_connection,
         'can_edit': can_edit,
         'can_manage': can_manage,
         'show_withdrawn': show_withdrawn,

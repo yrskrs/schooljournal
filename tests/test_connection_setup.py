@@ -408,3 +408,110 @@ class ConnectionSetupTests(TestCase):
             action=AuditLog.Action.DELETE, target_model='GradeAPIConnection', target_id=str(conn_pk)
         ).exists())
 
+    def test_test_source_connection_success_and_failure(self):
+        conn = self.connect()
+        test_url = reverse('portal:test_source_connection', kwargs={'journal_id': self.journal.pk, 'connection_id': conn.pk})
+
+        # Success JSON AJAX test
+        with patch('apps.portal.views_connection_setup.fetch_source_roster', return_value=self.payload):
+            resp = self.client.post(test_url, HTTP_X_REQUESTED_WITH='XMLHttpRequest')
+            self.assertEqual(resp.status_code, 200)
+            data = resp.json()
+            self.assertTrue(data['success'])
+            self.assertEqual(data['status'], 'ok')
+            self.assertIn('успішний', data['message'].lower())
+
+        # Failure JSON AJAX test with ExternalAPIError
+        with patch('apps.portal.views_connection_setup.fetch_source_roster', side_effect=ExternalAPIError('Сервер не відповідає (Connection refused)')):
+            resp = self.client.post(test_url, HTTP_X_REQUESTED_WITH='XMLHttpRequest')
+            self.assertEqual(resp.status_code, 400)
+            data = resp.json()
+            self.assertFalse(data['success'])
+            self.assertEqual(data['status'], 'error')
+            self.assertIn('refused', data['message'].lower())
+            self.assertTrue(len(data['hint']) > 0)
+
+        # Standard POST redirect test
+        with patch('apps.portal.views_connection_setup.fetch_source_roster', return_value=self.payload):
+            resp = self.client.post(test_url, follow=True)
+            self.assertEqual(resp.status_code, 200)
+            self.assertContains(resp, 'успішний')
+
+    def test_toggle_source_connection(self):
+        conn = self.connect()
+        self.context(conn)
+        conn.refresh_from_db()
+        self.confirm(conn)
+        conn.refresh_from_db()
+        self.assertTrue(conn.enabled)
+        toggle_url = reverse('portal:toggle_source_connection', kwargs={'journal_id': self.journal.pk, 'connection_id': conn.pk})
+
+        # Toggle off
+        resp = self.client.post(toggle_url, follow=True)
+        self.assertEqual(resp.status_code, 200)
+        conn.refresh_from_db()
+        self.assertFalse(conn.enabled)
+        self.assertContains(resp, 'тимчасово вимкнено')
+
+        # Toggle back on
+        resp2 = self.client.post(toggle_url, follow=True)
+        self.assertEqual(resp2.status_code, 200)
+        conn.refresh_from_db()
+        self.assertTrue(conn.enabled)
+        self.assertContains(resp2, 'увімкнено')
+
+    def test_edit_source_connection(self):
+        conn = self.connect()
+        edit_url = reverse('portal:edit_source_connection', kwargs={'journal_id': self.journal.pk, 'connection_id': conn.pk})
+
+        # Edit connection URL and name
+        post_data = {
+            'name': 'Оновлений SchoolTest',
+            'site_url': 'http://10.25.4.99:8080',
+            'api_key': 'brand-new-secret-key',
+            'enabled': 'on',
+        }
+        with patch('apps.portal.views_connection_setup.fetch_source_roster', return_value=self.payload):
+            resp = self.client.post(edit_url, post_data, follow=True)
+            self.assertEqual(resp.status_code, 200)
+            conn.refresh_from_db()
+            self.assertEqual(conn.name, 'Оновлений SchoolTest')
+            self.assertEqual(conn.url, 'http://10.25.4.99:8080/api/v2/journal/grades/')
+            self.assertEqual(conn.api_key, 'brand-new-secret-key')
+            self.assertTrue(conn.enabled)
+            self.assertContains(resp, 'Налаштування підключення')
+            self.assertContains(resp, 'збережено')
+
+    def test_quick_send_roster(self):
+        conn = self.connect()
+        self.context(conn)
+        conn.refresh_from_db()
+        self.confirm(conn)
+
+        quick_url = reverse('portal:quick_send_roster', kwargs={'journal_id': self.journal.pk, 'connection_id': conn.pk})
+        mock_result = {'counts': {'created': 2, 'updated': 0, 'ignored': 0, 'needs_review': 0, 'conflicts': 0}}
+        with patch('apps.portal.views_connection_setup.send_journal_roster', return_value=mock_result) as mock_send:
+            resp = self.client.post(quick_url, follow=True)
+            self.assertEqual(resp.status_code, 200)
+            mock_send.assert_called_once()
+            self.assertContains(resp, 'Список учнів успішно передано')
+            self.assertContains(resp, 'додано 2')
+
+    def test_journal_detail_and_integrations_page_render_api_bars_and_tabs(self):
+        conn = self.connect()
+        detail_url = reverse('portal:journal_detail', kwargs={'journal_id': self.journal.pk})
+        resp = self.client.get(detail_url)
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, 'journal-api-bar')
+        self.assertContains(resp, 'api-status-chip')
+        self.assertContains(resp, 'Центр API')
+
+        int_url = reverse('portal:journal_integrations', kwargs={'journal_id': self.journal.pk})
+        resp_int = self.client.get(int_url)
+        self.assertEqual(resp_int.status_code, 200)
+        self.assertContains(resp_int, 'Центр керування API та синхронізації')
+        self.assertContains(resp_int, 'Підключені API')
+        self.assertContains(resp_int, 'Синхронізація списків')
+        self.assertContains(resp_int, 'Діагностика та помилки')
+
+

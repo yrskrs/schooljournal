@@ -5,6 +5,7 @@ from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.core.exceptions import PermissionDenied
 from django.db import transaction, IntegrityError
+from django.db.models import Q
 from django.http import JsonResponse, HttpResponseBadRequest
 from django.shortcuts import render, redirect, get_object_or_404
 from django.urls import reverse
@@ -14,11 +15,12 @@ from django.views.decorators.debug import sensitive_post_parameters
 from django.views.decorators.http import require_http_methods, require_POST, require_GET
 
 from apps.accounts.personal import ensure_personal_account
-from apps.journals.models import Journal, Grade, Attendance, StudentAPIGrant, GradeAPIConnection, GradeStudentMapping, ExternalGrade, AuditLog, GradePullLog
+from apps.journals.models import Journal, Grade, Attendance, StudentAPIGrant, GradeAPIConnection, GradeStudentMapping, ExternalGrade, AuditLog, GradePullLog, APIInboxResult
 from apps.journals.services.assessment import journal_students
 from apps.journals.services.external_grades import fetch_grade_payload, import_grade_records, review_external_grade, ExternalAPIError
 from apps.journals.services.roster_transfer import send_journal_roster
 from apps.portal.forms_integrations import StudentAPIForm, GradeAPIConnectionForm, PullGradesForm, LocalProfileLinkForm, STUDENT_FIELDS
+from apps.portal.forms_connection_setup import EditConnectionForm
 from apps.portal.views_journal import _get_journal_or_403
 from apps.portal.permissions import has_journal_access
 
@@ -168,8 +170,84 @@ def journal_integrations(request, journal_id):
                 return redirect('portal:teacher_dashboard')
             else:
                 return HttpResponseBadRequest('Невідома дія.')
+    journal_apis = []
+    for conn in connections:
+        classes = conn.roster_cache.get('classes', []) if isinstance(conn.roster_cache, dict) else []
+        subjects = conn.roster_cache.get('subjects', []) if isinstance(conn.roster_cache, dict) else []
+        caps = conn.roster_cache.get('capabilities', []) if isinstance(conn.roster_cache, dict) else []
+        c_name = next((c['name'] for c in classes if str(c['id']) == str(conn.source_class_id)), None) if conn.source_class_id else None
+        s_name = next((s['name'] for s in subjects if str(s['id']) == str(conn.source_subject_id)), None) if conn.source_subject_id else None
+
+        is_mismatched = False
+        if c_name:
+            def _cl(s): return ''.join(ch for ch in s.casefold() if ch.isalnum())
+            is_mismatched = _cl(c_name) != _cl(journal.student_class.name)
+
+        site_url = conn.url.rsplit('/api/v2/journal/grades/', 1)[0] if '/api/v2/journal/grades/' in conn.url else conn.url
+        last_log = conn.pull_logs.order_by('-created_at', '-pk').first()
+        status = 'disabled' if not conn.enabled else ('mismatch' if is_mismatched else ('needs_setup' if not conn.source_class_id else 'ok'))
+
+        edit_form = EditConnectionForm(
+            connection=conn,
+            initial={
+                'name': conn.name,
+                'site_url': site_url,
+                'enabled': conn.enabled,
+                'source_class_id': conn.source_class_id,
+                'source_subject_id': conn.source_subject_id,
+            }
+        )
+
+        journal_apis.append({
+            'connection': conn,
+            'id': conn.pk,
+            'source': conn.source,
+            'source_display': conn.get_source_display(),
+            'name': conn.name or conn.get_source_display(),
+            'url': conn.url,
+            'site_url': site_url,
+            'masked_key': conn.masked_key,
+            'enabled': conn.enabled,
+            'contract_version': conn.contract_version,
+            'status': status,
+            'source_class_name': c_name,
+            'source_subject_name': s_name,
+            'is_class_mismatched': is_mismatched,
+            'can_send_roster': 'journal_roster_import' in caps,
+            'mappings': list(conn.student_mappings.select_related('student').all()),
+            'mappings_count': conn.student_mappings.count(),
+            'classes_available': classes,
+            'subjects_available': subjects,
+            'students_available': [row for row in conn.roster_cache.get('students', []) if str(row.get('class_id')) == str(conn.source_class_id)] if isinstance(conn.roster_cache, dict) else [],
+            'last_pulled_at': conn.last_pulled_at,
+            'roster_sent_at': conn.roster_sent_at,
+            'roster_checked_at': conn.roster_checked_at,
+            'roster_report': conn.roster_report,
+            'last_log': last_log,
+            'edit_form': edit_form,
+        })
+
+    available = []
+    known = set()
+    for item in GradeAPIConnection.objects.filter(contract_version=2, journal__is_archived=False).filter(
+            Q(journal__teacher=request.user) | Q(journal__nz_owner__user=request.user) | Q(journal__local_profile=request.user)).exclude(journal=journal).select_related('journal'):
+        identity = (item.source, item.url, item.api_key)
+        if identity not in known and has_journal_access(request.user, item.journal, write=True):
+            known.add(identity)
+            available.append(item)
+
+    recent_logs = GradePullLog.objects.filter(connection__journal=journal).select_related('connection').order_by('-created_at', '-pk')[:25]
+    external_review_count = ExternalGrade.objects.filter(
+        connection__journal=journal, connection__enabled=True,
+        status__in=[ExternalGrade.Status.PENDING, ExternalGrade.Status.CONFLICT]
+    ).count()
+    inbox_count = APIInboxResult.objects.filter(connection__journal=journal, resolved=False, is_ignored=False).count()
+
     response = render(request, 'portal/journal/integrations.html', {
         'journal': journal, 'grant': grant, 'api_form': api_form, 'connections': connections,
+        'journal_apis': journal_apis, 'available_sources': available, 'recent_logs': recent_logs,
+        'external_review_count': external_review_count, 'inbox_count': inbox_count,
+        'active_tab': request.GET.get('tab', 'connections'),
         'connection_form': connection_form, 'editing_connection': instance, 'link_form': link_form,
         'mapping_students': journal_students(journal),
         'can_link': can_link, 'can_unlink': can_unlink,
@@ -217,6 +295,9 @@ def pull_external_grades(request, journal_id, connection_id):
             GradePullLog.objects.create(connection=connection, user=request.user,
                 counts={'errors': 1}, errors=[{'message': str(error)}])
             messages.error(request, str(error))
+    next_url = request.POST.get('next')
+    if next_url:
+        return redirect(next_url)
     return redirect('portal:external_grade_review', journal_id=journal.pk)
 
 
@@ -249,6 +330,9 @@ def pull_source_grades(request, journal_id, source):
             GradePullLog.objects.create(connection=connection, user=request.user,
                 counts={'errors': 1}, errors=[{'message': str(error)}])
             messages.error(request, f'{connection.name}: {error}')
+    next_url = request.POST.get('next')
+    if next_url:
+        return redirect(next_url)
     if request.headers.get('x-requested-with') == 'XMLHttpRequest':
         return redirect('portal:journal_detail', journal_id=journal.pk)
     return redirect('portal:external_grade_review', journal_id=journal.pk)

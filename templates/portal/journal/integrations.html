@@ -1,82 +1,721 @@
 {% extends 'base.html' %}
-{% block title %}Профілі та API | {{ journal.student_class.name }}{% endblock %}
+{% block title %}Центр керування API та синхронізації | {{ journal.student_class.name }}{% endblock %}
+
 {% block content %}
-<div class="schedule-page integration-page">
-  <div class="schedule-page-header">
-    <div><h1>Профілі та API журналу</h1><p>{{ journal.student_class.name }} · {{ journal.subject.name }}</p></div>
-    <div style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
+<div class="api-hub-page">
+  <!-- Шапка Центру API -->
+  <div class="api-hub-header">
+    <div>
+      <div style="display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; margin-bottom: 0.35rem;">
+        <span class="user-role-pill" style="font-weight: 700; font-size: 0.85rem; background: var(--primary-light); color: var(--primary);">
+          {{ journal.student_class.name }} клас
+        </span>
+        <span style="color: var(--text-muted);">&bull;</span>
+        <span style="font-size: 1rem; font-weight: 600; color: var(--text-main);">{{ journal.subject.name }}</span>
+      </div>
+      <h1>Центр керування API та синхронізації</h1>
+      <p style="color: var(--text-muted); font-size: 0.95rem; margin: 0;">
+        Керування підключеннями до сайтів тестування (SchoolTest), завдань (SchoolWork), синхронізацією списків та оцінок.
+      </p>
+    </div>
+    <div style="display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: center;">
+      <a class="btn btn-primary" href="{% url 'portal:connect_source' journal.pk %}" style="display: inline-flex; align-items: center; gap: 0.35rem;">
+        <span>+ Підключити новий сайт</span>
+      </a>
       <a class="btn btn-outline-secondary" href="{% url 'portal:teacher_api_keys' %}">Усі API ключі</a>
-      <a class="btn btn-outline-primary" href="{% url 'portal:journal_detail' journal.id %}">Повернутися до журналу</a>
+      <a class="btn btn-outline-primary" href="{% url 'portal:journal_detail' journal.id %}">До журналу</a>
     </div>
   </div>
-  <section class="schedule-card"><h2>Підключення тестів і завдань</h2><p>Для цих двох сайтів використовуйте майстер: вставте адресу сайту з IP і портом та окремо ключ API, виберіть назви класу й предмета та підтвердьте учнів.</p><a class="btn btn-primary" href="{% url 'portal:connect_source' journal.pk %}">Підключити тести / завдання</a></section>
-  <fieldset class="integration-settings" {% if not can_edit %}disabled{% endif %}>
-  <section class="schedule-card">
-    <h2>Особистий і локальний профілі</h2>
-    {% if journal.nz_owner %}
-      <p>Особистий профіль nz.ua: <strong>{{ journal.nz_owner.user.get_full_name_ukr }}</strong>. Журнал і всі його записи залишаються доступними цьому профілю.</p>
-      {% if journal.local_profile %}<p>Додатковий локальний профіль: <strong>{{ journal.local_profile.get_full_name_ukr }}</strong>.</p>{% else %}<p>Додатковий локальний профіль не підключено.</p>{% endif %}
-      {% if can_unlink %}<form method="post">{% csrf_token %}<button name="action" value="unlink_profile" class="btn btn-outline-danger">Відв’язати локальний профіль</button></form>{% endif %}
-      {% if can_link %}
-        <details class="integration-details"><summary>Підключити додатковий локальний профіль</summary>
-          <p>Підтвердьте пароль цього профілю. Він отримає доступ до перегляду й редагування цього журналу.</p>
-          <form method="post">{% csrf_token %}{{ link_form.as_p }}<button name="action" value="link_profile" class="btn btn-primary">Підключити профіль</button></form>
-        </details>
-      {% endif %}
-    {% else %}<p>Особистий акаунт nz.ua ще не пов’язано з цим журналом. Увійдіть через nz.ua та завантажте свій онлайн-журнал.</p>{% endif %}
-  </section>
-  <section class="schedule-card">
-    <h2>API списку учнів</h2>
-    <p>Ключ відкриває доступ лише до вибраних полів учнів цього журналу. Відвідування, оцінки й контактні дані через цей API не надаються.</p>
-    <p>Адреса: <code class="integration-url">{{ api_url }}</code></p>
-    {% if new_api_key %}<div class="alert alert-success"><strong>Новий ключ — показано один раз:</strong><pre class="integration-token">{{ new_api_key }}</pre><p>Скопіюйте його до налаштувань сервера робіт.</p></div>{% endif %}
-    <p>Передавайте ключ у заголовку <code>Authorization: Bearer ВАШ_КЛЮЧ</code>.</p>
-    <form method="post">{% csrf_token %}{{ api_form.as_p }}<button name="action" value="student_api" class="btn btn-primary">Зберегти доступ і поля</button></form>
-    <div class="schedule-row-actions integration-details">
-      <form method="post">{% csrf_token %}<button name="action" value="rotate_key" class="btn btn-outline-primary">Створити / замінити ключ</button></form>
-      <form method="post">{% csrf_token %}<button name="action" value="revoke_key" class="btn btn-outline-danger">Відкликати ключ і вимкнути API</button></form>
+
+  <!-- Попередження про невідповідність класу, якщо є -->
+  {% for api in journal_apis %}
+    {% if api.is_class_mismatched %}
+      <div class="alert alert-warning" style="margin-bottom: 1.25rem; display: flex; align-items: center; justify-content: space-between; gap: 1rem; flex-wrap: wrap; background: #fffbeb; border: 1px solid #fde68a; color: #92400e; padding: 0.85rem 1rem; border-radius: 8px;">
+        <div style="display: flex; align-items: center; gap: 0.5rem;">
+          <span style="font-size: 1.35rem;">⚠️</span>
+          <div>
+            <strong>Увага! Невідповідність підключеного класу для «{{ api.name }}»:</strong>
+            Цей журнал ведеться для класу <strong>{{ journal.student_class.name }}</strong>, але на сайті обрано <strong>«{{ api.source_class_name }}»</strong>.
+            Через це оцінки та учні надходять з іншого класу!
+          </div>
+        </div>
+        <button type="button" class="btn btn-warning btn-sm" onclick="switchApiTab('connections'); document.getElementById('editConnection_{{ api.id }}').scrollIntoView({behavior: 'smooth'});" style="font-weight: 600;">
+          Виправити клас
+        </button>
+      </div>
+    {% endif %}
+  {% endfor %}
+
+  <!-- Навігаційні вкладки -->
+  <div class="api-hub-tabs">
+    <button type="button" class="api-hub-tab {% if active_tab == 'connections' or not active_tab %}active{% endif %}" onclick="switchApiTab('connections')" id="tabBtn_connections">
+      <span>🔌 Підключені API ({{ journal_apis|length }})</span>
+    </button>
+    <button type="button" class="api-hub-tab {% if active_tab == 'roster' %}active{% endif %}" onclick="switchApiTab('roster')" id="tabBtn_roster">
+      <span>📤 Синхронізація списків учнів</span>
+    </button>
+    <button type="button" class="api-hub-tab {% if active_tab == 'mapping' %}active{% endif %}" onclick="switchApiTab('mapping')" id="tabBtn_mapping">
+      <span>👥 Зіставлення учнів класу</span>
+    </button>
+    <button type="button" class="api-hub-tab {% if active_tab == 'diagnostics' %}active{% endif %}" onclick="switchApiTab('diagnostics')" id="tabBtn_diagnostics">
+      <span>📊 Діагностика та помилки ({{ recent_logs|length }})</span>
+    </button>
+    <button type="button" class="api-hub-tab {% if active_tab == 'grants' %}active{% endif %}" onclick="switchApiTab('grants')" id="tabBtn_grants">
+      <span>🔑 Student API та Профілі</span>
+    </button>
+  </div>
+
+  <!-- ВКЛАДКА 1: ПІДКЛЮЧЕНІ API -->
+  <div id="panel_connections" class="api-hub-panel {% if active_tab == 'connections' or not active_tab %}active{% endif %}">
+    <div class="api-guide-box" style="margin-bottom: 1.5rem;">
+      <div class="api-guide-title">
+        <span>💡 Яке API використовується для цього журналу?</span>
+      </div>
+      <p class="api-guide-text">
+        Журнал використовує два основні API: <strong>Тести (SchoolTest)</strong> — для отримання оцінок за онлайн-тести, та <strong>Завдання (SchoolWork)</strong> — для оцінок за перевірені письмові роботи. Кожне підключення має власну адресу сервера, свій ключ та зв’язується з відповідним класом і предметом.
+      </p>
     </div>
-    <p class="text-muted">{% if grant.token_hash %}Ключ створено.{% else %}Ключ ще не створено.{% endif %} {% if grant.enabled %}API увімкнено.{% else %}API вимкнено.{% endif %}</p>
-  </section>
-  <section class="schedule-card">
-    <h2>Оцінки із сервера робіт</h2>
-    <p>Журнал запитує оцінки після натискання «Отримати оцінки». Дата й ID учня визначають клітинку. За кількох уроків на дату потрібен номер уроку.</p>
-    <p><a href="{% url 'portal:external_grade_review' journal.id %}">Переглянути імпортовані оцінки й схвалити попередні</a></p>
-    {% for connection in connections %}
-      <article class="integration-connection">
-        <h3>{{ connection.name }} {% if not connection.enabled %}<span class="badge">Вимкнено</span>{% endif %}</h3>
-        <p class="integration-url">{{ connection.url }}</p>
-        <p class="text-muted">Останнє отримання: {{ connection.last_pulled_at|date:'d.m.Y H:i'|default:'ще не було' }}. {% if connection.api_key %}Ключ збережено.{% endif %}</p>
-        <div style="display: flex; gap: 0.75rem; align-items: center; margin: 0.5rem 0;">
-          <a href="?edit={{ connection.pk }}#connectionEditor" class="btn btn-outline-primary btn-sm">Змінити налаштування</a>
-          <form method="post" action="{% url 'portal:delete_source_connection' journal.pk connection.pk %}" style="display: inline;" onsubmit="return confirm('Видалити підключення «{{ connection.name|default:connection.get_source_display }}»?');">
+
+    {% if journal_apis %}
+      <div style="display: flex; flex-direction: column; gap: 1.25rem;">
+        {% for api in journal_apis %}
+          <div class="api-connection-card {% if api.status == 'ok' %}card-status-ok{% elif api.status == 'mismatch' %}card-status-mismatch{% elif api.status == 'disabled' %}card-status-disabled{% endif %}" id="connectionCard_{{ api.id }}">
+            <!-- Шапка картки -->
+            <div class="api-card-header">
+              <div style="display: flex; align-items: center; gap: 0.65rem; flex-wrap: wrap;">
+                <span style="font-size: 1.35rem;">
+                  {% if api.source == 'schooltest' %}🎯{% elif api.source == 'schoolwork' %}📝{% else %}🌐{% endif %}
+                </span>
+                <div>
+                  <h3 class="api-card-title">{{ api.name }}</h3>
+                  <div style="font-size: 0.82rem; color: var(--text-muted);">
+                    Тип: <strong>{{ api.source_display }}</strong> &bull; Контракт: <strong>API v{{ api.contract_version }}</strong>
+                  </div>
+                </div>
+              </div>
+              <div style="display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;">
+                {% if api.status == 'ok' %}
+                  <span class="badge" style="background: #dcfce7; color: #15803d; font-size: 0.82rem; padding: 0.25rem 0.55rem;">
+                    🟢 Активне (готове до роботи)
+                  </span>
+                {% elif api.status == 'mismatch' %}
+                  <span class="badge" style="background: #fef3c7; color: #92400e; font-size: 0.82rem; padding: 0.25rem 0.55rem;">
+                    ⚠️ Невідповідність класу
+                  </span>
+                {% elif api.status == 'disabled' %}
+                  <span class="badge" style="background: #f1f5f9; color: #64748b; font-size: 0.82rem; padding: 0.25rem 0.55rem;">
+                    ⚪ Тимчасово вимкнено
+                  </span>
+                {% else %}
+                  <span class="badge" style="background: #eff6ff; color: #1e40af; font-size: 0.82rem; padding: 0.25rem 0.55rem;">
+                    🟡 Потребує налаштування
+                  </span>
+                {% endif %}
+
+                <!-- Перемикач активності -->
+                <form method="post" action="{% url 'portal:toggle_source_connection' journal.id api.id %}" style="display: inline;">
+                  {% csrf_token %}
+                  <input type="hidden" name="next" value="{{ request.get_full_path }}">
+                  <button type="submit" class="btn btn-outline-secondary btn-sm" style="font-size: 0.8rem; padding: 0.2rem 0.5rem;" title="Увімкнути або вимкнути це підключення">
+                    {% if api.enabled %}Вимкнути{% else %}Увімкнути{% endif %}
+                  </button>
+                </form>
+              </div>
+            </div>
+
+            <!-- Тіло картки -->
+            <div class="api-card-body">
+              <div class="api-card-grid">
+                <div class="api-param-item">
+                  <span class="api-param-label">Адреса сервера (IP і порт):</span>
+                  <span class="api-param-value"><code>{{ api.url }}</code></span>
+                </div>
+                <div class="api-param-item">
+                  <span class="api-param-label">Ключ зовнішнього API:</span>
+                  <span class="api-param-value"><code>{{ api.masked_key }}</code></span>
+                </div>
+                <div class="api-param-item">
+                  <span class="api-param-label">Клас на сайті джерела:</span>
+                  <span class="api-param-value">
+                    {% if api.source_class_name %}
+                      <strong>{{ api.source_class_name }}</strong>
+                      {% if api.is_class_mismatched %}
+                        <span style="color: #b45309; font-size: 0.8rem; font-weight: bold;">(не співпадає з {{ journal.student_class.name }}!)</span>
+                      {% endif %}
+                    {% else %}
+                      <span style="color: var(--text-muted); font-style: italic;">Не вибрано</span>
+                    {% endif %}
+                  </span>
+                </div>
+                <div class="api-param-item">
+                  <span class="api-param-label">Предмет на сайті джерела:</span>
+                  <span class="api-param-value">
+                    <strong>{{ api.source_subject_name|default:"Не вибрано" }}</strong>
+                  </span>
+                </div>
+                <div class="api-param-item">
+                  <span class="api-param-label">Зіставлено учнів:</span>
+                  <span class="api-param-value">{{ api.mappings_count }} учнів підтверджено</span>
+                </div>
+                <div class="api-param-item">
+                  <span class="api-param-label">Можливості (Capabilities):</span>
+                  <span class="api-param-value">
+                    {% if api.can_send_roster %}
+                      <span style="color: #15803d;">✔ Отримання оцінок + Передача списків учнів</span>
+                    {% else %}
+                      <span>Отримання оцінок</span>
+                    {% endif %}
+                  </span>
+                </div>
+                <div class="api-param-item">
+                  <span class="api-param-label">Остання синхронізація оцінок:</span>
+                  <span class="api-param-value">{{ api.last_pulled_at|date:'d.m.Y H:i'|default:'ще не проводилася' }}</span>
+                </div>
+                <div class="api-param-item">
+                  <span class="api-param-label">Остання передача списку учнів:</span>
+                  <span class="api-param-value">{{ api.roster_sent_at|date:'d.m.Y H:i'|default:'ще не передавалися' }}</span>
+                </div>
+              </div>
+
+              <!-- Банер живої діагностики для цієї картки -->
+              <div id="testBanner_{{ api.id }}" class="api-test-banner"></div>
+
+              <!-- Панель дій для підключення -->
+              <div class="api-card-actions">
+                <!-- 1. Перевірка зв'язку -->
+                <button type="button" class="btn btn-outline-info btn-sm" onclick="runHubConnectionTest({{ journal.id }}, {{ api.id }}, this)" style="display: inline-flex; align-items: center; gap: 0.35rem; font-weight: 600;">
+                  <span>🔍 Перевірити зв'язок</span>
+                </button>
+
+                <!-- 2. Синхронізувати оцінки -->
+                {% if api.enabled %}
+                  <form method="post" action="{% url 'portal:pull_external_grades' journal.id api.id %}" style="display: inline;">
+                    {% csrf_token %}
+                    <input type="hidden" name="date_from" value="{{ journal.academic_year.start_date|date:'Y-m-d' }}">
+                    <input type="hidden" name="date_to" value="{{ journal.academic_year.end_date|date:'Y-m-d' }}">
+                    <input type="hidden" name="next" value="{{ request.get_full_path }}">
+                    <button type="submit" class="btn btn-primary btn-sm" style="display: inline-flex; align-items: center; gap: 0.35rem; font-weight: 600;">
+                      <span>📥 Отримати оцінки</span>
+                    </button>
+                  </form>
+                {% endif %}
+
+                <!-- 3. Передати учнів на сайт -->
+                {% if api.can_send_roster %}
+                  <form method="post" action="{% url 'portal:quick_send_roster' journal.id api.id %}" style="display: inline;" onsubmit="return confirm('Передати актуальний список учнів класу {{ journal.student_class.name }} на сайт «{{ api.name }}»?\n\nЦе дозволить учням обирати себе зі списку на сайті джерела.');">
+                    {% csrf_token %}
+                    <input type="hidden" name="next" value="{{ request.get_full_path }}">
+                    <button type="submit" class="btn btn-outline-success btn-sm" style="display: inline-flex; align-items: center; gap: 0.35rem; font-weight: 600;">
+                      <span>📤 Передати учнів на сайт</span>
+                    </button>
+                  </form>
+                {% endif %}
+
+                <!-- 4. Оновити назви -->
+                <form method="post" action="{% url 'portal:connect_source' journal.pk %}" style="display: inline;">
+                  {% csrf_token %}
+                  <input type="hidden" name="connection_id" value="{{ api.id }}">
+                  <input type="hidden" name="action" value="refresh">
+                  <button type="submit" class="btn btn-outline-secondary btn-sm" title="Оновити перелік класів та предметів із сайту джерела">
+                    <span>📥 Оновити назви з сайту</span>
+                  </button>
+                </form>
+
+                <!-- 5. Редагувати налаштування -->
+                <button type="button" class="btn btn-outline-secondary btn-sm" onclick="toggleEditDetails('editSection_{{ api.id }}')">
+                  <span>✏️ Змінити налаштування</span>
+                </button>
+
+                <!-- 6. Видалити підключення -->
+                <form method="post" action="{% url 'portal:delete_source_connection' journal.pk api.id %}" style="display: inline; margin-left: auto;" onsubmit="return confirm('Видалити підключення до API «{{ api.name }}»?\n\nОцінки, які вже були виставлені в журналі, залишаться у повній безпеці.');">
+                  {% csrf_token %}
+                  <input type="hidden" name="next" value="{{ request.get_full_path }}">
+                  <button type="submit" class="btn btn-outline-danger btn-sm">
+                    <span>🗑️ Видалити</span>
+                  </button>
+                </form>
+              </div>
+
+              <!-- Форма редагування налаштувань підключення (випадає по кнопці) -->
+              <div id="editSection_{{ api.id }}" style="display: none; margin-top: 1.25rem; padding: 1.25rem; background: #f8fafc; border: 1px solid var(--border); border-radius: var(--radius-sm);">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+                  <h4 style="margin: 0; font-size: 1.05rem; font-weight: 700;">Редагування підключення «{{ api.name }}»</h4>
+                  <button type="button" class="btn btn-sm btn-outline-secondary" onclick="toggleEditDetails('editSection_{{ api.id }}')">✕ Закрити</button>
+                </div>
+                <form method="post" action="{% url 'portal:edit_source_connection' journal.id api.id %}">
+                  {% csrf_token %}
+                  <input type="hidden" name="next" value="{{ request.get_full_path }}">
+                  <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 1rem; margin-bottom: 1rem;">
+                    <div>
+                      <label style="font-weight: 600; font-size: 0.85rem; display: block; margin-bottom: 0.25rem;">Назва підключення:</label>
+                      {{ api.edit_form.name }}
+                    </div>
+                    <div>
+                      <label style="font-weight: 600; font-size: 0.85rem; display: block; margin-bottom: 0.25rem;">Адреса сайту (IP і порт):</label>
+                      {{ api.edit_form.site_url }}
+                      <small class="text-muted">{{ api.edit_form.site_url.help_text }}</small>
+                    </div>
+                    <div>
+                      <label style="font-weight: 600; font-size: 0.85rem; display: block; margin-bottom: 0.25rem;">Новий ключ API (залиште порожнім, щоб не змінювати):</label>
+                      {{ api.edit_form.api_key }}
+                    </div>
+                    <div>
+                      <label style="font-weight: 600; font-size: 0.85rem; display: block; margin-bottom: 0.25rem;">Клас на сайті джерела:</label>
+                      {{ api.edit_form.source_class_id }}
+                    </div>
+                    <div>
+                      <label style="font-weight: 600; font-size: 0.85rem; display: block; margin-bottom: 0.25rem;">Предмет на сайті джерела:</label>
+                      {{ api.edit_form.source_subject_id }}
+                    </div>
+                    <div style="display: flex; align-items: center; margin-top: 1.5rem;">
+                      <label style="display: inline-flex; align-items: center; gap: 0.5rem; cursor: pointer; font-weight: 600; font-size: 0.9rem;">
+                        {{ api.edit_form.enabled }}
+                        Підключення активне
+                      </label>
+                    </div>
+                  </div>
+                  <div style="display: flex; gap: 0.5rem; justify-content: flex-end;">
+                    <button type="button" class="btn btn-secondary btn-sm" onclick="toggleEditDetails('editSection_{{ api.id }}')">Скасувати</button>
+                    <button type="submit" class="btn btn-primary btn-sm">Зберегти налаштування</button>
+                  </div>
+                </form>
+              </div>
+
+            </div>
+          </div>
+        {% endfor %}
+      </div>
+    {% else %}
+      <div class="schedule-card" style="padding: 2.5rem; text-align: center;">
+        <div style="font-size: 3rem; margin-bottom: 0.75rem;">🔌</div>
+        <h3 style="font-size: 1.25rem; font-weight: 700; margin-bottom: 0.5rem;">У цьому журналі ще немає підключених API</h3>
+        <p style="color: var(--text-muted); font-size: 0.95rem; max-width: 550px; margin: 0 auto 1.5rem;">
+          Щоб автоматично отримувати оцінки за тести чи завдання, вкажіть адресу сайту (IP і порт) та згенерований ключ API.
+        </p>
+        <a class="btn btn-primary" href="{% url 'portal:connect_source' journal.pk %}">
+          Підключити тести або завдання
+        </a>
+      </div>
+    {% endif %}
+
+    <!-- Повторне використання ключів з інших журналів -->
+    {% if available_sources %}
+      <div class="api-guide-box" style="margin-top: 2rem;">
+        <h4 style="font-size: 1.05rem; font-weight: 700; margin-bottom: 0.5rem;">
+          🔑 Використати вже підключений сайт з інших ваших журналів
+        </h4>
+        <p style="color: var(--text-muted); font-size: 0.9rem; margin-bottom: 1rem;">
+          Вам не потрібно повторно вводити адресу та ключ, якщо ви вже підключали цей сайт до іншого свого класу.
+        </p>
+        <form method="post" action="{% url 'portal:connect_source' journal.pk %}">
+          {% csrf_token %}
+          <div style="display: flex; gap: 0.75rem; flex-wrap: wrap; align-items: center;">
+            <select name="reuse_connection" class="form-control" style="max-width: 450px;">
+              {% for source in available_sources %}
+                <option value="{{ source.pk }}">{{ source.key_display_name }}</option>
+              {% endfor %}
+            </select>
+            <button class="btn btn-outline-primary" name="action" value="reuse">
+              Підключити до цього журналу
+            </button>
+          </div>
+        </form>
+      </div>
+    {% endif %}
+  </div>
+
+  <!-- ВКЛАДКА 2: СИНХРОНІЗАЦІЯ СПИСКІВ УЧНІВ -->
+  <div id="panel_roster" class="api-hub-panel {% if active_tab == 'roster' %}active{% endif %}">
+    <div class="api-guide-box">
+      <div class="api-guide-title">
+        <span>📖 Як працює синхронізація списків учнів?</span>
+      </div>
+      <div class="api-guide-text" style="display: flex; flex-direction: column; gap: 0.6rem;">
+        <div>
+          <strong>1. Журнал — головне джерело списку класу:</strong>
+          У журналі ведеться офіційний склад класу {{ journal.student_class.name }}.
+        </div>
+        <div>
+          <strong>2. Дія «Передати учнів на сайт»:</strong>
+          Натискання цієї кнопки копіює учнів класу до бази сайту тестування чи завдань. Діти одразу бачать себе у списку класу при здачі робіт або проходженні тестів.
+        </div>
+        <div>
+          <strong>3. Дія «Оновити назви з сайту»:</strong>
+          Якщо на сайті тестів вчитель створив нові предмети або класи, ця кнопка підтягує їхні назви до журналу.
+        </div>
+        <div>
+          <strong>4. Ігнорування учнів:</strong>
+          Учні на сімейній формі або за кордоном, позначені в журналі як ігноровані, автоматично не додаються до активних списків на сайтах завдань.
+        </div>
+      </div>
+    </div>
+
+    <!-- Кнопки швидкої передачі для кожного джерела -->
+    <div style="display: flex; flex-direction: column; gap: 1rem;">
+      {% for api in journal_apis %}
+        <div class="schedule-card" style="margin-bottom: 0; padding: 1.25rem;">
+          <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 1rem;">
+            <div>
+              <h4 style="margin: 0 0 0.25rem 0; font-size: 1.1rem; font-weight: 700;">
+                Список журналу → {{ api.name }} ({{ api.source_display }})
+              </h4>
+              <p style="margin: 0; font-size: 0.88rem; color: var(--text-muted);">
+                Остання підтверджена передача: <strong>{{ api.roster_sent_at|date:'d.m.Y H:i'|default:'ще не передавалися' }}</strong>.
+              </p>
+              {% if api.roster_report.counts %}
+                <div style="margin-top: 0.35rem; font-size: 0.85rem; color: #1e3a8a; background: #eff6ff; padding: 0.35rem 0.65rem; border-radius: 4px; display: inline-block;">
+                  Звіт останньої передачі: додано {{ api.roster_report.counts.created }}, оновлено {{ api.roster_report.counts.updated }}, ігноровано {{ api.roster_report.counts.ignored|default:0 }}, потребують перевірки {{ api.roster_report.counts.needs_review }}, конфліктів {{ api.roster_report.counts.conflicts }}.
+                </div>
+              {% endif %}
+            </div>
+            <div style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
+              {% if api.can_send_roster %}
+                <form method="post" action="{% url 'portal:quick_send_roster' journal.id api.id %}">
+                  {% csrf_token %}
+                  <input type="hidden" name="next" value="{{ request.get_full_path }}">
+                  <button type="submit" class="btn btn-primary" style="font-weight: 600;">
+                    📤 Передати учнів на сайт
+                  </button>
+                </form>
+              {% endif %}
+              <form method="post" action="{% url 'portal:connect_source' journal.pk %}">
+                {% csrf_token %}
+                <input type="hidden" name="connection_id" value="{{ api.id }}">
+                <input type="hidden" name="action" value="refresh">
+                <button type="submit" class="btn btn-outline-secondary">
+                  📥 Оновити назви з сайту
+                </button>
+              </form>
+            </div>
+          </div>
+        </div>
+      {% empty %}
+        <p style="color: var(--text-muted);">Немає підключених сайтів для передачі списків.</p>
+      {% endfor %}
+    </div>
+  </div>
+
+  <!-- ВКЛАДКА 3: ЗІСТАВЛЕННЯ УЧНІВ КЛАСУ -->
+  <div id="panel_mapping" class="api-hub-panel {% if active_tab == 'mapping' %}active{% endif %}">
+    <div class="api-guide-box">
+      <div class="api-guide-title">
+        <span>👥 Зіставлення учнів класу</span>
+      </div>
+      <p class="api-guide-text">
+        Зіставлення зв’язує учнів у цьому журналі з відповідними обліковими записами на сайтах тестування та завдань. Зіставлення за ПІБ відбувається автоматично при передачі списку; однаковий ПІБ ніколи не об’єднує різних людей без підтвердження.
+      </p>
+    </div>
+
+    {% for api in journal_apis %}
+      <div class="schedule-card" style="margin-bottom: 1.5rem; padding: 1.25rem;">
+        <h4 style="margin: 0 0 0.75rem 0; font-size: 1.15rem; font-weight: 700; color: var(--primary-dark);">
+          Зіставлені учні для «{{ api.name }}» ({{ api.mappings|length }} учнів)
+        </h4>
+        {% if api.mappings %}
+          <div class="table-responsive" style="max-height: 400px; overflow-y: auto;">
+            <table class="table" style="width: 100%; border-collapse: collapse; font-size: 0.9rem;">
+              <thead>
+                <tr style="background: #f8fafc; border-bottom: 2px solid var(--border); text-align: left;">
+                  <th style="padding: 0.5rem 0.75rem;">ПІБ у журналі</th>
+                  <th style="padding: 0.5rem 0.75rem;">ID журналу</th>
+                  <th style="padding: 0.5rem 0.75rem;">ID на сайті джерела</th>
+                  <th style="padding: 0.5rem 0.75rem;">Статус</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for m in api.mappings %}
+                  <tr style="border-bottom: 1px solid var(--border);">
+                    <td style="padding: 0.5rem 0.75rem; font-weight: 600;">{{ m.student.get_full_name_ukr }}</td>
+                    <td style="padding: 0.5rem 0.75rem;"><code>{{ m.student_id }}</code></td>
+                    <td style="padding: 0.5rem 0.75rem;"><code>{{ m.external_id }}</code></td>
+                    <td style="padding: 0.5rem 0.75rem;"><span class="badge" style="background: #dcfce7; color: #166534;">Зіставлено</span></td>
+                  </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        {% else %}
+          <p style="color: var(--text-muted); font-size: 0.9rem; margin-bottom: 0.5rem;">
+            Ще немає збережених зіставлень учнів для цього підключення. Натисніть «Передати учнів на сайт», щоб автоматично створити відповідності.
+          </p>
+        {% endif %}
+
+        <!-- Ручне додавання відповідності -->
+        <details style="margin-top: 1rem;">
+          <summary style="cursor: pointer; font-weight: 600; color: var(--primary); font-size: 0.9rem;">
+            + Додати або перевірити відповідність учня вручну
+          </summary>
+          <form method="post" action="{% url 'portal:journal_integrations' journal.id %}" style="margin-top: 0.75rem; background: #f8fafc; padding: 1rem; border-radius: 6px;">
             {% csrf_token %}
-            <input type="hidden" name="next" value="{% url 'portal:journal_integrations' journal.pk %}">
-            <button type="submit" class="btn btn-outline-danger btn-sm">Видалити підключення</button>
+            <input type="hidden" name="action" value="student_mapping">
+            <input type="hidden" name="mapping_connection_id" value="{{ api.id }}">
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 0.75rem; align-items: flex-end;">
+              <div>
+                <label style="font-size: 0.82rem; font-weight: 600; display: block; margin-bottom: 0.25rem;">Учень журналу:</label>
+                <select name="student_id" class="form-control" required>
+                  {% for s in mapping_students %}
+                    <option value="{{ s.pk }}">{{ s.get_full_name_ukr }} (ID {{ s.pk }})</option>
+                  {% endfor %}
+                </select>
+              </div>
+              <div>
+                <label style="font-size: 0.82rem; font-weight: 600; display: block; margin-bottom: 0.25rem;">ID учня на сайті джерела:</label>
+                <input type="text" name="external_student_id" class="form-control" placeholder="Наприклад: 101 або UUID" required>
+              </div>
+              <div>
+                <button type="submit" class="btn btn-outline-primary" style="width: 100%;">Зберегти зіставлення</button>
+              </div>
+            </div>
+          </form>
+        </details>
+      </div>
+    {% endfor %}
+  </div>
+
+  <!-- ВКЛАДКА 4: ДІАГНОСТИКА ТА ЖУРНАЛ ПОМИЛОК -->
+  <div id="panel_diagnostics" class="api-hub-panel {% if active_tab == 'diagnostics' %}active{% endif %}">
+    <div class="api-guide-box">
+      <div class="api-guide-title">
+        <span>❓ Чому API не працює і що робити?</span>
+      </div>
+      <div class="api-guide-text" style="display: flex; flex-direction: column; gap: 0.6rem;">
+        <div>
+          <strong>1. Сервер не відповідає (Connection Refused):</strong>
+          Перевірте адресу (наприклад <code>http://192.168.1.13:8080</code>). Чи запущено сайт тестів/завдань? Чи правильний порт (8080 для тестів, 8000 для завдань)?
+        </div>
+        <div>
+          <strong>2. Помилка ключа (HTTP 401 / 403):</strong>
+          Сайт відхилив ключ. Перейдіть на сайт тестів («Підключення до журналу») або завдань («Налаштування → API»), створіть новий ключ і збережіть його в налаштуваннях підключення.
+        </div>
+        <div>
+          <strong>3. Не співпадає назва класу:</strong>
+          Перевірте секцію «Клас джерела». Якщо в журналі клас «5-А», а на сайті обрано інший клас, результати не потраплять у журнал.
+        </div>
+      </div>
+    </div>
+
+    <!-- Таблиця останніх викликів та помилок -->
+    <div class="schedule-card" style="padding: 1.25rem;">
+      <h4 style="margin: 0 0 1rem 0; font-size: 1.15rem; font-weight: 700;">Журнал останніх викликів API та помилок</h4>
+      {% if recent_logs %}
+        <div class="table-responsive">
+          <table class="table" style="width: 100%; border-collapse: collapse; font-size: 0.88rem;">
+            <thead>
+              <tr style="background: #f8fafc; border-bottom: 2px solid var(--border); text-align: left;">
+                <th style="padding: 0.5rem 0.75rem;">Час</th>
+                <th style="padding: 0.5rem 0.75rem;">Сервіс</th>
+                <th style="padding: 0.5rem 0.75rem;">Операція</th>
+                <th style="padding: 0.5rem 0.75rem;">Статус</th>
+                <th style="padding: 0.5rem 0.75rem;">Результат / Помилка</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for log in recent_logs %}
+                <tr style="border-bottom: 1px solid var(--border);">
+                  <td style="padding: 0.5rem 0.75rem; white-space: nowrap;">{{ log.created_at|date:'d.m.Y H:i:s' }}</td>
+                  <td style="padding: 0.5rem 0.75rem; font-weight: 600;">{{ log.connection.name|default:log.connection.get_source_display }}</td>
+                  <td style="padding: 0.5rem 0.75rem;">
+                    {% if log.counts.operation == 'roster' %}
+                      <span>📤 Передача списку</span>
+                    {% else %}
+                      <span>📥 Отримання оцінок</span>
+                    {% endif %}
+                  </td>
+                  <td style="padding: 0.5rem 0.75rem;">
+                    {% if log.counts.errors > 0 %}
+                      <span class="badge" style="background: #fee2e2; color: #991b1b;">Помилка</span>
+                    {% else %}
+                      <span class="badge" style="background: #dcfce7; color: #166534;">Успішно</span>
+                    {% endif %}
+                  </td>
+                  <td style="padding: 0.5rem 0.75rem;">
+                    {% if log.errors %}
+                      {% for err in log.errors %}
+                        <div style="color: #dc2626; font-weight: 500;">{{ err.message|default:err }}</div>
+                      {% endfor %}
+                    {% else %}
+                      <span style="color: var(--text-muted);">
+                        {% if log.counts.operation == 'roster' %}
+                          Створено: {{ log.counts.created|default:0 }}, оновлено: {{ log.counts.updated|default:0 }}
+                        {% else %}
+                          Додано: {{ log.counts.added|default:0 }}, оновлено: {{ log.counts.updated|default:0 }}, без змін: {{ log.counts.unchanged|default:0 }}
+                        {% endif %}
+                      </span>
+                    {% endif %}
+                  </td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      {% else %}
+        <p style="color: var(--text-muted); font-size: 0.9rem;">Історія звернень до API ще порожня.</p>
+      {% endif %}
+    </div>
+  </div>
+
+  <!-- ВКЛАДКА 5: STUDENT API ТА ПРОФІЛІ -->
+  <div id="panel_grants" class="api-hub-panel {% if active_tab == 'grants' %}active{% endif %}">
+    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 1.5rem;">
+      <!-- Student API (Список учнів для інших програм) -->
+      <div class="schedule-card" style="padding: 1.5rem; margin-bottom: 0;">
+        <h3 style="font-size: 1.15rem; font-weight: 700; margin-bottom: 0.5rem;">
+          API списку учнів (Student API)
+        </h3>
+        <p style="color: var(--text-muted); font-size: 0.88rem; margin-bottom: 1rem;">
+          Ключ відкриває доступ іншим системам лише до затверджених полів списку учнів цього журналу. Оцінки та приватні контактні дані не передаються.
+        </p>
+        <p style="font-size: 0.85rem;">
+          Адреса API: <code class="integration-url">{{ api_url }}</code>
+        </p>
+        {% if new_api_key %}
+          <div class="alert alert-success" style="margin-bottom: 1rem;">
+            <strong>Новий ключ (показано один раз):</strong>
+            <pre class="integration-token" style="margin: 0.35rem 0;">{{ new_api_key }}</pre>
+            <small>Скопіюйте його до налаштувань зовнішнього сервісу.</small>
+          </div>
+        {% endif %}
+        <form method="post" action="{% url 'portal:journal_integrations' journal.id %}">
+          {% csrf_token %}
+          {{ api_form.as_p }}
+          <button name="action" value="student_api" class="btn btn-primary btn-sm" style="margin-top: 0.5rem;">Зберегти доступ і поля</button>
+        </form>
+        <div style="display: flex; gap: 0.5rem; margin-top: 1rem; flex-wrap: wrap;">
+          <form method="post" action="{% url 'portal:journal_integrations' journal.id %}">
+            {% csrf_token %}
+            <button name="action" value="rotate_key" class="btn btn-outline-primary btn-sm">Згенерувати новий ключ</button>
+          </form>
+          <form method="post" action="{% url 'portal:journal_integrations' journal.id %}">
+            {% csrf_token %}
+            <button name="action" value="revoke_key" class="btn btn-outline-danger btn-sm" onclick="return confirm('Відкликати ключ API учнів? Доступ зовнішнім системам буде закрито.');">Відкликати ключ</button>
           </form>
         </div>
-        {% if connection.contract_version == 2 %}
-        <details><summary>Явне зіставлення учнів для API v2</summary>
-          <p>Виберіть учня журналу та введіть його ID на сайті джерела. Однаковий ПІБ не є підставою для об’єднання.</p>
-          {% for mapping in connection.student_mappings.all %}<p>ID {{ mapping.external_id }} → {{ mapping.student.get_full_name_ukr }} (ID журналу {{ mapping.student_id }})</p>{% endfor %}
-          <form method="post">{% csrf_token %}<input type="hidden" name="action" value="student_mapping"><input type="hidden" name="mapping_connection_id" value="{{ connection.pk }}">
-            <p><label>ID учня на сайті джерела <input class="form-control" name="external_student_id" maxlength="100" required></label></p>
-            <p><label>Учень журналу <select class="form-control" name="student_id" required>{% for student in mapping_students %}<option value="{{ student.pk }}">{{ student.get_full_name_ukr }} · ID {{ student.pk }}</option>{% endfor %}</select></label></p>
-            <button class="btn btn-outline-primary">Зберегти зіставлення</button>
-          </form>
-        </details>
+      </div>
+
+      <!-- Особистий та локальний профілі nz.ua -->
+      <div class="schedule-card" style="padding: 1.5rem; margin-bottom: 0;">
+        <h3 style="font-size: 1.15rem; font-weight: 700; margin-bottom: 0.5rem;">
+          Особистий і локальний профілі
+        </h3>
+        {% if journal.nz_owner %}
+          <p style="font-size: 0.9rem;">
+            Особистий профіль nz.ua: <strong>{{ journal.nz_owner.user.get_full_name_ukr }}</strong>.
+          </p>
+          {% if journal.local_profile %}
+            <p style="font-size: 0.9rem;">
+              Додатковий локальний профіль: <strong>{{ journal.local_profile.get_full_name_ukr }}</strong>.
+            </p>
+          {% else %}
+            <p style="font-size: 0.9rem; color: var(--text-muted);">
+              Додатковий локальний профіль не підключено.
+            </p>
+          {% endif %}
+          {% if can_unlink %}
+            <form method="post" action="{% url 'portal:journal_integrations' journal.id %}">
+              {% csrf_token %}
+              <button name="action" value="unlink_profile" class="btn btn-outline-danger btn-sm" onclick="return confirm('Відв’язати локальний профіль?');">
+                Відв’язати локальний профіль
+              </button>
+            </form>
+          {% endif %}
+          {% if can_link %}
+            <details style="margin-top: 1rem;">
+              <summary style="cursor: pointer; font-weight: 600; color: var(--primary);">
+                Підключити додатковий локальний профіль
+              </summary>
+              <form method="post" action="{% url 'portal:journal_integrations' journal.id %}" style="margin-top: 0.5rem;">
+                {% csrf_token %}
+                {{ link_form.as_p }}
+                <button name="action" value="link_profile" class="btn btn-primary btn-sm">Підключити профіль</button>
+              </form>
+            </details>
+          {% endif %}
+        {% else %}
+          <p style="color: var(--text-muted); font-size: 0.9rem;">
+            Особистий акаунт nz.ua ще не пов’язано з цим журналом. Увійдіть через nz.ua та завантажте свій онлайн-журнал.
+          </p>
         {% endif %}
-        {% if connection.enabled %}<form method="post" action="{% url 'portal:pull_external_grades' journal.id connection.pk %}" class="integration-pull-form">{% csrf_token %}{{ pull_form.as_p }}<button class="btn btn-primary">Отримати оцінки</button></form>{% endif %}
-      </article>
-    {% empty %}<p>Підключень поки немає.</p>{% endfor %}
-    <details class="integration-details" id="connectionEditor" {% if editing_connection or connection_form.errors %}open{% endif %}>
-      <summary>{% if editing_connection %}Редагувати підключення{% else %}Додати API оцінок{% endif %}</summary>
-      <form method="post">{% csrf_token %}<input type="hidden" name="action" value="connection">
-        {% if editing_connection %}<input type="hidden" name="connection_id" value="{{ editing_connection.pk }}">{% endif %}
-        {{ connection_form.as_p }}<button class="btn btn-primary">Зберегти підключення</button>
-      </form>
-    </details>
-  </section>
-  </fieldset>
+      </div>
+    </div>
+  </div>
 </div>
+
+<script>
+function switchApiTab(tabName) {
+  // Hide all panels
+  document.querySelectorAll('.api-hub-panel').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.api-hub-tab').forEach(t => t.classList.remove('active'));
+
+  // Show target panel & tab
+  const targetPanel = document.getElementById('panel_' + tabName);
+  const targetTab = document.getElementById('tabBtn_' + tabName);
+  if (targetPanel) targetPanel.classList.add('active');
+  if (targetTab) targetTab.classList.add('active');
+
+  // Update URL hash without scroll
+  history.replaceState(null, null, '#tab=' + tabName);
+}
+
+function toggleEditDetails(elementId) {
+  const el = document.getElementById(elementId);
+  if (el) {
+    el.style.display = (el.style.display === 'none' || !el.style.display) ? 'block' : 'none';
+  }
+}
+
+function runHubConnectionTest(journalId, connectionId, btn) {
+  const originalText = btn.innerHTML;
+  btn.innerHTML = '⏳ Перевірка...';
+  btn.disabled = true;
+
+  const banner = document.getElementById('testBanner_' + connectionId);
+  if (banner) {
+    banner.style.display = 'none';
+    banner.className = 'api-test-banner';
+  }
+
+  const csrfToken = document.querySelector('[name=csrfmiddlewaretoken]')?.value || '';
+
+  fetch(`/journal/${journalId}/connection/${connectionId}/test/`, {
+    method: 'POST',
+    headers: {
+      'X-CSRFToken': csrfToken,
+      'X-Requested-With': 'XMLHttpRequest',
+      'Accept': 'application/json'
+    }
+  })
+  .then(res => res.json().then(data => ({ status: res.status, ok: res.ok, data })))
+  .then(({ ok, data }) => {
+    btn.disabled = false;
+    btn.innerHTML = originalText;
+    if (banner) {
+      banner.style.display = 'block';
+      banner.className = 'api-test-banner ' + (ok ? 'banner-success' : 'banner-error');
+      banner.innerHTML = data.message;
+    } else {
+      alert(data.message);
+    }
+  })
+  .catch(err => {
+    btn.disabled = false;
+    btn.innerHTML = originalText;
+    if (banner) {
+      banner.style.display = 'block';
+      banner.className = 'api-test-banner banner-error';
+      banner.innerHTML = 'Помилка мережевого запиту перевірки зв\'язку: ' + err;
+    } else {
+      alert('Помилка: ' + err);
+    }
+  });
+}
+
+// On page load, check URL hash for active tab
+document.addEventListener('DOMContentLoaded', function() {
+  const hash = window.location.hash;
+  if (hash && hash.startsWith('#tab=')) {
+    const tabName = hash.replace('#tab=', '');
+    switchApiTab(tabName);
+  }
+});
+</script>
 {% endblock %}
