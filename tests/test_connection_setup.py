@@ -713,6 +713,54 @@ class ConnectionSetupTests(TestCase):
         conn.refresh_from_db()
         self.assertEqual(conn.source, 'schooltest')
 
+    def test_delete_connection_with_external_grades_and_inbox_results_preserves_grades(self):
+        """
+        Видалення підключення, з якого імпортувалися оцінки (ExternalGrade)
+        та є записи ExtraStudent/APIInboxResult, має відбуватися успішно без 500,
+        а виставлені оцінки журналу (Grade) залишаються збереженими.
+        """
+        from apps.journals.models import ExternalGrade, APIInboxResult, ExtraStudent, Grade, Lesson
+        conn = GradeAPIConnection.objects.create(
+            journal=self.journal, source='schooltest', contract_version=2,
+            name='Домашні тести', url='http://192.168.1.13:8080/api/v2/journal/grades/',
+            api_key='secret-key', enabled=True
+        )
+
+        lesson = Lesson.objects.create(
+            journal=self.journal, date='2026-10-15', topic='Тестова тема'
+        )
+        ext_grade = ExternalGrade.objects.create(
+            connection=conn, external_id='ext-123', student=self.student,
+            lesson=lesson, value='11', status=ExternalGrade.Status.APPLIED
+        )
+        grade = Grade.objects.create(
+            student=self.student, lesson=lesson, value='11', import_record=ext_grade
+        )
+
+        extra = ExtraStudent.objects.create(
+            connection=conn, external_key='extra-1', name='Окремий Учень'
+        )
+        APIInboxResult.objects.create(
+            connection=conn, external_id='inbox-1', extra_student=extra,
+            payload={'score': 10}
+        )
+
+        grades_before = Grade.objects.filter(lesson__journal=self.journal).count()
+        self.assertEqual(grades_before, 1)
+
+        resp = self.client.post(
+            reverse('portal:delete_source_connection', args=[self.journal.pk, conn.pk]),
+            follow=True
+        )
+        self.assertEqual(resp.status_code, 200)
+        self.assertFalse(GradeAPIConnection.objects.filter(pk=conn.pk).exists())
+
+        grades_after = Grade.objects.filter(lesson__journal=self.journal).count()
+        self.assertEqual(grades_after, 1)
+        grade.refresh_from_db()
+        self.assertEqual(grade.value, '11')
+        self.assertIsNone(grade.import_record)
+
 
 
 

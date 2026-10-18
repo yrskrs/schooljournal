@@ -212,3 +212,22 @@ def find_online_connection_in_group(group_connections, preferred_id=None, timeou
     # Якщо ніхто не відповів через probe, повертаємо перше увімкнене для спроби або None
     return online_conn, results
 
+
+def safely_delete_grade_api_connection(connection):
+    """
+    Повне та безпечне видалення підключення GradeAPIConnection без конфліктів
+    з обмеженнями захисту (on_delete=RESTRICT / PROTECT).
+    Усі залежні технічні записи (журнал викликів, кеш імпортованих записів ExternalGrade,
+    вхідні помилки, співставлення учнів) видаляються у правильному порядку.
+    Реальні оцінки в клітинках журналу (Grade) гарантовано залишаються неушкодженими,
+    оскільки їхній зв'язок import_record переходить у стан NULL (SET_NULL).
+    """
+    connection.inbox_results.all().delete()
+    connection.records.all().delete()
+    connection.extra_students.update(alias_of=None)
+    connection.extra_students.all().delete()
+    connection.student_mappings.all().delete()
+    connection.deleted_identities.all().delete()
+    connection.pull_logs.all().delete()
+    connection.delete()
+

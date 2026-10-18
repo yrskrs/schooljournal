@@ -19,7 +19,9 @@ from apps.journals.models import Journal, Grade, Attendance, StudentAPIGrant, Gr
 from apps.journals.services.assessment import journal_students
 from apps.journals.services.external_grades import fetch_grade_payload, import_grade_records, review_external_grade, ExternalAPIError
 from apps.journals.services.roster_transfer import send_journal_roster
-from apps.journals.services.connection_setup import group_connections_by_server, find_online_connection_in_group
+from apps.journals.services.connection_setup import (
+    group_connections_by_server, find_online_connection_in_group, safely_delete_grade_api_connection
+)
 from apps.portal.forms_integrations import StudentAPIForm, GradeAPIConnectionForm, PullGradesForm, LocalProfileLinkForm, STUDENT_FIELDS
 from apps.portal.forms_connection_setup import EditConnectionForm
 from apps.portal.views_journal import _get_journal_or_403
@@ -116,19 +118,12 @@ def journal_integrations(request, journal_id):
                 del_id = request.POST.get('connection_id')
                 conn_to_del = get_object_or_404(connections, pk=del_id if str(del_id).isdigit() else 0)
                 conn_name = conn_to_del.name or conn_to_del.get_source_display()
-                try:
-                    with transaction.atomic():
-                        AuditLog.objects.create(school=journal.school, user=request.user, action=AuditLog.Action.DELETE,
-                            target_model='GradeAPIConnection', target_id=str(conn_to_del.pk),
-                            description=f'Видалено підключення API {conn_name} ({conn_to_del.url}) для журналу {journal.student_class.name}.')
-                        conn_to_del.delete()
-                    messages.success(request, f'Підключення «{conn_name}» видалено.')
-                except (models.RestrictedError, models.ProtectedError):
-                    messages.warning(
-                        request,
-                        f'Підключення «{conn_name}» не можна видалити повністю, оскільки з нього вже збережено історію оцінок. '
-                        f'Вимкніть його (перемикачем активності) або змініть адресу та ключ у формі нижче.'
-                    )
+                with transaction.atomic():
+                    AuditLog.objects.create(school=journal.school, user=request.user, action=AuditLog.Action.DELETE,
+                        target_model='GradeAPIConnection', target_id=str(conn_to_del.pk),
+                        description=f'Видалено підключення API {conn_name} ({conn_to_del.url}) для журналу {journal.student_class.name}.')
+                    safely_delete_grade_api_connection(conn_to_del)
+                messages.success(request, f'Підключення «{conn_name}» видалено. Виставлені оцінки журналу збережено.')
                 return redirect(destination)
             elif action == 'student_mapping':
                 connection = get_object_or_404(connections, pk=request.POST.get('mapping_connection_id') if

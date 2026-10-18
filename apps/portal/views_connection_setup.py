@@ -13,7 +13,10 @@ from django.views.decorators.http import require_http_methods, require_POST
 from apps.curriculum.models import Student, ClassEnrollment
 from apps.journals.models import Journal, GradeAPIConnection, GradeStudentMapping, AuditLog, StudentAPIGrant
 from apps.journals.services.assessment import journal_students
-from apps.journals.services.connection_setup import fetch_source_roster, roster_version, selected_students, SOURCES, ensure_same_source, existing_source_connection
+from apps.journals.services.connection_setup import (
+    fetch_source_roster, roster_version, selected_students, SOURCES,
+    ensure_same_source, existing_source_connection, safely_delete_grade_api_connection
+)
 from apps.journals.services.external_grades import ExternalAPIError
 from apps.journals.services.roster_transfer import send_journal_roster
 from apps.journals.services.api_inbox import keep_roster_extras
@@ -371,23 +374,16 @@ def delete_source_connection(request, journal_id, connection_id):
     journal = _get_journal_or_403(request.user, journal_id, write=True)
     connection = get_object_or_404(journal.grade_apis, pk=connection_id)
     conn_name = connection.name or connection.get_source_display()
-    try:
-        with transaction.atomic():
-            _lock(journal, request.user)
-            url = connection.url
-            AuditLog.objects.create(
-                school=journal.school, user=request.user, action=AuditLog.Action.DELETE,
-                target_model='GradeAPIConnection', target_id=str(connection.pk),
-                description=f'Видалено підключення API {conn_name} ({url}) для журналу {journal.student_class.name}.'
-            )
-            connection.delete()
-        messages.success(request, f'Підключення «{conn_name}» видалено.')
-    except (models.RestrictedError, models.ProtectedError):
-        messages.warning(
-            request,
-            f'Підключення «{conn_name}» не можна видалити з бази, оскільки з нього вже збережено історію оцінок. '
-            f'Щоб не використовувати його, просто вимкніть його (перемикачем активності) або змініть адресу/ключ у формі налаштувань.'
+    with transaction.atomic():
+        _lock(journal, request.user)
+        url = connection.url
+        AuditLog.objects.create(
+            school=journal.school, user=request.user, action=AuditLog.Action.DELETE,
+            target_model='GradeAPIConnection', target_id=str(connection.pk),
+            description=f'Видалено підключення API {conn_name} ({url}) для журналу {journal.student_class.name}.'
         )
+        safely_delete_grade_api_connection(connection)
+    messages.success(request, f'Підключення «{conn_name}» видалено. Виставлені оцінки журналу збережено.')
     next_url = request.POST.get('next') or request.GET.get('next')
     if next_url:
         return redirect(next_url)
@@ -696,10 +692,10 @@ def delete_api_key_group(request):
 
     with transaction.atomic():
         if delete_all:
-            matching = GradeAPIConnection.objects.filter(
+            matching = list(GradeAPIConnection.objects.filter(
                 source=conn.source, url=conn.url, api_key=conn.api_key, journal__in=journals
-            )
-            count = matching.count()
+            ))
+            count = len(matching)
             name = conn.name or conn.get_source_display()
             for item in matching:
                 AuditLog.objects.create(
@@ -707,8 +703,8 @@ def delete_api_key_group(request):
                     target_model='GradeAPIConnection', target_id=str(item.pk),
                     description=f'Групове видалення ключа API {name} ({item.url}).'
                 )
-            matching.delete()
-            messages.success(request, f'Ключ «{name}» успішно видалено з усіх {count} журналів.')
+                safely_delete_grade_api_connection(item)
+            messages.success(request, f'Ключ «{name}» успішно видалено з усіх {count} журналів. Виставлені оцінки збережено.')
         else:
             name = conn.name or conn.get_source_display()
             class_name = conn.journal.student_class.name
@@ -717,8 +713,8 @@ def delete_api_key_group(request):
                 target_model='GradeAPIConnection', target_id=str(conn.pk),
                 description=f'Видалено підключення API {name} ({conn.url}) для журналу {class_name}.'
             )
-            conn.delete()
-            messages.success(request, f'Підключення «{name}» видалено з журналу {class_name}.')
+            safely_delete_grade_api_connection(conn)
+            messages.success(request, f'Підключення «{name}» видалено з журналу {class_name}. Виставлені оцінки збережено.')
 
     return redirect('portal:teacher_api_keys')
 
