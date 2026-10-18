@@ -463,12 +463,25 @@ def execute_rollback_job(backup=None):
             deployment.close()
 
 
+def open_maintenance_lock():
+    """Share flock with host CLI even when the file belongs to a container UID."""
+    try:
+        descriptor = os.open(LOCK_FILE, os.O_RDONLY | os.O_CREAT | os.O_EXCL, 0o644)
+    except FileExistsError:
+        descriptor = os.open(LOCK_FILE, os.O_RDONLY)
+    else:
+        # Lock files contain no secrets; keep new files readable across UIDs,
+        # independently of the updater's umask. Never replace a locked inode.
+        os.fchmod(descriptor, 0o644)
+    return os.fdopen(descriptor, 'r')
+
+
 def start_job(function, args):
     """Reserve state and the cross-process maintenance lock before returning HTTP 202."""
     with STATE_LOCK:
         if CURRENT_STATE.get('state') == 'running':
             return None
-        lock = LOCK_FILE.open('a')
+        lock = open_maintenance_lock()
         try:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
