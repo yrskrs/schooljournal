@@ -24,11 +24,11 @@ lock_maintenance() {
     if [[ "${MAINTENANCE_LOCK_HELD:-0}" != 1 ]]; then
         command -v flock >/dev/null || { echo "Install util-linux (flock)." >&2; exit 1; }
         # flock on Linux works with a read-only descriptor. Existing locks may
-    # belong to the updater container's UID; do not truncate or replace them.
-    if [[ ! -e "$JOURNAL_ROOT/.maintenance.lock" ]]; then
-        (umask 022; set -o noclobber; : > "$JOURNAL_ROOT/.maintenance.lock") 2>/dev/null || [[ -f "$JOURNAL_ROOT/.maintenance.lock" ]]
-    fi
-    exec 9<"$JOURNAL_ROOT/.maintenance.lock"
+        # belong to the updater container's UID; do not truncate or replace them.
+        if [[ ! -e "$JOURNAL_ROOT/.maintenance.lock" ]]; then
+            (umask 022; set -o noclobber; : > "$JOURNAL_ROOT/.maintenance.lock") 2>/dev/null || [[ -f "$JOURNAL_ROOT/.maintenance.lock" ]]
+        fi
+        exec 9<"$JOURNAL_ROOT/.maintenance.lock"
         flock -n 9 || { echo "Another maintenance operation is running." >&2; exit 1; }
         export MAINTENANCE_LOCK_HELD=1
     fi
