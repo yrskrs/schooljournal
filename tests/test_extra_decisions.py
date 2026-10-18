@@ -240,7 +240,10 @@ class ExtraDecisionTests(TestCase):
         # Check in journal_detail
         detail_url = reverse('portal:journal_detail', args=[self.journal.pk])
         detail_resp = self.client.get(detail_url)
-        self.assertContains(detail_resp, 'підключено інший клас із джерела')
+        self.assertContains(detail_resp, 'Невідповідність підключеного класу')
+        self.assertContains(detail_resp, '«8-Б»')
+        self.assertContains(detail_resp, reverse('portal:journal_integrations', args=[self.journal.pk]))
+        self.assertEqual(detail_resp.context['mismatched_connections'][0]['connection'].pk, conn.pk)
 
     def test_auto_match_suggestion_and_batch_match(self):
         extra = self.extra(external_key='101', name=self.student.last_name)
