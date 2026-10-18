@@ -31,6 +31,7 @@ urlpatterns = [
     path('roster-sync/', roster_views.roster_ui, name='roster_sync'),
     path('api/v1/journals/<int:journal_id>/students/', views_integrations.student_list_api, name='student_list_api'),
     path('journal/<int:journal_id>/integrations/', views_integrations.journal_integrations, name='journal_integrations'),
+    path('journal/<int:journal_id>/integrations/diagnostics.json', views_integrations.integration_diagnostics, name='integration_diagnostics'),
     path('journal/<int:journal_id>/connect/', views_connection_setup.connect_source, name='connect_source'),
     path('journal/<int:journal_id>/connection/<int:connection_id>/delete/', views_connection_setup.delete_source_connection, name='delete_source_connection'),
     path('journal/<int:journal_id>/connection/<int:connection_id>/test/', views_connection_setup.test_source_connection, name='test_source_connection'),

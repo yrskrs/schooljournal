@@ -494,6 +494,7 @@ def quick_send_roster(request, journal_id, connection_id):
 
     try:
         report = send_journal_roster(connection, request.user)
+        connection.refresh_from_db()
         counts = report['counts']
         msg = (
             f"Список учнів успішно передано на «{connection.name or connection.get_source_display()}»: "
@@ -506,6 +507,7 @@ def quick_send_roster(request, journal_id, connection_id):
             return JsonResponse({
                 'success': True,
                 'message': msg,
+                'level': 'warning' if counts.get('conflicts') or counts.get('needs_review') else 'success',
                 'counts': counts,
                 'sent_at': timezone.localtime(connection.roster_sent_at).strftime('%d.%m.%Y %H:%M:%S') if connection.roster_sent_at else None
             })
@@ -515,8 +517,8 @@ def quick_send_roster(request, journal_id, connection_id):
         if is_ajax:
             return JsonResponse({'success': False, 'message': msg}, status=400)
         messages.error(request, msg)
-    except Exception as err:
-        msg = f"Не вдалося передати список: {err}"
+    except Exception:
+        msg = 'Не вдалося підтвердити передачу списку. Перевірте діагностику в Центрі API; місцеві дані збережено.'
         if is_ajax:
             return JsonResponse({'success': False, 'message': msg}, status=400)
         messages.error(request, msg)

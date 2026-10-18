@@ -11,9 +11,24 @@ from apps.curriculum.models import ClassEnrollment, Student
 from apps.journals.services.assessment import journal_students
 from apps.portal.permissions import has_journal_access
 from school_sync.django_backend import operate
-from school_sync.journal_roster import signature
+from school_sync.journal_roster import signature, validate
+from school_sync.core import SyncError
 from .connection_setup import source_urls, ensure_same_source
 from .external_grades import ExternalAPIError, validate_api_url
+
+
+def confirmed_roster_ids(connection):
+    """Roster identities are distinct from aliases used to import grade results."""
+    report = connection.roster_report
+    if not isinstance(report, dict) or report.get('schema_version') != 2 or (
+            report.get('source') != connection.source or
+            report.get('instance_id') != connection.roster_cache.get('instance_id') or
+            str(report.get('class_id')) != connection.source_class_id):
+        return {}
+    return {row['journal_id']: str(row['local_id']) for row in report.get('mappings', [])
+            if isinstance(row, dict) and isinstance(row.get('journal_id'), str)
+            and str(row.get('local_id', '')).isascii()
+            and str(row.get('local_id', '')).isdecimal() and int(row['local_id']) > 0}
 
 
 def roster_request(connection):
@@ -24,13 +39,28 @@ def roster_request(connection):
     namespace = UUID(origin)
     journal = connection.journal
     ignored_ids = set(journal.ignored_students.values_list('pk', flat=True))
-    mappings = {m.student_id: m.external_id for m in connection.student_mappings.all()}
+    mappings = {}
+    for mapping in connection.student_mappings.all():
+        identity = mapping.external_id
+        if identity.isascii() and identity.isdecimal() and int(identity) > 0:
+            mappings.setdefault(mapping.student_id, set()).add(identity)
+    confirmed = confirmed_roster_ids(connection)
     # Omission keeps old copies in v2. Send inactive rows only for pupils that
     # were already bound; an ignored new pupil must never be created upstream.
-    students = [s for s in journal_students(journal) if s.pk not in ignored_ids or s.pk in mappings]
+    students = [s for s in journal_students(journal) if s.pk not in ignored_ids or s.pk in mappings
+                or str(uuid5(namespace, f'student:{s.pk}')) in confirmed]
     active = set(ClassEnrollment.objects.filter(student_class=journal.student_class, is_active=True).values_list('student_id', flat=True))
     # Mapping across services is explicit and stable; no nz.ua ID is required.
     refs = {str(uuid5(namespace, f'student:{s.pk}')): s for s in students}
+    local_ids = {}
+    for ref, student in refs.items():
+        identities = mappings.get(student.pk, set())
+        if ref in confirmed:
+            local_ids[ref] = confirmed[ref]
+        elif len(identities) > 1:
+            raise ExternalAPIError('Учень має кілька числових ID джерела без підтвердженої відповідності списку. Перевірте зіставлення у Центрі API.')
+        else:
+            local_ids[ref] = next(iter(identities), None)
     subject_name = next((r['name'] for r in connection.roster_cache.get('subjects', [])
         if r['id'] == connection.source_subject_id), journal.subject.name)
     payload = {'schema_version': 2, 'journal_instance_id': origin,
@@ -41,7 +71,7 @@ def roster_request(connection):
         'students': [{'id': ref, 'last_name': s.last_name, 'first_name': s.first_name,
             'middle_name': s.middle_name, 'active': s.pk not in ignored_ids and s.pk in active and s.status == Student.Status.ACTIVE,
             'ignored': s.pk in ignored_ids,
-            'local_id': mappings.get(s.pk)} for ref, s in refs.items()]}
+            'local_id': local_ids[ref]} for ref, s in refs.items()]}
     return payload, refs
 
 
@@ -50,22 +80,28 @@ def send_journal_roster(connection, user, resolutions=None):
         raise ExternalAPIError('Немає права передавати список цього журналу.')
     if 'journal_roster_import' not in connection.roster_cache.get('capabilities', []):
         raise ExternalAPIError('Ця версія джерела ще не приймає списки через просте підключення. Оновіть її з GitHub. Наявне отримання оцінок і місцеві списки збережено.')
-    payload, refs = roster_request(connection)
-    before = signature(payload)
-    payload['resolutions'] = resolutions or {}
-    _, url = source_urls(connection.url)
+    http_status = None
     try:
+        payload, refs = roster_request(connection)
+        before = signature(payload)
+        payload['resolutions'] = resolutions or {}
+        try:
+            validate(payload)
+        except SyncError as error:
+            raise ExternalAPIError(str(error)) from error
+        _, url = source_urls(connection.url)
         validate_api_url(url, resolve=True)
         with requests.Session() as session:
             session.trust_env = False
             with session.post(url, headers={'Accept': 'application/json', 'Authorization': 'Bearer ' + connection.api_key},
                     json=payload, timeout=(5, 20), allow_redirects=False, stream=True) as response:
+                http_status = response.status_code
                 if response.status_code in (401, 403):
                     raise ExternalAPIError('Ключ не дозволяє передавати список. Створіть ключ для журналу з обома дозволами.')
                 if response.status_code in (404, 405):
                     raise ExternalAPIError('Джерело ще не підтримує передачу списків. Оновіть його з GitHub.')
                 if response.status_code != 200:
-                    raise ExternalAPIError(f'Не вдалося передати список (HTTP {response.status_code}). Місцеві дані збережено.')
+                    raise ExternalAPIError(f'Не вдалося передати список (HTTP {response.status_code}). Перевірте підтверджені ID учнів, клас і права ключа у Центрі API. Місцеві дані збережено.')
                 content = bytearray()
                 for chunk in response.iter_content(65536):
                     content.extend(chunk)
@@ -147,11 +183,14 @@ def send_journal_roster(connection, user, resolutions=None):
         return report
     except ExternalAPIError as error:
         GradePullLog.objects.create(connection=connection, user=user,
-            counts={'operation': 'roster', 'errors': 1}, errors=[{'message': str(error)}])
+            counts={'operation': 'roster', 'errors': 1}, errors=[{'message': str(error),
+                'code': 'roster_http_error' if http_status and http_status != 200 else 'roster_validation_error',
+                'http_status': http_status}])
         raise
     except Exception as error:
         # Do not expose requests exception strings, URLs with keys or upstream HTML.
         message = 'Передачу списку не підтверджено. Перевірте доступність джерела та повторіть; місцеві списки й оцінки збережено.'
         GradePullLog.objects.create(connection=connection, user=user,
-            counts={'operation': 'roster', 'errors': 1}, errors=[{'message': message}])
+            counts={'operation': 'roster', 'errors': 1}, errors=[{'message': message,
+                'code': 'roster_transport_or_response_error', 'http_status': http_status}])
         raise ExternalAPIError(message) from error

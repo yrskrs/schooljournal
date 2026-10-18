@@ -29,6 +29,11 @@ release/
 .maintenance.lock
 .release-image.yaml
 
+# Private diagnostics from working installations remain on the owner's machine.
+/reports/SYNC_REPAIR_*.md
+/reports/sync-diagnostics-*.json
+/reports/authorized-roster-check-*.json
+
 compose.override.yaml
 
 # Runtime updater files

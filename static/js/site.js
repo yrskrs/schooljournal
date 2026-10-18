@@ -186,6 +186,15 @@ document.addEventListener('submit', async event => {
       method: 'POST', body: data,
       headers: { 'X-CSRFToken': getCookie('schooljournal_csrftoken'), 'X-Requested-With': 'XMLHttpRequest' },
     }, 'Збереження змін…');
+    if ((response.headers.get('Content-Type') || '').includes('application/json')) {
+      const result = await response.json();
+      if (!response.ok || result.success !== true) {
+        throw new Error(result.message || 'Не вдалося зберегти зміни. Перевірте дані й повторіть.');
+      }
+      await refreshJournal();
+      showToast(result.message || 'Зміни збережено.', result.level || 'success');
+      return;
+    }
     if (!response.ok) throw new Error('Не вдалося зберегти зміни. Перевірте дані й повторіть.');
     const target = new URL(response.url);
     if (target.origin !== location.origin || target.pathname !== location.pathname) {
