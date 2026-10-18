@@ -23,10 +23,11 @@ context.refreshJournal = async () => { refreshes += 1; };
 context.showToast = (message, level) => toasts.push({ message, level });
 context.applyJournalPage = html => pages.push(html);
 
-async function submit(body, ok = true, contentType = 'application/json', url = 'http://journal.invalid/journal/1/connection/2/send-roster/') {
+async function submit(body, ok = true, contentType = 'application/json', url = 'http://journal.invalid/journal/1/connection/2/send-roster/', operation = '') {
   response = { ok, url, headers: { get: () => contentType }, json: async () => body, text: async () => body };
-  const form = { method: 'post', action: url, dataset: {}, hasAttribute: () => false, querySelector: () => null,
-    closest: () => ({}), target: '' };
+  // A control named action can shadow form.action; the attribute remains the route.
+  const form = { method: 'post', action: { name: 'action' }, dataset: { syncOperation: operation }, hasAttribute: () => false, querySelector: () => null,
+    closest: () => ({}), target: '', getAttribute: () => url };
   const button = { disabled: false };
   let prevented = false;
   await listeners.submit({ defaultPrevented: false, target: form, submitter: button, preventDefault: () => { prevented = true; } });
@@ -60,5 +61,17 @@ async function submit(body, ok = true, contentType = 'application/json', url = '
 
   await submit('<html>review</html>', true, 'text/html', 'http://journal.invalid/journal/1/external-grades/');
   assert.deepEqual(navigations, ['http://journal.invalid/journal/1/external-grades/']);
-  console.log('PASS: 6 journal response scenarios, including JSON success, error and POST-only navigation regression');
+  await submit({ success: true, operation: 'roster', message: 'Список передано.' }, true, 'application/json', undefined, 'roster');
+  assert.equal(refreshes, 3);
+  assert.equal(toasts.pop().message, 'Список передано.');
+
+  await submit({ success: true, operation: 'grades', message: '📥 Оцінки: додано 0.', level: 'warning' }, true, 'application/json', 'http://journal.invalid/journal/1/pull/schoolwork/', 'grades');
+  assert.equal(refreshes, 4);
+  assert.deepEqual(toasts.pop(), { message: '📥 Оцінки: додано 0.', level: 'warning' });
+
+  await submit({ success: true, operation: 'roster', message: 'Список передано.' }, true, 'application/json', undefined, 'grades');
+  assert.equal(refreshes, 4);
+  assert.equal(toasts.pop().level, 'danger');
+  assert.equal(toasts.some(toast => toast.message === 'Список передано.'), false);
+  console.log('PASS: 9 journal response scenarios, including operation identity and shadowed form.action');
 })().catch(error => { console.error(error); process.exitCode = 1; });

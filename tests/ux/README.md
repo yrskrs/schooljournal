@@ -1,5 +1,31 @@
 # Синхронізація, прокрутка та індикатори — Docker-перевірки
 
+## Кнопки оцінок і списків — 1.3.32
+
+Окремий сценарій запускає справжні Django-сторінки й POST-маршрути на 127.0.0.1:19187. База тимчасова, налаштування `config.test_settings` не читають робочий `.env`, обидва джерела замінені вигаданими відповідями. Підтвердження списку з двома конфліктами не підміняє повідомлення про оцінки. Чотири кнопки перевіряються на ширинах 1440 і 390 пікселів.
+
+В одному терміналі:
+
+```bash
+mkdir -p /tmp/schooljournal-grade-feedback-artifacts
+GRADE_FEEDBACK_FIXTURE=/tmp/schooljournal-grade-feedback-artifacts/grade-feedback-browser-fixture.json \
+  .venv/bin/python tests/ux/grade_feedback_server.py
+```
+
+В іншому терміналі:
+
+```bash
+docker run --rm --network host \
+  -v "$PWD/tests/ux:/checks:ro" \
+  -v /tmp/schooljournal-grade-feedback-artifacts:/artifacts:rw \
+  --entrypoint bash mcr.microsoft.com/playwright:v1.56.1-noble \
+  -lc 'npm install --prefix /tmp/pw playwright@1.56.1 --no-audit --no-fund --silent && NODE_PATH=/tmp/pw/node_modules node /checks/grade_feedback_check.cjs'
+```
+
+Після перевірки зупиніть перший термінал через Ctrl+C. Сервер прибере тимчасову БД і синтетичну сесію. Знімки містять лише вигадані дані.
+
+## Обмін між трьома сервісами
+
 Окремий проєкт `schooljournal-ux-checks`, PostgreSQL у tmpfs, лише вигадані дані. Робочі `.env`, БД і томи не використовуються. Потрібні локальні образи тестів 1.6.7 та завдань 4.5.6 (або явно задані CHECK_TEST_IMAGE / CHECK_WORK_IMAGE). Порти 19100/19180/19185/19186 доступні лише через 127.0.0.1.
 
 З кореня репозиторію:

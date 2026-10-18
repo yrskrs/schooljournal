@@ -13,7 +13,7 @@ from apps.portal.permissions import has_journal_access
 from school_sync.django_backend import operate
 from school_sync.journal_roster import signature, validate
 from school_sync.core import SyncError
-from .connection_setup import source_urls, ensure_same_source
+from .connection_setup import source_urls, ensure_same_source, verify_source_identity
 from .external_grades import ExternalAPIError, validate_api_url
 
 
@@ -89,6 +89,7 @@ def send_journal_roster(connection, user, resolutions=None):
             validate(payload)
         except SyncError as error:
             raise ExternalAPIError(str(error)) from error
+        verify_source_identity(connection)
         _, url = source_urls(connection.url)
         validate_api_url(url, resolve=True)
         with requests.Session() as session:

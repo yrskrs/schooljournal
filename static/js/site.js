@@ -182,12 +182,15 @@ document.addEventListener('submit', async event => {
   const button = event.submitter;
   if (button) button.disabled = true;
   try {
-    const response = await siteFetch(form.action || location.href, {
+    const response = await siteFetch(form.getAttribute('action') || location.href, {
       method: 'POST', body: data,
       headers: { 'X-CSRFToken': getCookie('schooljournal_csrftoken'), 'X-Requested-With': 'XMLHttpRequest' },
     }, 'Збереження змін…');
     if ((response.headers.get('Content-Type') || '').includes('application/json')) {
       const result = await response.json();
+      if (form.dataset.syncOperation && result.operation !== form.dataset.syncOperation) {
+        throw new Error('Отримано відповідь іншої операції. Оновіть журнал і повторіть дію.');
+      }
       if (!response.ok || result.success !== true) {
         throw new Error(result.message || 'Не вдалося зберегти зміни. Перевірте дані й повторіть.');
       }

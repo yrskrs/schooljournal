@@ -113,6 +113,19 @@ def fetch_source_roster(url, key, source=None):
         raise ExternalAPIError('Не вдалося отримати списки. Перевірте адресу та доступність сайту. Попередні списки й оцінки збережено.') from error
 
 
+def verify_source_identity(connection):
+    """Verify the live instance once per connection object, before any exchange."""
+    instance = connection.roster_cache.get('instance_id')
+    if not instance:
+        return
+    identity = (connection.url, connection.api_key, connection.source, instance)
+    if getattr(connection, '_verified_source_identity', None) == identity:
+        return
+    payload = fetch_source_roster(connection.url, connection.api_key, connection.source)
+    ensure_same_source(connection, payload)
+    connection._verified_source_identity = identity
+
+
 def roster_version(connection):
     state = [connection.roster_cache, connection.source_class_id, connection.source_subject_id,
         list(connection.student_mappings.order_by('external_id').values_list('external_id', 'student_id'))]
@@ -149,13 +162,21 @@ def probe_connection_reachability(connection, timeout=1.5):
 
 def group_connections_by_server(connections):
     """
-    Групує підключення за джерелом і групою сервера.
-    Повертає список груп: [{'group_key', 'group_name', 'source', 'connections': [...]}]
+    Групує адреси одного екземпляра в межах журналу, класу й предмета.
+    Без підтвердженого instance_id використовує ручну групу або окрему адресу.
     """
     groups_dict = {}
     for conn in connections:
-        # Ключ групування: якщо вказано server_group, то (source, server_group), інакше окремо для кожного conn
-        group_key = f"{conn.source}:{conn.server_group.strip()}" if conn.server_group.strip() else f"{conn.source}:single_{conn.pk}"
+        cache = conn.roster_cache if isinstance(conn.roster_cache, dict) else {}
+        try:
+            instance = str(UUID(cache.get('instance_id', '')))
+        except (ValueError, TypeError, AttributeError):
+            instance = ''
+        identity = ('instance:' + instance if instance and conn.contract_version == 2 else
+                    'group:' + conn.server_group.strip() if conn.server_group.strip() else f'single:{conn.pk}')
+        # Addresses may substitute for one another only within the same journal
+        # and source context. A known instance takes precedence over a label.
+        group_key = f'{conn.source}:{conn.journal_id}:{conn.source_class_id}:{conn.source_subject_id}:{identity}'
         group_name = conn.server_group.strip() or conn.name or conn.get_source_display()
         if group_key not in groups_dict:
             groups_dict[group_key] = {
@@ -199,18 +220,21 @@ def find_online_connection_in_group(group_connections, preferred_id=None, timeou
             ordered.append(c)
 
     # Перевіряємо по черзі
-    online_conn = None
     for c in ordered:
         if not c.enabled:
             results[c.pk] = (False, 'Підключення вимкнено в налаштуваннях')
             continue
         is_up, reason = probe_connection_reachability(c, timeout=timeout)
         results[c.pk] = (is_up, reason)
-        if is_up and online_conn is None:
-            online_conn = c
+        if is_up:
+            try:
+                verify_source_identity(c)
+            except ExternalAPIError:
+                results[c.pk] = (False, 'Адреса не підтвердила ідентичність сервісу або доступ ключа')
+                continue
+            return c, results
 
-    # Якщо ніхто не відповів через probe, повертаємо перше увімкнене для спроби або None
-    return online_conn, results
+    return None, results
 
 
 def safely_delete_grade_api_connection(connection):

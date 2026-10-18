@@ -357,8 +357,9 @@ def journal_detail(request, journal_id):
         else:
             enabled = [c for c in conns if c['enabled']]
             active = dict(enabled[0]) if enabled else dict(conns[0])
-        active['all_endpoints'] = conns
-        active['has_multiple_endpoints'] = len(conns) > 1
+        endpoints = [c for c in conns if c['enabled']] or conns
+        active['all_endpoints'] = endpoints
+        active['has_multiple_endpoints'] = len(endpoints) > 1
         active['group_name'] = conns[0]['server_group'] if all(c['server_group'] for c in conns) else (conns[0]['name'])
         return active
 
