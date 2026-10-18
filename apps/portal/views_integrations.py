@@ -1,7 +1,9 @@
 import hashlib
 import secrets
+from functools import wraps
 
 from django.contrib import messages
+from django.contrib.messages import get_messages
 from django.contrib.auth.decorators import login_required
 from django.core.exceptions import PermissionDenied
 from django.db import transaction, IntegrityError, models
@@ -298,8 +300,44 @@ def _reconcile_source_roster(request, connection):
         messages.warning(request, f'{connection.name}: список учнів не синхронізовано. {error}')
 
 
+def _grade_sync_json(view):
+    """Return fresh notices for this operation, consuming their flash copies."""
+    @wraps(view)
+    def wrapped(request, *args, **kwargs):
+        ajax = request.headers.get('x-requested-with') == 'XMLHttpRequest'
+        before = len(get_messages(request)) if ajax else 0
+        request._grade_sync_results = []
+        response = view(request, *args, **kwargs)
+        if not ajax or response.status_code not in (301, 302, 303):
+            return response
+        notices = list(get_messages(request))[before:]
+        success = bool(request._grade_sync_results)
+        review = any(m.level >= messages.WARNING for m in notices)
+        notices.sort(key=lambda m: not str(m).startswith('📥 Оцінки'))
+        counts = {}
+        for result in request._grade_sync_results:
+            for key, value in result.items():
+                if type(value) is int:
+                    counts[key] = counts.get(key, 0) + value
+        result = JsonResponse({'operation': 'grades', 'success': success,
+            'level': 'warning' if success and review else 'success' if success else 'danger',
+            'counts': counts,
+            'message': '\n'.join(str(m) for m in notices) or 'Не вдалося підтвердити отримання оцінок.'},
+            status=200 if success else 400)
+        result['Cache-Control'] = 'no-store'
+        return result
+    return wrapped
+
+
+def _grade_result_notice(request, text, counts):
+    request._grade_sync_results.append(counts)
+    level = messages.WARNING if any(counts.get(key) for key in ('errors', 'conflicts', 'pending')) else messages.SUCCESS
+    messages.add_message(request, level, text)
+
+
 @login_required
 @require_POST
+@_grade_sync_json
 def pull_external_grades(request, journal_id, connection_id):
     journal = _get_journal_or_403(request.user, journal_id, write=True)
     connection = get_object_or_404(GradeAPIConnection, pk=connection_id, journal=journal)
@@ -313,7 +351,7 @@ def pull_external_grades(request, journal_id, connection_id):
             rows = fetch_grade_payload(connection, start, end)
             log = import_grade_records(connection, rows, request.user, start, end)
             counts = log.counts
-            messages.success(request, f"Додано: {counts['added']}; оновлено: {counts['updated']}; очікують схвалення: {counts['pending']}; конфлікти: {counts['conflicts']}; без змін: {counts['unchanged']}; ігноровано: {counts.get('ignored', 0)}; помилки: {counts['errors']}.")
+            _grade_result_notice(request, f"📥 Оцінки: додано {counts['added']}; оновлено {counts['updated']}; очікують схвалення {counts['pending']}; конфлікти {counts['conflicts']}; без змін {counts['unchanged']}; ігноровано {counts.get('ignored', 0)}; помилки {counts['errors']}.", counts)
         except ExternalAPIError as error:
             GradePullLog.objects.create(connection=connection, user=request.user,
                 counts={'errors': 1}, errors=[{'message': str(error)}])
@@ -326,6 +364,7 @@ def pull_external_grades(request, journal_id, connection_id):
 
 @login_required
 @require_POST
+@_grade_sync_json
 def pull_source_grades(request, journal_id, source):
     journal = _get_journal_or_403(request.user, journal_id, write=True)
     if source not in ('schooltest', 'schoolwork'):
@@ -340,16 +379,15 @@ def pull_source_grades(request, journal_id, source):
         return redirect('portal:journal_detail', journal_id=journal.pk)
     # Якщо вказано конкретне підключення через випадаючий список або кнопку
     target_conn_id = request.POST.get('connection_id')
-    if target_conn_id and str(target_conn_id).isdigit():
-        connections = list(journal.grade_apis.filter(pk=target_conn_id, source=source, enabled=True))
-    else:
-        connections = list(journal.grade_apis.filter(source=source, enabled=True))
+    connections = list(journal.grade_apis.filter(source=source, enabled=True))
+    groups = group_connections_by_server(connections)
+    if target_conn_id:
+        groups = [group for group in groups if any(str(c.pk) == target_conn_id for c in group['connections'])]
 
-    if not connections:
+    if not groups:
         messages.info(request, 'Спершу підключіть сайт: вставте його адресу та ключ API.')
         return redirect(reverse('portal:connect_source', kwargs={'journal_id': journal.pk}) + '?source=' + source)
 
-    groups = group_connections_by_server(connections)
     preferred_id = request.POST.get('preferred_connection_id') or target_conn_id
 
     for group in groups:
@@ -364,11 +402,12 @@ def pull_source_grades(request, journal_id, source):
                     log = import_grade_records(active_conn, rows, request.user, start, end)
                     counts = log.counts
                     loc_text = f" [{active_conn.location_display}]" if active_conn.location_display else f" ({active_conn.name})"
-                    messages.success(
+                    _grade_result_notice(
                         request,
-                        f"«{group['name']}»{loc_text}: додано {counts['added']}, оновлено {counts['updated']}, "
+                        f"📥 Оцінки «{group['name']}»{loc_text}: додано {counts['added']}, оновлено {counts['updated']}, "
+                        f"очікують схвалення {counts.get('pending', 0)}, "
                         f"без змін {counts['unchanged']}, ігноровано {counts.get('ignored', 0)}, "
-                        f"конфлікти {counts['conflicts']}, помилки {counts['errors']}."
+                        f"конфлікти {counts['conflicts']}, помилки {counts['errors']}.", counts
                     )
                 except ExternalAPIError as error:
                     GradePullLog.objects.create(connection=active_conn, user=request.user,
@@ -390,7 +429,7 @@ def pull_source_grades(request, journal_id, source):
                 rows = fetch_grade_payload(connection, start, end)
                 log = import_grade_records(connection, rows, request.user, start, end)
                 counts = log.counts
-                messages.success(request, f"{connection.name}: додано {counts['added']}, оновлено {counts['updated']}, без змін {counts['unchanged']}, ігноровано {counts.get('ignored', 0)}, конфлікти {counts['conflicts']}, помилки {counts['errors']}.")
+                _grade_result_notice(request, f"📥 Оцінки {connection.name}: додано {counts['added']}, оновлено {counts['updated']}, очікують схвалення {counts['pending']}, без змін {counts['unchanged']}, ігноровано {counts.get('ignored', 0)}, конфлікти {counts['conflicts']}, помилки {counts['errors']}.", counts)
             except ExternalAPIError as error:
                 GradePullLog.objects.create(connection=connection, user=request.user,
                     counts={'errors': 1}, errors=[{'message': str(error)}])

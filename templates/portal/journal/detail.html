@@ -231,19 +231,19 @@
           {% endif %}
         {% endif %}
         <div class="chip-actions">
-          <form method="post" action="{% url 'portal:pull_source_grades' journal.id 'schooltest' %}" style="display: inline;">
+          <form method="post" id="formPullTestGrades" data-sync-operation="grades" action="{% url 'portal:pull_source_grades' journal.id 'schooltest' %}" style="display: inline;">
             {% csrf_token %}
             <input type="hidden" name="date_from" value="{{ integration_date_from }}">
             <input type="hidden" name="date_to" value="{{ integration_date_to }}">
             <input type="hidden" name="connection_id" id="testConnectionId" value="{% if not test_connection.has_multiple_endpoints %}{{ test_connection.id }}{% endif %}">
             <input type="hidden" name="next" value="{{ request.get_full_path }}">
-            <button type="submit" class="btn-chip" title="Синхронізувати з тестами: отримати оцінки за період ({{ integration_date_from }} — {{ integration_date_to }})" aria-label="Синхронізувати з тестами">📥 Оцінки</button>
+            <button type="submit" form="formPullTestGrades" class="btn-chip" title="Синхронізувати з тестами: отримати оцінки за період ({{ integration_date_from }} — {{ integration_date_to }})" aria-label="Синхронізувати з тестами">📥 Оцінки</button>
           </form>
           {% if test_connection.can_send_roster %}
-            <form method="post" id="formSendTestRoster" action="{% url 'portal:quick_send_roster' journal.id test_connection.id %}" style="display: inline;" onsubmit="return confirm('Передати актуальний список учнів класу {{ journal.student_class.name }} на сайт тестів?');">
+            <form method="post" id="formSendTestRoster" data-sync-operation="roster" action="{% url 'portal:quick_send_roster' journal.id test_connection.id %}" style="display: inline;" onsubmit="return confirm('Передати актуальний список учнів класу {{ journal.student_class.name }} на сайт тестів?');">
               {% csrf_token %}
               <input type="hidden" name="next" value="{{ request.get_full_path }}">
-              <button type="submit" class="btn-chip" title="Передати учнів журналу на сайт тестів">📤 Учні</button>
+              <button type="submit" form="formSendTestRoster" class="btn-chip" title="Передати учнів журналу на сайт тестів">📤 Учні</button>
             </form>
           {% endif %}
           <button type="button" id="testCheckBtn" class="btn-chip btn-chip-test" data-conn-id="{{ test_connection.id }}" onclick="testConnectionAjax({{ journal.id }}, this.dataset.connId, this)" title="Перевірити зв'язок з сервером тестів">🔍 Тест</button>
@@ -277,19 +277,19 @@
           {% endif %}
         {% endif %}
         <div class="chip-actions">
-          <form method="post" action="{% url 'portal:pull_source_grades' journal.id 'schoolwork' %}" style="display: inline;">
+          <form method="post" id="formPullWorkGrades" data-sync-operation="grades" action="{% url 'portal:pull_source_grades' journal.id 'schoolwork' %}" style="display: inline;">
             {% csrf_token %}
             <input type="hidden" name="date_from" value="{{ integration_date_from }}">
             <input type="hidden" name="date_to" value="{{ integration_date_to }}">
             <input type="hidden" name="connection_id" id="workConnectionId" value="{% if not work_connection.has_multiple_endpoints %}{{ work_connection.id }}{% endif %}">
             <input type="hidden" name="next" value="{{ request.get_full_path }}">
-            <button type="submit" class="btn-chip" title="Синхронізувати із завданнями: отримати оцінки за період ({{ integration_date_from }} — {{ integration_date_to }})" aria-label="Синхронізувати із завданнями">📥 Оцінки</button>
+            <button type="submit" form="formPullWorkGrades" class="btn-chip" title="Синхронізувати із завданнями: отримати оцінки за період ({{ integration_date_from }} — {{ integration_date_to }})" aria-label="Синхронізувати із завданнями">📥 Оцінки</button>
           </form>
           {% if work_connection.can_send_roster %}
-            <form method="post" id="formSendWorkRoster" action="{% url 'portal:quick_send_roster' journal.id work_connection.id %}" style="display: inline;" onsubmit="return confirm('Передати актуальний список учнів класу {{ journal.student_class.name }} на сайт завдань?');">
+            <form method="post" id="formSendWorkRoster" data-sync-operation="roster" action="{% url 'portal:quick_send_roster' journal.id work_connection.id %}" style="display: inline;" onsubmit="return confirm('Передати актуальний список учнів класу {{ journal.student_class.name }} на сайт завдань?');">
               {% csrf_token %}
               <input type="hidden" name="next" value="{{ request.get_full_path }}">
-              <button type="submit" class="btn-chip" title="Передати учнів журналу на сайт завдань">📤 Учні</button>
+              <button type="submit" form="formSendWorkRoster" class="btn-chip" title="Передати учнів журналу на сайт завдань">📤 Учні</button>
             </form>
           {% endif %}
           <button type="button" id="workCheckBtn" class="btn-chip btn-chip-test" data-conn-id="{{ work_connection.id }}" onclick="testConnectionAjax({{ journal.id }}, this.dataset.connId, this)" title="Перевірити зв'язок з сервером завдань">🔍 Тест</button>

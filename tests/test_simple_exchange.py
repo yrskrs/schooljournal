@@ -174,7 +174,7 @@ class SimpleExchangeTests(TestCase):
             response = MagicMock(); response.status_code = 200
             response.iter_content.return_value = [json.dumps(report).encode()]
             response.__enter__.return_value = response
-            with patch('apps.journals.services.roster_transfer.validate_api_url'), \
+            with patch('apps.journals.services.roster_transfer.verify_source_identity'), patch('apps.journals.services.roster_transfer.validate_api_url'), \
                  patch('apps.journals.services.roster_transfer.requests.Session') as session:
                 session.return_value.__enter__.return_value.post.return_value = response
                 with self.assertRaises(ExternalAPIError):
@@ -192,7 +192,7 @@ class SimpleExchangeTests(TestCase):
             'needs_review': [], 'conflicts': []}
         response = MagicMock(); response.status_code=200; response.iter_content.return_value=[json.dumps(report).encode()]
         response.__enter__.return_value=response
-        with patch('apps.journals.services.roster_transfer.validate_api_url'), patch('apps.journals.services.roster_transfer.requests.Session') as session:
+        with patch('apps.journals.services.roster_transfer.verify_source_identity'), patch('apps.journals.services.roster_transfer.validate_api_url'), patch('apps.journals.services.roster_transfer.requests.Session') as session:
             session.return_value.__enter__.return_value.post.return_value=response
             send_journal_roster(connection, self.teacher)
         connection.refresh_from_db(); self.assertTrue(connection.enabled)

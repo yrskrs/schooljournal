@@ -15,7 +15,8 @@ from apps.journals.models import Journal, GradeAPIConnection, GradeStudentMappin
 from apps.journals.services.assessment import journal_students
 from apps.journals.services.connection_setup import (
     fetch_source_roster, roster_version, selected_students, SOURCES,
-    ensure_same_source, existing_source_connection, safely_delete_grade_api_connection
+    ensure_same_source, existing_source_connection, safely_delete_grade_api_connection,
+    group_connections_by_server, find_online_connection_in_group
 )
 from apps.journals.services.external_grades import ExternalAPIError
 from apps.journals.services.roster_transfer import send_journal_roster
@@ -493,6 +494,13 @@ def quick_send_roster(request, journal_id, connection_id):
     is_ajax = request.headers.get('x-requested-with') == 'XMLHttpRequest' or request.GET.get('format') == 'json'
 
     try:
+        groups = group_connections_by_server(journal.grade_apis.filter(source=connection.source, enabled=True))
+        group = next((g for g in groups if any(c.pk == connection.pk for c in g['connections'])), None)
+        if group and len(group['connections']) > 1:
+            active, _ = find_online_connection_in_group(group['connections'], preferred_id=connection.pk)
+            if active is None:
+                raise ExternalAPIError('Жодна адреса цього сервісу не підтвердила доступність та ідентичність. Перевірте підключення в Центрі API.')
+            connection = active
         report = send_journal_roster(connection, request.user)
         connection.refresh_from_db()
         counts = report['counts']
@@ -508,6 +516,7 @@ def quick_send_roster(request, journal_id, connection_id):
                 'success': True,
                 'message': msg,
                 'level': 'warning' if counts.get('conflicts') or counts.get('needs_review') else 'success',
+                'operation': 'roster',
                 'counts': counts,
                 'sent_at': timezone.localtime(connection.roster_sent_at).strftime('%d.%m.%Y %H:%M:%S') if connection.roster_sent_at else None
             })
@@ -515,12 +524,12 @@ def quick_send_roster(request, journal_id, connection_id):
     except ExternalAPIError as err:
         msg = f"Помилка передачі списку: {err}"
         if is_ajax:
-            return JsonResponse({'success': False, 'message': msg}, status=400)
+            return JsonResponse({'success': False, 'operation': 'roster', 'message': msg}, status=400)
         messages.error(request, msg)
     except Exception:
         msg = 'Не вдалося підтвердити передачу списку. Перевірте діагностику в Центрі API; місцеві дані збережено.'
         if is_ajax:
-            return JsonResponse({'success': False, 'message': msg}, status=400)
+            return JsonResponse({'success': False, 'operation': 'roster', 'message': msg}, status=400)
         messages.error(request, msg)
 
     next_url = request.POST.get('next') or request.META.get('HTTP_REFERER') or reverse('portal:journal_integrations', kwargs={'journal_id': journal.pk})

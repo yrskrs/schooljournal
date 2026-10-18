@@ -15,6 +15,8 @@ def fetch_v2_grades(connection, start, end):
     if not connection.source_class_id or not connection.source_subject_id:
         raise ExternalAPIError('Зіставте ID класу й предмета в налаштуваннях підключення.')
     try:
+        from .connection_setup import verify_source_identity
+        verify_source_identity(connection)
         validate_api_url(connection.url, resolve=True)
         records, cursor = [], 0
         with requests.Session() as session:
