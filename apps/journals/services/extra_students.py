@@ -126,12 +126,10 @@ def match_student(extra, student, user):
         sep_student.delete()
 
     try:
-        GradeStudentMapping.objects.filter(connection=extra.connection, student=student).exclude(external_id=extra.external_key).delete()
         GradeStudentMapping.objects.update_or_create(
             connection=extra.connection, external_id=extra.external_key, defaults={'student': student}
         )
         for alias in extra.aliases.all():
-            GradeStudentMapping.objects.filter(connection=alias.connection, student=student).exclude(external_id=alias.external_key).delete()
             GradeStudentMapping.objects.update_or_create(
                 connection=alias.connection, external_id=alias.external_key, defaults={'student': student}
             )
@@ -285,12 +283,10 @@ def merge_extra(extra, target, user):
                 old_sep_student.grades.filter(lesson__journal=old_sep_journal).delete()
             old_sep_student.delete()
         try:
-            GradeStudentMapping.objects.filter(connection=extra.connection, student=target.matched_student).exclude(external_id=extra.external_key).delete()
             GradeStudentMapping.objects.update_or_create(
                 connection=extra.connection, external_id=extra.external_key, defaults={'student': target.matched_student}
             )
             for alias in extra.aliases.all():
-                GradeStudentMapping.objects.filter(connection=alias.connection, student=target.matched_student).exclude(external_id=alias.external_key).delete()
                 GradeStudentMapping.objects.update_or_create(
                     connection=alias.connection, external_id=alias.external_key, defaults={'student': target.matched_student}
                 )

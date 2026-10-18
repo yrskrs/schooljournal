@@ -19,6 +19,7 @@ from apps.journals.models import Journal, Grade, Attendance, StudentAPIGrant, Gr
 from apps.journals.services.assessment import journal_students
 from apps.journals.services.external_grades import fetch_grade_payload, import_grade_records, review_external_grade, ExternalAPIError
 from apps.journals.services.roster_transfer import send_journal_roster
+from apps.journals.services.integration_diagnostics import build_diagnostic_report
 from apps.journals.services.connection_setup import (
     group_connections_by_server, find_online_connection_in_group, safely_delete_grade_api_connection
 )
@@ -269,6 +270,17 @@ def journal_integrations(request, journal_id):
             'date_to': max(journal.academic_year.start_date, min(timezone.localdate(), journal.academic_year.end_date))}),
     })
     response['Cache-Control'] = 'no-store'
+    return response
+
+
+@login_required
+@require_GET
+def integration_diagnostics(request, journal_id):
+    journal = _get_journal_or_403(request.user, journal_id, write=True)
+    response = JsonResponse(build_diagnostic_report([journal]), json_dumps_params={'ensure_ascii': False, 'indent': 2})
+    response['Content-Disposition'] = 'attachment; filename="journal-diagnostics.json"'
+    response['Cache-Control'] = 'no-store'
+    response['X-Content-Type-Options'] = 'nosniff'
     return response
 
 

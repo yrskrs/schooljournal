@@ -108,7 +108,7 @@
   <div id="toast-container" class="toast-container" aria-live="polite" aria-atomic="true"></div>
 
   <!-- Скрипт застосунку -->
-  <script src="/static/js/site.js?v={{ site_version }}"></script>
+  <script src="/static/js/site.js?v={{ site_version }}-{{ site_script_version }}"></script>
   <script src="/static/js/journal.js?v={{ site_version }}"></script>
 
   <!-- Скрипт спливаючих сповіщень (Toast System) -->
@@ -148,12 +148,13 @@
           <div class="toast-icon">${icon}</div>
           <div class="toast-body">
             <div class="toast-title">${title}</div>
-            <div class="toast-message">${message}</div>
+            <div class="toast-message"></div>
           </div>
           <button type="button" class="toast-close-btn" aria-label="Закрити">&times;</button>
           <div class="toast-progress"></div>
         `;
 
+        toast.querySelector('.toast-message').textContent = String(message);
         container.appendChild(toast);
 
         requestAnimationFrame(() => {

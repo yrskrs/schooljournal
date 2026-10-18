@@ -519,6 +519,11 @@
 
   <!-- ВКЛАДКА 4: ДІАГНОСТИКА ТА ЖУРНАЛ ПОМИЛОК -->
   <div id="panel_diagnostics" class="api-hub-panel {% if active_tab == 'diagnostics' %}active{% endif %}">
+    <div class="schedule-card" style="padding: 1.25rem; margin-bottom: 1rem;">
+      <a class="btn btn-outline-primary" href="{% url 'portal:integration_diagnostics' journal.id %}">📄 Завантажити знеособлений звіт для діагностики</a>
+      <p style="margin: 0.75rem 0 0;">JSON-звіт містить технічні коди, кількості та останні 25 викликів кожного підключення. Без ПІБ, оцінок, ID учнів, адрес серверів і ключів. Завантаження не запускає синхронізацію.</p>
+      <p style="margin: 0.5rem 0 0;">Число у назві вкладки — кількість показаних останніх викликів, включно з успішними.</p>
+    </div>
     <div class="api-guide-box">
       <div class="api-guide-title">
         <span>❓ Чому API не працює і що робити?</span>
