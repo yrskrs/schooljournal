@@ -124,9 +124,15 @@
       <span class="updates-tag">Встановлено</span>
     </div>
     <p class="installed-release-title" id="installedReleaseTitle">{{ current_release.title }}</p>
-    <details class="installed-release-notes">
+    <details class="installed-release-notes" {% if current_release.changes %}open{% endif %}>
       <summary>Опис встановленої версії</summary>
-      <ul id="installedReleaseChanges">{% for change in current_release.changes %}<li>{{ change }}</li>{% endfor %}</ul>
+      <ul id="installedReleaseChanges">
+        {% for change in current_release.changes %}
+          <li>{{ change }}</li>
+        {% empty %}
+          <li style="color: var(--u-muted); list-style: none; margin-left: -20px;">Опис змін для поточної версії завантажується або відсутній у локальних метаданих.</li>
+        {% endfor %}
+      </ul>
     </details>
     <div class="updates-actions">
       <button type="button" class="updates-button updates-button-primary" id="btnCheckUpdates" onclick="checkUpdates()">
@@ -248,6 +254,18 @@ async function checkUpdates() {
     const data = await apiRequest('check');
     currentTargetVersion = data.latest_version;
     currentReleasesToApply = data.releases || data.releases_between || (data.release ? [data.release] : []);
+    if (data.current_version) {
+      text('lblCurrentVersion', `v${data.current_version}`);
+    }
+    if (data.current_release) {
+      if (data.current_release.title) {
+        text('installedReleaseTitle', data.current_release.title);
+      }
+      const changesList = document.getElementById('installedReleaseChanges');
+      if (changesList && Array.isArray(data.current_release.changes) && data.current_release.changes.length > 0) {
+        changesList.innerHTML = data.current_release.changes.map(ch => `<li>${escapeHtml(ch)}</li>`).join('');
+      }
+    }
     if (data.has_update) {
       box.classList.add('is-available');
       box.innerHTML = `<h2>Доступне оновлення v${escapeHtml(data.latest_version)}</h2><p>Встановлено v${escapeHtml(data.current_version)}. Перегляньте зміни перед оновленням.</p>
@@ -354,7 +372,7 @@ function renderStatus(data) {
     visible('errorAlert', false);
     visible('successAlert', true);
     text('successAlert', data.rolled_back ? 'Попередню версію, базу даних і файли відновлено та перевірено.' : 'Усі п’ять етапів завершено. Встановлену версію та готовність системи перевірено.');
-    if (version) text('lblCurrentVersion', `v${version}`);
+    if (activeJobId && version) text('lblCurrentVersion', `v${version}`);
   } else if (data.state === 'error') {
     const message = [data.error, data.rollback_error ? `Помилка відкату: ${data.rollback_error}` : ''].filter(Boolean).join('\n');
     showError(message, data.rolled_back);
@@ -377,7 +395,7 @@ function showError(message, rolledBack = false) {
   visible('btnManualRollback', Boolean(lastStatus?.rollback) && !rolledBack);
   text('errorMessage', message || 'Невідома помилка');
   document.getElementById('updateDiagnostics').value = [message, '', ...(lastStatus?.logs || [])].join('\n');
-  if (rolledBack && lastStatus?.current_version) text('lblCurrentVersion', `v${lastStatus.current_version}`);
+  if (activeJobId && rolledBack && lastStatus?.current_version) text('lblCurrentVersion', `v${lastStatus.current_version}`);
 }
 function updateStepper(step, name, progress, complete = false, running = true) {
   document.getElementById('progressBarFill').style.width = `${progress}%`;

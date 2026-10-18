@@ -104,18 +104,25 @@ def get_current_release():
 
 def get_update_status():
     """Retrieve current update progress from updater service or local status file."""
+    local_ver = get_current_local_version()
     # Try updater daemon
     try:
         req = urllib.request.Request(f"{UPDATER_URL}/api/status")
         with urllib.request.urlopen(req, timeout=2) as resp:
-            return json.loads(resp.read().decode('utf-8'))
+            data = json.loads(resp.read().decode('utf-8'))
+            if isinstance(data, dict):
+                data['current_version'] = local_ver
+                return data
     except Exception:
         pass
 
     # Fallback to status file in shared backups volume
     if STATUS_FILE.exists():
         try:
-            return json.loads(STATUS_FILE.read_text(encoding='utf-8'))
+            data = json.loads(STATUS_FILE.read_text(encoding='utf-8'))
+            if isinstance(data, dict):
+                data['current_version'] = local_ver
+                return data
         except Exception:
             pass
 
@@ -127,7 +134,7 @@ def get_update_status():
         'logs': [],
         'error': None,
         'rolled_back': False,
-        'current_version': get_current_local_version()
+        'current_version': local_ver
     }
 
 

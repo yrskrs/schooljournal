@@ -33,6 +33,9 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
       SECRET_KEY: ${SECRET_KEY:?Run setup.sh to generate SECRET_KEY}
     volumes:
+      - ./VERSION:/app/VERSION:ro
+      - ./RELEASES.json:/app/RELEASES.json:ro
+      - ./CHANGELOG.md:/app/CHANGELOG.md:ro
       - static_data:/app/staticfiles
       - media_data:/app/media
       - backups_data:/app/backups

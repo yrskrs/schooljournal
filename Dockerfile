@@ -24,7 +24,7 @@ RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir -r requirements.txt
 
 # Копіюємо лише код; робочі бази, імпортовані документи й секрети залишаються локально.
-COPY manage.py VERSION RELEASES.json LICENSE setup.sh .env.example /app/
+COPY manage.py VERSION RELEASES.json CHANGELOG.md LICENSE setup.sh .env.example /app/
 COPY school_sync/ /app/school_sync/
 COPY gunicorn.conf.py /app/
 COPY config/ /app/config/

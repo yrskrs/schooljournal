@@ -88,6 +88,10 @@ def load_status():
                                      step_name='Операцію перервано', progress=min(saved.get('progress', 0), 99))
         except (ValueError, OSError):
             pass
+    try:
+        CURRENT_STATE['current_version'] = get_current_version()
+    except Exception:
+        pass
     save_status()
 
 
@@ -500,6 +504,10 @@ class UpdaterHTTPHandler(http.server.BaseHTTPRequestHandler):
         elif parsed.path in ('/status', '/api/status'):
             with STATE_LOCK:
                 status = copy.deepcopy(CURRENT_STATE)
+            try:
+                status['current_version'] = get_current_version()
+            except Exception:
+                pass
             self.send_json(200, status)
         elif parsed.path in ('/check', '/api/check'):
             current = parse_qs(parsed.query).get('current_version', [None])[0]
