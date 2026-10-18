@@ -92,7 +92,13 @@ def map_rows(service):
             if target:
                 data={field['name']:field.get('value','') for field in target.select('input[name]') if field.get('type')!='checkbox'}
                 data.update(choice='0',native_id='1');response=post(service,path,data);assert response.status_code==200
-                break
+                # A background peer can add a newer proposal between GET and
+                # POST. HTTP 200 after redirect is not proof of a saved mapping.
+                backend = 'app.services.roster_backend' if service == 'test' else 'school_sync.django_backend'
+                persisted = code(service, f"from {backend} import operate;print(operate(lambda engine,store:store.get({ref['value']!r}).get('native_id')))")
+                if persisted == '1':
+                    break
+                time.sleep(.2)
             time.sleep(1)
         else:raise AssertionError('Mapping form missing: '+service+' '+kind)
     log(service+' explicit class and pupil ID mappings through teacher forms')
