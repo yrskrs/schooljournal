@@ -1,5 +1,5 @@
 import json
-from unittest.mock import patch
+from unittest.mock import patch, MagicMock, ANY
 
 from django.test import TestCase, Client, override_settings
 from django.conf import settings
@@ -513,5 +513,117 @@ class ConnectionSetupTests(TestCase):
         self.assertContains(resp_int, 'Підключені API')
         self.assertContains(resp_int, 'Синхронізація списків')
         self.assertContains(resp_int, 'Діагностика та помилки')
+
+    def test_server_grouping_and_location_editing(self):
+        conn = self.connect()
+        edit_url = reverse('portal:edit_source_connection', kwargs={'journal_id': self.journal.pk, 'connection_id': conn.pk})
+        resp = self.client.post(edit_url, {
+            'name': 'Домашній сервер тестів',
+            'site_url': 'http://192.168.1.12:8080',
+            'api_key': '',
+            'enabled': 'on',
+            'server_group': 'Сервер тестування',
+            'location_tag': '🏠 Дім',
+            'is_default_for_group': 'on',
+            'source_class_id': '',
+            'source_subject_id': '',
+        }, follow=True)
+        self.assertEqual(resp.status_code, 200)
+        conn.refresh_from_db()
+        self.assertEqual(conn.server_group, 'Сервер тестування')
+        self.assertEqual(conn.location_tag, '🏠 Дім')
+        self.assertTrue(conn.is_default_for_group)
+        self.assertEqual(conn.group_display, 'Сервер тестування')
+        self.assertEqual(conn.location_display, '🏠 Дім')
+        self.assertIn('192.168.1.12:8080', conn.host_display)
+
+    def test_quick_group_connections_view(self):
+        conn1 = self.connect()
+        conn2 = GradeAPIConnection.objects.create(
+            journal=self.journal, source='schooltest', contract_version=2,
+            name='Шкільні тести', url='http://192.168.0.50:8080/api/v2/journal/grades/',
+            api_key='key-2', enabled=True
+        )
+        group_url = reverse('portal:quick_group_connections', kwargs={'journal_id': self.journal.pk})
+        resp = self.client.post(group_url, {
+            'group_name': 'Сервер тестування',
+            'connection_ids': [conn1.pk, conn2.pk],
+            'active_connection_id': conn1.pk,
+        }, follow=True)
+        self.assertEqual(resp.status_code, 200)
+        conn1.refresh_from_db()
+        conn2.refresh_from_db()
+        self.assertEqual(conn1.server_group, 'Сервер тестування')
+        self.assertEqual(conn2.server_group, 'Сервер тестування')
+        self.assertTrue(conn1.is_default_for_group)
+        self.assertFalse(conn2.is_default_for_group)
+
+    def test_set_active_connection_view(self):
+        conn = self.connect()
+        conn.server_group = 'Сервер тестування'
+        conn.save()
+        set_active_url = reverse('portal:set_active_connection', kwargs={'journal_id': self.journal.pk, 'connection_id': conn.pk})
+        resp = self.client.post(set_active_url, HTTP_X_REQUESTED_WITH='XMLHttpRequest')
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertTrue(data['success'])
+        conn.refresh_from_db()
+        self.assertTrue(conn.is_default_for_group)
+
+    def test_pull_source_grades_with_grouped_failover(self):
+        # conn1 is offline (e.g. school IP when at home)
+        conn1 = GradeAPIConnection.objects.create(
+            journal=self.journal, source='schooltest', contract_version=2,
+            name='Шкільні тести', url='http://192.168.0.50:8080/api/v2/journal/grades/',
+            api_key='key-school', enabled=True, server_group='Сервер тестування',
+            location_tag='🏫 Школа', source_class_id='1', source_subject_id='1'
+        )
+        # conn2 is online (e.g. home IP)
+        conn2 = GradeAPIConnection.objects.create(
+            journal=self.journal, source='schooltest', contract_version=2,
+            name='Домашні тести', url='http://192.168.1.12:8080/api/v2/journal/grades/',
+            api_key='key-home', enabled=True, server_group='Сервер тестування',
+            location_tag='🏠 Дім', is_default_for_group=True,
+            source_class_id='1', source_subject_id='1'
+        )
+
+        pull_url = reverse('portal:pull_source_grades', kwargs={'journal_id': self.journal.pk, 'source': 'schooltest'})
+
+        # Mock reachability: conn1 offline, conn2 online
+        def fake_probe(conn, timeout=1.5):
+            if conn.pk == conn1.pk:
+                return False, 'Тайм-аут'
+            return True, 'В мережі'
+
+        mock_payload = []
+        with patch('apps.portal.views_integrations.find_online_connection_in_group', return_value=(conn2, {conn1.pk: (False, 'Тайм-аут'), conn2.pk: (True, 'В мережі')})), \
+             patch('apps.portal.views_integrations._reconcile_source_roster') as mock_reconcile, \
+             patch('apps.portal.views_integrations.fetch_grade_payload', return_value=mock_payload), \
+             patch('apps.portal.views_integrations.import_grade_records') as mock_import:
+
+            mock_log = MagicMock()
+            mock_log.counts = {'added': 2, 'updated': 1, 'unchanged': 0, 'ignored': 0, 'conflicts': 0, 'errors': 0}
+            mock_import.return_value = mock_log
+
+            resp = self.client.post(pull_url, {
+                'date_from': self.journal.academic_year.start_date.isoformat(),
+                'date_to': self.journal.academic_year.end_date.isoformat(),
+            }, follow=True)
+
+            self.assertEqual(resp.status_code, 200)
+            # Reconcile was called for conn2 (online), not conn1 (offline)
+            mock_reconcile.assert_called_once_with(ANY, conn2)
+            # Success message is displayed for conn2 / group
+            self.assertContains(resp, 'Сервер тестування')
+            self.assertContains(resp, 'додано 2')
+            # NO false error for conn1!
+            self.assertNotContains(resp, 'Джерело недоступне')
+
+    def test_toast_container_rendered_in_base_template(self):
+        resp = self.client.get(reverse('portal:teacher_dashboard'))
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, 'toast-container')
+        self.assertContains(resp, 'window.showToast')
+
 
 

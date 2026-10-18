@@ -111,3 +111,94 @@ def roster_version(connection):
 
 def selected_students(connection):
     return [row for row in connection.roster_cache.get('students', []) if row['class_id'] == connection.source_class_id]
+
+
+def probe_connection_reachability(connection, timeout=1.5):
+    """
+    Швидка перевірка (до 1.5 с) фізичної доступності хоста й порту сервера.
+    Запобігає зависанню на 10-20 секунд та хибним тривогам для неактивних адрес.
+    """
+    import socket
+    try:
+        parsed = urlsplit(connection.url)
+        host = parsed.hostname
+        port = parsed.port or (443 if parsed.scheme == 'https' else 80)
+        if not host:
+            return False, 'Не вказано хост'
+        with socket.create_connection((host, port), timeout=timeout):
+            return True, 'В мережі'
+    except (socket.timeout, TimeoutError):
+        return False, 'Тайм-аут (не відповідає в поточній мережі)'
+    except ConnectionRefusedError:
+        return False, 'Відхилено (порт закрито на сервері)'
+    except OSError as err:
+        return False, f'Недоступно ({err.strerror or str(err)})'
+    except Exception as err:
+        return False, f'Помилка ({str(err)})'
+
+
+def group_connections_by_server(connections):
+    """
+    Групує підключення за джерелом і групою сервера.
+    Повертає список груп: [{'group_key', 'group_name', 'source', 'connections': [...]}]
+    """
+    groups_dict = {}
+    for conn in connections:
+        # Ключ групування: якщо вказано server_group, то (source, server_group), інакше окремо для кожного conn
+        group_key = f"{conn.source}:{conn.server_group.strip()}" if conn.server_group.strip() else f"{conn.source}:single_{conn.pk}"
+        group_name = conn.server_group.strip() or conn.name or conn.get_source_display()
+        if group_key not in groups_dict:
+            groups_dict[group_key] = {
+                'key': group_key,
+                'name': group_name,
+                'source': conn.source,
+                'source_display': conn.get_source_display(),
+                'is_grouped': bool(conn.server_group.strip()),
+                'connections': [],
+            }
+        groups_dict[group_key]['connections'].append(conn)
+    return list(groups_dict.values())
+
+
+def find_online_connection_in_group(group_connections, preferred_id=None, timeout=1.5):
+    """
+    Знаходить доступне в поточній мережі підключення з групи.
+    Пріоритет:
+    1. preferred_id (якщо явно вибрано користувачем)
+    2. is_default_for_group (основна адреса)
+    3. Перша доступна адреса після швидкої перевірки probe_connection_reachability.
+    Повертає: (active_conn, probe_results_dict)
+    """
+    results = {}
+    ordered = []
+
+    # Спочатку шукаємо за preferred_id
+    if preferred_id:
+        pref = next((c for c in group_connections if str(c.pk) == str(preferred_id)), None)
+        if pref:
+            ordered.append(pref)
+
+    # Потім пріоритетні за замовчуванням
+    for c in group_connections:
+        if c.is_default_for_group and c not in ordered:
+            ordered.append(c)
+
+    # Решта підключень
+    for c in group_connections:
+        if c not in ordered:
+            ordered.append(c)
+
+    # Перевіряємо по черзі
+    online_conn = None
+    for c in ordered:
+        if not c.enabled:
+            results[c.pk] = (False, 'Підключення вимкнено в налаштуваннях')
+            continue
+        is_up, reason = probe_connection_reachability(c, timeout=timeout)
+        results[c.pk] = (is_up, reason)
+        if is_up and online_conn is None:
+            online_conn = c
+
+    # Якщо ніхто не відповів через probe, повертаємо перше увімкнене для спроби або None
+    return online_conn, results
+

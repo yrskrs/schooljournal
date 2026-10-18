@@ -52,5 +52,5 @@ EXPOSE 8000
 
 ENTRYPOINT ["/app/scripts/entrypoint.sh"]
 CMD ["gunicorn", "config.wsgi:application", "--config", "/app/gunicorn.conf.py", "--bind", "0.0.0.0:8000", "--workers", "3", "--threads", "2", "--timeout", "120"]
-ARG APP_VERSION=1.3.26
+ARG APP_VERSION=1.3.27
 LABEL org.opencontainers.image.version=$APP_VERSION

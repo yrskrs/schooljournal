@@ -104,9 +104,127 @@
     <span class="spinner-border spinner-border-sm" aria-hidden="true"></span>
     <span id="siteBusyText">Завантаження…</span>
   </div>
+  <!-- Плаваючий контейнер сповіщень (завжди видимий на будь-якому рівні прокрутки) -->
+  <div id="toast-container" class="toast-container" aria-live="polite" aria-atomic="true"></div>
+
   <!-- Скрипт застосунку -->
   <script src="/static/js/site.js?v={{ site_version }}"></script>
   <script src="/static/js/journal.js?v={{ site_version }}"></script>
+
+  <!-- Скрипт спливаючих сповіщень (Toast System) -->
+  <script>
+    (function() {
+      const container = document.getElementById('toast-container');
+      const icons = {
+        success: '✅',
+        error: '❌',
+        danger: '❌',
+        warning: '⚠️',
+        info: 'ℹ️'
+      };
+      const titles = {
+        success: 'Успішно',
+        error: 'Помилка',
+        danger: 'Помилка',
+        warning: 'Зверніть увагу',
+        info: 'Повідомлення'
+      };
+
+      window.showToast = function(message, type, duration) {
+        if (!container || !message) return;
+        const normType = String(type || 'info').toLowerCase().replace('alert-', '');
+        const actualType = normType.includes('error') || normType.includes('danger') ? 'error'
+                         : normType.includes('warn') ? 'warning'
+                         : normType.includes('success') ? 'success' : 'info';
+
+        const toast = document.createElement('div');
+        toast.className = `toast-card toast-${actualType}`;
+        toast.setAttribute('role', 'alert');
+
+        const icon = icons[actualType] || 'ℹ️';
+        const title = titles[actualType] || 'Повідомлення';
+
+        toast.innerHTML = `
+          <div class="toast-icon">${icon}</div>
+          <div class="toast-body">
+            <div class="toast-title">${title}</div>
+            <div class="toast-message">${message}</div>
+          </div>
+          <button type="button" class="toast-close-btn" aria-label="Закрити">&times;</button>
+          <div class="toast-progress"></div>
+        `;
+
+        container.appendChild(toast);
+
+        requestAnimationFrame(() => {
+          toast.classList.add('toast-visible');
+        });
+
+        const closeBtn = toast.querySelector('.toast-close-btn');
+        const progressBar = toast.querySelector('.toast-progress');
+
+        const autoDismissTime = typeof duration === 'number' ? duration : (actualType === 'error' ? 12000 : (actualType === 'warning' ? 9000 : 6000));
+        let remainingTime = autoDismissTime;
+        let startTime = Date.now();
+        let timer = null;
+
+        function dismiss() {
+          if (toast._dismissed) return;
+          toast._dismissed = true;
+          if (timer) clearTimeout(timer);
+          toast.classList.remove('toast-visible');
+          toast.classList.add('toast-hiding');
+          setTimeout(() => {
+            if (toast.parentNode) toast.parentNode.removeChild(toast);
+          }, 350);
+        }
+
+        closeBtn.addEventListener('click', dismiss);
+
+        if (autoDismissTime > 0) {
+          progressBar.style.transition = `transform ${autoDismissTime}ms linear`;
+          requestAnimationFrame(() => {
+            progressBar.style.transform = 'scaleX(0)';
+          });
+
+          function startTimer() {
+            startTime = Date.now();
+            timer = setTimeout(dismiss, remainingTime);
+          }
+
+          function pauseTimer() {
+            if (timer) clearTimeout(timer);
+            remainingTime -= (Date.now() - startTime);
+            progressBar.style.transition = 'none';
+            const progressRatio = Math.max(0, remainingTime / autoDismissTime);
+            progressBar.style.transform = `scaleX(${progressRatio})`;
+          }
+
+          function resumeTimer() {
+            if (remainingTime > 0) {
+              progressBar.style.transition = `transform ${remainingTime}ms linear`;
+              progressBar.style.transform = 'scaleX(0)';
+              startTimer();
+            }
+          }
+
+          startTimer();
+          toast.addEventListener('mouseenter', pauseTimer);
+          toast.addEventListener('mouseleave', resumeTimer);
+        } else {
+          progressBar.style.display = 'none';
+        }
+      };
+
+      {% if messages %}
+        document.addEventListener('DOMContentLoaded', function() {
+          {% for message in messages %}
+            window.showToast("{{ message|escapejs }}", "{{ message.tags|escapejs }}");
+          {% endfor %}
+        });
+      {% endif %}
+    })();
+  </script>
   {% block extra_js %}{% endblock %}
 </body>
 </html>

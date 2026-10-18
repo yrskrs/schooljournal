@@ -76,6 +76,20 @@
       </p>
     </div>
 
+    {% if journal_apis|length > 1 %}
+      <div style="background: #f8fafc; border: 1px dashed #cbd5e1; border-radius: var(--radius-sm); padding: 0.85rem 1.15rem; margin-bottom: 1.25rem; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 0.75rem;">
+        <div style="display: flex; align-items: center; gap: 0.65rem;">
+          <span style="font-size: 1.35rem;">🏠 ↔️ 🏫</span>
+          <div>
+            <strong>Робота з сервером з різних місць (дім / школа)?</strong>
+            <div style="font-size: 0.85rem; color: var(--text-muted);">
+              Якщо один і той самий сервер має різні IP вдома та в школі, відкрийте «✏️ Змінити налаштування» та вкажіть їм однакову <strong>«Групу сервера»</strong>. Журнал автоматично обиратиме доступну адресу без повідомлень про помилки!
+            </div>
+          </div>
+        </div>
+      </div>
+    {% endif %}
+
     {% if journal_apis %}
       <div style="display: flex; flex-direction: column; gap: 1.25rem;">
         {% for api in journal_apis %}
@@ -87,9 +101,22 @@
                   {% if api.source == 'schooltest' %}🎯{% elif api.source == 'schoolwork' %}📝{% else %}🌐{% endif %}
                 </span>
                 <div>
-                  <h3 class="api-card-title">{{ api.name }}</h3>
+                  <h3 class="api-card-title" style="display: flex; align-items: center; gap: 0.45rem; flex-wrap: wrap;">
+                    {{ api.name }}
+                    {% if api.location_display %}
+                      <span class="location-tag-pill {% if 'дім' in api.location_display|lower or 'дом' in api.location_display|lower %}location-tag-home{% elif 'школ' in api.location_display|lower or 'кабінет' in api.location_display|lower %}location-tag-school{% endif %}">
+                        {{ api.location_display }}
+                      </span>
+                    {% endif %}
+                    {% if api.server_group %}
+                      <span class="server-group-badge">🖥️ Група: {{ api.server_group }}</span>
+                    {% endif %}
+                    {% if api.is_default_for_group %}
+                      <span class="badge" style="background: #e0e7ff; color: #4338ca; font-size: 0.78rem;">⭐ Основна адреса</span>
+                    {% endif %}
+                  </h3>
                   <div style="font-size: 0.82rem; color: var(--text-muted);">
-                    Тип: <strong>{{ api.source_display }}</strong> &bull; Контракт: <strong>API v{{ api.contract_version }}</strong>
+                    Тип: <strong>{{ api.source_display }}</strong> &bull; Хост: <strong>{{ api.host_display }}</strong> &bull; Контракт: <strong>API v{{ api.contract_version }}</strong>
                   </div>
                 </div>
               </div>
@@ -267,8 +294,22 @@
                       <label style="font-weight: 600; font-size: 0.85rem; display: block; margin-bottom: 0.25rem;">Предмет на сайті джерела:</label>
                       {{ api.edit_form.source_subject_id }}
                     </div>
-                    <div style="display: flex; align-items: center; margin-top: 1.5rem;">
-                      <label style="display: inline-flex; align-items: center; gap: 0.5rem; cursor: pointer; font-weight: 600; font-size: 0.9rem;">
+                    <div>
+                      <label style="font-weight: 600; font-size: 0.85rem; display: block; margin-bottom: 0.25rem;">Група сервера (об'єднання IP):</label>
+                      {{ api.edit_form.server_group }}
+                      <small class="text-muted">{{ api.edit_form.server_group.help_text }}</small>
+                    </div>
+                    <div>
+                      <label style="font-weight: 600; font-size: 0.85rem; display: block; margin-bottom: 0.25rem;">Локація / Мережа:</label>
+                      {{ api.edit_form.location_tag }}
+                      <small class="text-muted">{{ api.edit_form.location_tag.help_text }}</small>
+                    </div>
+                    <div style="display: flex; flex-direction: column; gap: 0.5rem; justify-content: center; padding-top: 0.5rem;">
+                      <label style="display: inline-flex; align-items: center; gap: 0.5rem; cursor: pointer; font-weight: 600; font-size: 0.88rem;">
+                        {{ api.edit_form.is_default_for_group }}
+                        Основна адреса в групі
+                      </label>
+                      <label style="display: inline-flex; align-items: center; gap: 0.5rem; cursor: pointer; font-weight: 600; font-size: 0.88rem;">
                         {{ api.edit_form.enabled }}
                         Підключення активне
                       </label>
@@ -692,19 +733,26 @@ function runHubConnectionTest(journalId, connectionId, btn) {
       banner.style.display = 'block';
       banner.className = 'api-test-banner ' + (ok ? 'banner-success' : 'banner-error');
       banner.innerHTML = data.message;
-    } else {
+    }
+    if (window.showToast) {
+      window.showToast(data.message, ok ? 'success' : 'error');
+    } else if (!banner) {
       alert(data.message);
     }
   })
   .catch(err => {
     btn.disabled = false;
     btn.innerHTML = originalText;
+    const errText = 'Помилка перевірки зв\'язку: ' + err;
     if (banner) {
       banner.style.display = 'block';
       banner.className = 'api-test-banner banner-error';
-      banner.innerHTML = 'Помилка мережевого запиту перевірки зв\'язку: ' + err;
-    } else {
-      alert('Помилка: ' + err);
+      banner.innerHTML = errText;
+    }
+    if (window.showToast) {
+      window.showToast(errText, 'error');
+    } else if (!banner) {
+      alert(errText);
     }
   });
 }

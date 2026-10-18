@@ -17,6 +17,10 @@ class ConnectSourceForm(forms.Form):
         help_text='Вставте повну адресу, за якою відкриваєте джерело, наприклад http://192.168.10.25:8000. Вона має бути доступна серверу журналу.')
     api_key = forms.CharField(label='Ключ API', required=False, max_length=500,
         widget=forms.PasswordInput(attrs={'autocomplete': 'new-password'}))
+    server_group = forms.CharField(label="Група сервера (об'єднання IP)", required=False, max_length=100,
+        help_text='Необов’язково: назва сервера для об’єднання різних IP (наприклад: Сервер тестів).')
+    location_tag = forms.CharField(label="Локація / Мережа", required=False, max_length=50,
+        help_text='Наприклад: 🏠 Дім, 🏫 Кабінет інформатики, 💻 Ноутбук.')
 
     def clean(self):
         data = super().clean()
@@ -103,6 +107,13 @@ class EditConnectionForm(forms.Form):
         widget=forms.Select(attrs={'class': 'form-control'}))
     source_subject_id = forms.ChoiceField(label='Предмет на сайті джерела', required=False,
         widget=forms.Select(attrs={'class': 'form-control'}))
+    server_group = forms.CharField(label="Група сервера (об'єднання IP)", max_length=100, required=False,
+        widget=forms.TextInput(attrs={'class': 'form-control', 'placeholder': 'Наприклад: Сервер тестування'}),
+        help_text="Вкажіть однакову назву для підключень до одного сервера з різних IP (дім / школа).")
+    location_tag = forms.CharField(label="Локація / Мережа", max_length=50, required=False,
+        widget=forms.TextInput(attrs={'class': 'form-control', 'placeholder': '🏠 Дім, 🏫 Кабінет інформатики, 💻 Ноутбук'}),
+        help_text="Зручна мітка: де саме діє ця адреса.")
+    is_default_for_group = forms.BooleanField(label="Основна (пріоритетна) адреса в цій групі", required=False)
 
     def __init__(self, *args, connection, **kwargs):
         super().__init__(*args, **kwargs)
@@ -111,6 +122,9 @@ class EditConnectionForm(forms.Form):
         subjects = connection.roster_cache.get('subjects', []) if isinstance(connection.roster_cache, dict) else []
         self.fields['source_class_id'].choices = [('', '— Не вибрано —')] + [(str(c['id']), c['name']) for c in classes]
         self.fields['source_subject_id'].choices = [('', '— Не вибрано —')] + [(str(s['id']), s['name']) for s in subjects]
+        self.fields['server_group'].initial = connection.server_group
+        self.fields['location_tag'].initial = connection.location_tag
+        self.fields['is_default_for_group'].initial = connection.is_default_for_group
 
     def clean_site_url(self):
         url = self.cleaned_data['site_url']

@@ -115,6 +115,10 @@ def connect_source(request, journal_id):
                                 connection.source_class_id = initial['source_class_id']
                             if not connection.source_subject_id:
                                 connection.source_subject_id = initial['source_subject_id']
+                        if data.get('server_group'):
+                            connection.server_group = data['server_group'].strip()
+                        if data.get('location_tag'):
+                            connection.location_tag = data['location_tag'].strip()
                         connection.save()
                         AuditLog.objects.create(school=journal.school, user=request.user, action=AuditLog.Action.UPDATE,
                             target_model='GradeAPIConnection', target_id=str(connection.pk), description='Підключено джерело та отримано назви класів, предметів і учнів. Оцінки не імпортувалися.')
@@ -517,6 +521,12 @@ def edit_source_connection(request, journal_id, connection_id):
             if data.get('api_key'):
                 connection.api_key = data['api_key']
             connection.enabled = data['enabled']
+            connection.server_group = data.get('server_group', '').strip()
+            connection.location_tag = data.get('location_tag', '').strip()
+            connection.is_default_for_group = data.get('is_default_for_group', False)
+            if connection.is_default_for_group and connection.server_group:
+                # Знімаємо прапорець основної адреси з інших адрес цієї ж групи
+                journal.grade_apis.filter(server_group=connection.server_group).exclude(pk=connection.pk).update(is_default_for_group=False)
 
             # Якщо змінено клас і для нього ще немає збережених оцінок
             if data['source_class_id'] and data['source_class_id'] != connection.source_class_id:
@@ -678,4 +688,74 @@ def delete_api_key_group(request):
             messages.success(request, f'Підключення «{name}» видалено з журналу {class_name}.')
 
     return redirect('portal:teacher_api_keys')
+
+
+@login_required
+@require_POST
+def quick_group_connections(request, journal_id):
+    """
+    Швидке об'єднання підключень одного джерела в логічну групу сервера (для роботи з різними IP).
+    """
+    journal = _get_journal_or_403(request.user, journal_id, write=True)
+    group_name = request.POST.get('group_name', '').strip()
+    source = request.POST.get('source', '').strip()
+    conn_ids = request.POST.getlist('connection_ids')
+    active_id = request.POST.get('active_connection_id')
+    next_url = request.POST.get('next') or reverse('portal:journal_integrations', kwargs={'journal_id': journal.pk})
+
+    if not group_name:
+        messages.error(request, 'Вкажіть назву групи сервера (наприклад: Сервер тестування).')
+        return redirect(next_url)
+
+    connections = journal.grade_apis.filter(pk__in=conn_ids) if conn_ids else (
+        journal.grade_apis.filter(source=source) if source else journal.grade_apis.none()
+    )
+
+    if not connections.exists():
+        messages.error(request, 'Не вибрано жодного підключення для об’єднання в групу.')
+        return redirect(next_url)
+
+    with transaction.atomic():
+        _lock(journal, request.user)
+        for c in connections:
+            c.server_group = group_name
+            if active_id and str(c.pk) == str(active_id):
+                c.is_default_for_group = True
+            c.save(update_fields=['server_group', 'is_default_for_group'])
+        AuditLog.objects.create(
+            school=journal.school, user=request.user, action=AuditLog.Action.UPDATE,
+            target_model='GradeAPIConnection', target_id=str(journal.pk),
+            description=f"Об'єднано {connections.count()} підключень у групу «{group_name}»."
+        )
+
+    messages.success(request, f"Підключення ({connections.count()} шт.) успішно об'єднано в групу «{group_name}». Тепер журнал автоматично обиратиме активну адресу в мережі!")
+    return redirect(next_url)
+
+
+@login_required
+@require_POST
+def set_active_connection(request, journal_id, connection_id):
+    """
+    Встановлює пріоритетне підключення для групи серверів в один клік.
+    """
+    journal = _get_journal_or_403(request.user, journal_id, write=True)
+    connection = get_object_or_404(journal.grade_apis, pk=connection_id)
+    is_ajax = request.headers.get('x-requested-with') == 'XMLHttpRequest' or request.GET.get('format') == 'json'
+
+    with transaction.atomic():
+        _lock(journal, request.user)
+        if connection.server_group:
+            journal.grade_apis.filter(server_group=connection.server_group).update(is_default_for_group=False)
+        connection.is_default_for_group = True
+        connection.enabled = True
+        connection.save(update_fields=['is_default_for_group', 'enabled'])
+
+    msg = f"«{connection.name}» ({connection.host_display}) встановлено як активну адресу."
+    if is_ajax:
+        return JsonResponse({'success': True, 'message': msg, 'connection_id': connection.pk})
+
+    messages.success(request, msg)
+    next_url = request.POST.get('next') or reverse('portal:journal_integrations', kwargs={'journal_id': journal.pk})
+    return redirect(next_url)
+
 

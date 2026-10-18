@@ -330,6 +330,11 @@ def journal_detail(request, journal_id):
             'status': status,
             'source_class_name': c_name,
             'source_subject_name': s_name,
+            'server_group': conn.server_group,
+            'location_tag': conn.location_tag,
+            'location_display': conn.location_display,
+            'is_default_for_group': conn.is_default_for_group,
+            'host_display': conn.host_display,
             'is_class_mismatched': is_mismatched,
             'can_send_roster': 'journal_roster_import' in caps,
             'mappings_count': conn.student_mappings.count(),
@@ -339,10 +344,26 @@ def journal_detail(request, journal_id):
             'last_log': last_log,
         }
         journal_apis.append(api_info)
-        if conn.source == 'schooltest' and (test_connection is None or (not test_connection['enabled'] and conn.enabled)):
-            test_connection = api_info
-        elif conn.source == 'schoolwork' and (work_connection is None or (not work_connection['enabled'] and conn.enabled)):
-            work_connection = api_info
+
+    all_test_connections = [a for a in journal_apis if a['source'] == 'schooltest']
+    all_work_connections = [a for a in journal_apis if a['source'] == 'schoolwork']
+
+    def _pick_active_api(conns):
+        if not conns:
+            return None
+        defaults = [c for c in conns if c['is_default_for_group'] and c['enabled']]
+        if defaults:
+            active = dict(defaults[0])
+        else:
+            enabled = [c for c in conns if c['enabled']]
+            active = dict(enabled[0]) if enabled else dict(conns[0])
+        active['all_endpoints'] = conns
+        active['has_multiple_endpoints'] = len(conns) > 1
+        active['group_name'] = conns[0]['server_group'] if all(c['server_group'] for c in conns) else (conns[0]['name'])
+        return active
+
+    test_connection = _pick_active_api(all_test_connections)
+    work_connection = _pick_active_api(all_work_connections)
 
     context = {
         'integration_date_from': integration_start.isoformat(),
@@ -354,6 +375,8 @@ def journal_detail(request, journal_id):
         'journal_apis': journal_apis,
         'test_connection': test_connection,
         'work_connection': work_connection,
+        'all_test_connections': all_test_connections,
+        'all_work_connections': all_work_connections,
         'can_edit': can_edit,
         'can_manage': can_manage,
         'show_withdrawn': show_withdrawn,

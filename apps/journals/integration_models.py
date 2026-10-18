@@ -53,10 +53,33 @@ class GradeAPIConnection(models.Model):
     roster_checked_at = models.DateTimeField(null=True, blank=True)
     roster_sent_at = models.DateTimeField(null=True, blank=True)
     roster_report = models.JSONField(default=dict, blank=True)
+    server_group = models.CharField(max_length=100, blank=True, default='', verbose_name='Група серверів / Об’єднання IP',
+        help_text='Вкажіть однакову назву для підключень до одного сервера з різних IP (дім / школа).')
+    location_tag = models.CharField(max_length=50, blank=True, default='', verbose_name='Локація / Мережа',
+        help_text='Наприклад: 🏠 Дім, 🏫 Кабінет інформатики, 💻 Ноутбук')
+    is_default_for_group = models.BooleanField(default=False, verbose_name='Основна адреса в групі')
     created_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):
         return self.name
+
+    @property
+    def host_display(self):
+        """Повертає IP або домен та порт для швидкого розпізнавання адреси."""
+        from urllib.parse import urlsplit
+        try:
+            parsed = urlsplit(self.url)
+            return parsed.netloc or self.url
+        except Exception:
+            return self.url
+
+    @property
+    def group_display(self):
+        return self.server_group or self.name or self.get_source_display()
+
+    @property
+    def location_display(self):
+        return self.location_tag or ('Основний' if self.is_default_for_group else '')
 
     @property
     def masked_key(self):
