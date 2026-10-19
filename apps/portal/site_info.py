@@ -3,6 +3,7 @@ import hashlib
 from functools import lru_cache
 
 from django.conf import settings
+from django.utils.functional import SimpleLazyObject
 
 
 @lru_cache(maxsize=1)
@@ -19,4 +20,12 @@ def site_script_version():
 
 def site_context(request):
     return {'site_version': release_info()[0], 'site_script_version': site_script_version(),
+            'api_notification_count': SimpleLazyObject(lambda: _notification_count(request)),
             'school_registration_enabled': settings.SCHOOL_REGISTRATION_ENABLED}
+
+
+def _notification_count(request):
+    if not request.user.is_authenticated:
+        return 0
+    from apps.portal.api_workspace import request_overview
+    return len(request_overview(request)['notices'])

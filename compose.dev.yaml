@@ -3,3 +3,24 @@ services:
   web:
     volumes:
       - .:/app
+    # Templates are read from disk; reload Python too so they use the same routes.
+    command:
+      - gunicorn
+      - config.wsgi:application
+      - --config
+      - /app/gunicorn.conf.py
+      - --bind
+      - 0.0.0.0:8000
+      - --workers
+      - "1"
+      - --threads
+      - "2"
+      - --timeout
+      - "120"
+      - --reload
+      - --reload-extra-file
+      - /app/VERSION
+      - --reload-extra-file
+      - /app/RELEASES.json
+      - --reload-extra-file
+      - /app/CHANGELOG.md

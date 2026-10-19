@@ -7,10 +7,11 @@ const label = { textContent: '' };
 const timers = new Map();
 let timerId = 0;
 let fetchImpl;
+const documentListeners = new Map();
 const context = vm.createContext({
   document: {
     getElementById: id => ({ siteBusy: indicator, siteBusyText: label }[id]),
-    addEventListener() {}, body: { dataset: {}, addEventListener() {} }, querySelectorAll: () => [],
+    addEventListener(name, handler) { documentListeners.set(name, handler); }, body: { dataset: {}, addEventListener() {} }, querySelectorAll: () => [],
   },
   window: { addEventListener() {} }, AbortController, URL, Date, Promise,
   location: { pathname: '/journal/1/' },
@@ -67,5 +68,12 @@ const response = { clone: () => ({ arrayBuffer: async () => new ArrayBuffer(0) }
   position = vm.runInContext('capturePagePosition()', context);
   assert.equal(position.anchor, offscreen.id);
   assert.equal(position.offset, 100);
-  console.log('PASS: 16 request lifecycle and scroll checks');
+  let scrollCalls = 0;
+  context.window.scrollTo = () => { scrollCalls++; };
+  context.location.hash = '#address';
+  context.sessionStorage = {getItem: () => JSON.stringify({...position, savedAt: Date.now()}), removeItem() {}};
+  context.requestAnimationFrame = handler => handler();
+  documentListeners.get('DOMContentLoaded')();
+  assert.equal(scrollCalls, 0, 'An explicit notification target takes priority over saved scroll position');
+  console.log('PASS: 17 request lifecycle and scroll checks');
 })().catch(error => { console.error(error); process.exitCode = 1; });

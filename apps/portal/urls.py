@@ -1,6 +1,7 @@
 from django.urls import path
 from . import views_integrations
 from . import views_connection_setup
+from . import views_api_workspace
 from . import views_api_inbox
 from . import views_extra_students
 from school_sync import django_backend as roster_views
@@ -18,6 +19,8 @@ def root_redirect(request):
     return redirect('portal:teacher_dashboard')
 
 urlpatterns = [
+    path('teacher-portal/api/', views_api_workspace.api_workspace, name='api_workspace'),
+    path('notifications/', views_api_workspace.api_notifications, name='api_notifications'),
     path('outside-students/', views_extra_students.outside_students, name='outside_students'),
     path('help/', views_public.guide, name='guide'),
     path('versions/', views_public.versions, name='versions'),

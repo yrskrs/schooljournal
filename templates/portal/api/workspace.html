@@ -1,0 +1,84 @@
+{% extends 'base.html' %}
+{% block title %}{% if workspace_tab == 'notifications' %}Сповіщення{% else %}API та обмін{% endif %} | Шкільний журнал{% endblock %}
+{% block content %}
+<div class="api-workspace">
+  <header class="api-workspace-header">
+    <div>
+      <p class="api-eyebrow">{% if journal %}{{ journal.student_class.name }} · {{ journal.subject.name }} · {{ journal.academic_year.name }}{% else %}Ваші журнали{% endif %}</p>
+      <h1>{% if workspace_tab == 'notifications' %}Сповіщення{% else %}API та обмін{% endif %}</h1>
+      <p class="text-muted">Підключіть сайт один раз. Отримуйте оцінки кнопкою в журналі, а питання зі списками та помилки вирішуйте тут.</p>
+    </div>
+    <div class="api-actions">
+      {% if can_edit %}{% if journal %}<a class="btn btn-primary" href="{% url 'portal:connect_source' journal.pk %}">+ Додати API</a>{% else %}<a class="btn btn-primary" href="{% url 'portal:api_workspace' %}#add-api">+ Додати API</a>{% endif %}{% endif %}
+      {% if journal %}<a class="btn btn-secondary" href="{% url 'portal:journal_detail' journal.pk %}">До журналу</a><a href="{% url 'portal:api_workspace' %}{% if workspace_tab == 'notifications' %}?tab=notifications{% endif %}" class="btn btn-secondary">Усі журнали</a>{% endif %}
+      <a class="btn btn-outline-primary" href="{% url 'portal:guide' %}#api-start">Як користуватися</a>
+    </div>
+  </header>
+  {% if not journal and workspace_tab == 'connections' %}
+  <details id="add-api" class="card api-start" {% if not api_groups %}open{% endif %}>
+    <summary>Додати підключення до журналу</summary><p class="text-muted">Виберіть журнал. Далі знадобляться лише адреса сайту та його ключ API.</p>
+    {% if workspace_journals %}<form method="get" class="api-actions">
+      <input type="hidden" name="action" value="connect">
+      <label for="apiJournal">Журнал</label>
+      <select id="apiJournal" name="journal" required class="form-select">
+        <option value="">Оберіть клас і предмет</option>
+        {% for item in workspace_journals %}<option value="{{ item.pk }}">{{ item.student_class.name }} · {{ item.subject.name }} · {{ item.academic_year.name }}</option>{% endfor %}
+      </select>
+      <button class="btn btn-primary">Продовжити</button>
+    </form>{% else %}<p>Спершу <a href="{% url 'portal:teacher_dashboard' %}">відкрийте або створіть свій журнал</a>.</p>{% endif %}
+  </details>
+  {% endif %}
+  <nav class="api-workspace-tabs" aria-label="API та обмін">
+    <a href="{{ workspace_url }}" {% if workspace_tab == 'connections' %}aria-current="page"{% endif %}>Підключення <span>{{ api_groups|length }}</span></a>
+    <a href="{{ workspace_url }}?tab=notifications" {% if workspace_tab == 'notifications' %}aria-current="page"{% endif %}>Сповіщення <span>{{ api_notices|length }}</span></a>
+    <a href="{{ workspace_url }}?tab=roster" {% if workspace_tab == 'roster' %}aria-current="page"{% endif %}>Списки учнів</a>
+  </nav>
+  {% if workspace_tab == 'notifications' %}
+    <div class="api-section-heading"><h2>Що потребує вашої уваги</h2><a href="{{ request.get_full_path }}" class="btn btn-secondary btn-sm">Оновити стан</a></div>
+    <p class="text-muted">Натисніть повідомлення, щоб відкрити місце виправлення. Після успішної повторної дії повідомлення зникне. Перевірка цієї сторінки не запускає синхронізацію.</p>
+    {% for notice in api_notices %}
+    <a class="api-notice api-notice-{{ notice.level }}" id="{{ notice.id }}" href="{{ notice.url }}">
+      <span class="api-notice-icon" aria-hidden="true">{% if notice.level == 'danger' %}!{% else %}?{% endif %}</span>
+      <div><p class="api-eyebrow">{{ notice.journal.student_class.name }} · {{ notice.journal.subject.name }} · {{ notice.connection_name }}</p><h3>{{ notice.title }}</h3><p>{{ notice.detail }}</p><strong>{{ notice.action }} →</strong></div>
+    </a>
+    {% empty %}<section class="card api-empty"><span aria-hidden="true">✓</span><h2>Усе гаразд</h2><p>Невирішених питань API немає. Стан оновлюється після ваших перевірок і синхронізацій.</p><a href="{{ workspace_url }}">Переглянути підключення</a></section>{% endfor %}
+  {% elif workspace_tab == 'roster' %}
+    <h2>Списки та відповідності учнів</h2>
+    <p class="text-muted">«Передати список» надсилає учнів із журналу на сайт. «Перевірити відповідності» допомагає вибрати, кому належать результати.</p>
+    {% for group in api_groups %}<section class="card api-source-card">
+      <h3>{{ group.journal.student_class.name }} · {{ group.journal.subject.name }} — {{ group.name }}</h3>
+      <p>Остання передача: {{ group.primary.roster_sent_at|date:'d.m.Y H:i'|default:'ще не виконувалася' }}.</p>
+      <div class="api-actions">
+        {% if can_edit and group.primary.contract_version == 2 %}<a class="btn btn-primary" href="{{ group.setup_url }}#roster">Передати або перевірити список</a><a class="btn btn-secondary" href="{{ group.setup_url }}#students">Перевірити відповідності</a>{% endif %}
+        <a class="btn btn-secondary" href="{% url 'portal:api_inbox' group.journal.pk %}">Результати без відповідності</a>
+        <a class="btn btn-secondary" href="{% url 'portal:journal_detail' group.journal.pk %}">Відкрити журнал</a>
+      </div>
+    </section>{% empty %}<p class="card">Ще немає підключень. Додайте API у вкладці «Підключення».</p>{% endfor %}
+    <p><a href="{% url 'portal:roster_sync' %}">Усі списки та синхронізація за класами</a> · <a href="{% url 'portal:outside_students' %}">Окремі учні</a></p>
+  {% else %}
+    {% if api_notices %}<a class="api-attention-banner" href="{{ workspace_url }}?tab=notifications"><strong>Потребують уваги: {{ api_notices|length }}</strong><span>Відкрити сповіщення та виправити →</span></a>{% endif %}
+    <section class="api-guide-box"><strong>Щодня працюйте у журналі</strong><p>«📥 Оцінки» отримує результати, «📤 Учні» передає список класу. Резервна адреса обирається автоматично.</p></section>
+    {% for group in api_groups %}
+    <section class="card api-source-card" id="source-{{ group.primary.pk }}">
+      <div class="api-section-heading"><div><p class="api-eyebrow">{{ group.source_display }} · {{ group.journal.student_class.name }} · {{ group.journal.subject.name }} · {{ group.journal.academic_year.name }}</p><h2>{{ group.name }}</h2></div><span class="api-state {% if group.notices %}api-state-warning{% elif not group.enabled %}api-state-paused{% endif %}">{{ group.status_label }}</span></div>
+      <p class="text-muted">{% if group.automatic %}Автоматичне перемикання · адрес: {{ group.connections|length }}.{% else %}Адрес: {{ group.connections|length }}.{% endif %} Останній успішний запит: {{ group.last_success|date:'d.m.Y H:i'|default:'ще не зафіксовано' }}.</p>
+      <div class="api-actions">
+        {% if can_edit %}<a class="btn btn-primary" href="{{ group.setup_url }}">Налаштувати</a>{% endif %}
+        <a class="btn btn-secondary" href="{% url 'portal:journal_detail' group.journal.pk %}">До журналу</a>
+        {% if group.notices %}<a class="btn btn-outline-primary" href="{{ group.hub_url }}?tab=notifications">Вирішити питання ({{ group.notices|length }})</a>{% endif %}
+        {% if can_edit and group.primary.contract_version == 2 %}<a class="btn btn-secondary" href="{% url 'portal:connect_source' group.journal.pk %}?backup_for={{ group.primary.pk }}">+ Резервна адреса</a>{% endif %}
+      </div>
+      <details class="api-addresses"><summary>Адреси та перевірка зв’язку</summary>
+        {% for connection in group.connections %}<div class="api-address-row"><div><strong>{{ connection.location_tag|default:connection.name }}</strong><div class="api-address-url">{{ connection.host_display }}</div><small>{% if not connection.enabled %}Вимкнено{% elif connection.is_default_for_group %}Перша у черзі{% else %}Автоматичний вибір{% endif %}</small></div>
+          {% if can_edit %}<div class="api-actions"><form method="post" action="{% url 'portal:test_source_connection' group.journal.pk connection.pk %}">{% csrf_token %}<input type="hidden" name="next" value="{{ request.get_full_path }}"><button class="btn btn-secondary btn-sm">Перевірити зв’язок</button></form><form method="post" action="{% url 'portal:toggle_source_connection' group.journal.pk connection.pk %}">{% csrf_token %}<input type="hidden" name="next" value="{{ request.get_full_path }}"><button class="btn btn-secondary btn-sm">{% if connection.enabled %}Вимкнути{% else %}Увімкнути{% endif %}</button></form></div>{% endif %}
+        </div>{% endfor %}
+      </details>
+    </section>
+    {% empty %}<section class="card api-empty"><h2>Додайте перше API</h2><p>Відкрийте сайт тестів або завдань, створіть ключ для журналу та скопіюйте його разом з адресою сайту.</p>{% if journal and can_edit %}<a class="btn btn-primary" href="{% url 'portal:connect_source' journal.pk %}">Додати API</a>{% endif %}</section>{% endfor %}
+  {% endif %}
+  <details class="card api-advanced"><summary>Додаткові налаштування</summary><p class="text-muted">Для нестандартного API, старих підключень або технічної діагностики.</p><div class="api-actions">
+    {% if journal %}<a href="{% url 'portal:journal_integrations' journal.pk %}?advanced=1">Центр керування API та синхронізації · Підключені API</a><a href="{% url 'portal:journal_integrations' journal.pk %}?advanced=1&tab=diagnostics">Діагностика та помилки</a><a href="{% url 'portal:journal_integrations' journal.pk %}?advanced=1&tab=grants">Доступ до API списків і профілі</a>{% endif %}
+    <a href="{% url 'portal:teacher_api_keys' %}">Підключені API ключі</a><a href="{% url 'portal:roster_sync' %}">Синхронізація списків</a>
+  </div></details>
+</div>
+{% endblock %}

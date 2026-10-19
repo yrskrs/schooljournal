@@ -237,6 +237,33 @@ def find_online_connection_in_group(group_connections, preferred_id=None, timeou
     return None, results
 
 
+def exchange_with_fallback(connections, exchange, preferred_id=None, selector=None):
+    """Try another verified address when the actual API request fails as well.
+
+    The caller supplies one group from group_connections_by_server. Only the
+    exchange is retried; importing grades happens once after it succeeds.
+    """
+    remaining = [c for c in connections if c.enabled]
+    if not remaining:
+        raise ExternalAPIError('Підключення вимкнене. Увімкніть його в розділі «API та обмін».')
+    if len(remaining) == 1:
+        return remaining[0], exchange(remaining[0])
+    selector = selector or find_online_connection_in_group
+    last_error = None
+    while remaining:
+        active, _ = selector(remaining, preferred_id=preferred_id, timeout=1.5)
+        if active is None:
+            break
+        try:
+            return active, exchange(active)
+        except ExternalAPIError as error:
+            last_error = error
+            remaining = [c for c in remaining if c.pk != active.pk]
+    if last_error:
+        raise ExternalAPIError(f'Жодна адреса не завершила запит. {last_error}') from last_error
+    raise ExternalAPIError('Жодна адреса цього сервісу не підтвердила доступність та ідентичність. Перевірте адресу, ключ і мережу в розділі «API та обмін».')
+
+
 def safely_delete_grade_api_connection(connection):
     """
     Повне та безпечне видалення підключення GradeAPIConnection без конфліктів

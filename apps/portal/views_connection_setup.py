@@ -11,12 +11,12 @@ from django.views.decorators.debug import sensitive_post_parameters
 from django.views.decorators.http import require_http_methods, require_POST
 
 from apps.curriculum.models import Student, ClassEnrollment
-from apps.journals.models import Journal, GradeAPIConnection, GradeStudentMapping, AuditLog, StudentAPIGrant
+from apps.journals.models import Journal, GradeAPIConnection, GradeStudentMapping, AuditLog, StudentAPIGrant, GradePullLog
 from apps.journals.services.assessment import journal_students
 from apps.journals.services.connection_setup import (
     fetch_source_roster, roster_version, selected_students, SOURCES,
     ensure_same_source, existing_source_connection, safely_delete_grade_api_connection,
-    group_connections_by_server, find_online_connection_in_group
+    group_connections_by_server, find_online_connection_in_group, exchange_with_fallback
 )
 from apps.journals.services.external_grades import ExternalAPIError
 from apps.journals.services.roster_transfer import send_journal_roster
@@ -61,13 +61,21 @@ def connect_source(request, journal_id):
         messages.info(request, 'Підключення налаштовується для основного журналу. Позакласні результати зберігаються окремими учнями.')
         return redirect(reverse('portal:connect_source', kwargs={'journal_id': parent.pk}))
     destination = reverse('portal:connect_source', kwargs={'journal_id': journal.pk})
+    backup_id = request.POST.get('backup_for') if request.method == 'POST' else request.GET.get('backup_for')
+    backup = get_object_or_404(journal.grade_apis, pk=backup_id, contract_version=2) if str(backup_id or '').isdigit() else None
+    if backup_id and backup is None:
+        raise PermissionDenied('Некоректне основне підключення.')
     connection_id = request.POST.get('connection_id') if request.method == 'POST' else request.GET.get('connection')
     connection = get_object_or_404(journal.grade_apis, pk=connection_id, contract_version=2) if str(connection_id or '').isdigit() else None
     if connection_id and connection is None:
         raise PermissionDenied('Некоректне підключення.')
     setup = ConnectSourceForm(initial={'source': request.GET.get('source', 'schooltest')})
+    if backup:
+        setup = ConnectSourceForm(initial={'source': backup.source, 'key_name': backup.name[:80] + ' (резервна)'})
     if connection:
-        setup = ConnectSourceForm(initial={'source': connection.source, 'site_url': connection.url.rsplit('/api/v2/journal/grades/', 1)[0]})
+        setup = ConnectSourceForm(initial={'source': connection.source, 'key_name': connection.name,
+            'site_url': connection.url.rsplit('/api/v2/journal/grades/', 1)[0]})
+        setup.fields['api_key'].help_text = 'Залиште порожнім, щоб використати збережений ключ.'
     context = mapping = None
     available = []
     known = set()
@@ -89,18 +97,31 @@ def connect_source(request, journal_id):
                     setup = ConnectSourceForm({'source': item.source, 'site_url': item.url, 'api_key': item.api_key})
                     conn_name = item.name
                 else:
-                    setup = ConnectSourceForm(request.POST)
+                    setup_data = request.POST.copy()
+                    if connection and not setup_data.get('api_key', '').strip() and not setup_data.get('connection_code', '').strip():
+                        setup_data['api_key'] = connection.api_key
+                    setup = ConnectSourceForm(setup_data)
                 if setup.is_valid():
                     data = setup.cleaned_data
                     if not conn_name:
                         conn_name = data.get('key_name') or SOURCES[data['source']]
                     payload = fetch_source_roster(data['grades_url'], data['api_key'], data['source'])
+                    if backup:
+                        if data['source'] != backup.source or not backup.roster_cache.get('instance_id'):
+                            raise ExternalAPIError('Резервна адреса має належати тому самому сайту з підтвердженою ідентичністю. Спершу перевірте зв’язок основного підключення.')
+                        ensure_same_source(backup, payload)
+                        if data['grades_url'] == backup.url:
+                            raise ExternalAPIError('Цю адресу вже збережено. Вкажіть іншу адресу того самого сайту, наприклад у шкільній мережі.')
                     with transaction.atomic():
                         journal = _lock(journal, request.user)
                         if connection:
                             connection = journal.grade_apis.select_for_update().get(pk=connection.pk)
                             if connection.source != data['source']:
                                 raise ExternalAPIError('Це підключення належить іншому джерелу. Поверніться до журналу та підключіть нове джерело окремо.')
+                        elif backup:
+                            connection = journal.grade_apis.filter(source=backup.source, url=data['grades_url'],
+                                contract_version=2, source_class_id=backup.source_class_id,
+                                source_subject_id=backup.source_subject_id).first()
                         else:
                             connection = existing_source_connection(journal, data['source'], data['grades_url'], payload)
                         if connection is None:
@@ -113,6 +134,13 @@ def connect_source(request, journal_id):
                         connection.url = data['grades_url']
                         connection.roster_cache = payload
                         connection.roster_checked_at = timezone.now()
+                        if backup:
+                            connection.source_class_id = backup.source_class_id
+                            connection.source_subject_id = backup.source_subject_id
+                            connection.enabled = backup.enabled
+                            if not connection.roster_report:
+                                connection.roster_report = backup.roster_report
+                                connection.roster_sent_at = backup.roster_sent_at
                         if 'journal_roster_import' in payload.get('capabilities', []):
                             initial = _initial_context(connection)
                             if not connection.source_class_id:
@@ -124,10 +152,18 @@ def connect_source(request, journal_id):
                         if data.get('location_tag'):
                             connection.location_tag = data['location_tag'].strip()
                         connection.save()
+                        GradePullLog.objects.create(connection=connection, user=request.user,
+                            counts={'operation': 'connection', 'errors': 0})
+                        if backup:
+                            for mapping_row in backup.student_mappings.all():
+                                copied, _ = GradeStudentMapping.objects.get_or_create(connection=connection,
+                                    external_id=mapping_row.external_id, defaults={'student_id': mapping_row.student_id})
+                                if copied.student_id != mapping_row.student_id:
+                                    raise ExternalAPIError('Ця резервна адреса має інші відповідності учнів. Перевірте наявне підключення перед об’єднанням.')
                         AuditLog.objects.create(school=journal.school, user=request.user, action=AuditLog.Action.UPDATE,
                             target_model='GradeAPIConnection', target_id=str(connection.pk), description='Підключено джерело та отримано назви класів, предметів і учнів. Оцінки не імпортувалися.')
 
-                    apply_to_all = request.POST.get('apply_to_all_classes') == '1'
+                    apply_to_all = request.POST.get('apply_to_all_classes') == '1' and not backup
                     all_classes_count = 0
                     if apply_to_all:
                         other_journals = list(Journal.objects.filter(
@@ -218,6 +254,8 @@ def connect_source(request, journal_id):
                     connection.roster_cache = payload
                     connection.roster_checked_at = timezone.now()
                     connection.save(update_fields=['roster_cache', 'roster_checked_at'])
+                    GradePullLog.objects.create(connection=connection, user=request.user,
+                        counts={'operation': 'connection', 'errors': 0})
                     keep_roster_extras(connection)
                 messages.success(request, 'Назви класів, предметів та учнів оновлено. Оцінки не імпортувалися.')
                 return redirect(destination + '?connection=' + str(connection.pk))
@@ -360,6 +398,7 @@ def connect_source(request, journal_id):
             def _cl(s): return ''.join(ch for ch in s.casefold() if ch.isalnum())
             is_class_mismatched = _cl(source_class_name) != _cl(journal.student_class.name)
     response = render(request, 'portal/journal/connect_source.html', {'journal': journal, 'connection': connection,
+        'backup_connection': backup,
         'setup_form': setup, 'context_form': context, 'mapping_form': mapping,
         'source_class_name': source_class_name, 'is_class_mismatched': is_class_mismatched,
         'connections': journal.grade_apis.filter(contract_version=2).order_by('source', 'pk'), 'available_sources': available,
@@ -403,6 +442,16 @@ def test_source_connection(request, journal_id, connection_id):
     is_ajax = request.headers.get('x-requested-with') == 'XMLHttpRequest' or request.GET.get('format') == 'json'
 
     try:
+        if connection.contract_version == 1:
+            from apps.journals.services.external_grades import fetch_grade_payload
+            fetch_grade_payload(connection, journal.academic_year.start_date, journal.academic_year.end_date)
+            GradePullLog.objects.create(connection=connection, user=request.user,
+                counts={'operation': 'connection', 'errors': 0})
+            msg = 'Зв’язок успішний. API повернув коректний список оцінок. Оцінки не імпортувалися.'
+            if is_ajax:
+                return JsonResponse({'success': True, 'status': 'ok', 'message': msg})
+            messages.success(request, msg)
+            return redirect(request.POST.get('next') or reverse('portal:journal_integrations', args=[journal.pk]))
         payload = fetch_source_roster(connection.url, connection.api_key, source=None)
         payload_source = payload.get('source')
         source_switched = False
@@ -421,6 +470,7 @@ def test_source_connection(request, journal_id, connection_id):
         with transaction.atomic():
             _lock(journal, request.user)
             connection = journal.grade_apis.select_for_update().get(pk=connection.pk)
+            ensure_same_source(connection, payload)
             connection.roster_cache = payload
             connection.roster_checked_at = timezone.now()
             fields_to_update = ['roster_cache', 'roster_checked_at']
@@ -428,6 +478,8 @@ def test_source_connection(request, journal_id, connection_id):
                 connection.source = payload_source
                 fields_to_update.append('source')
             connection.save(update_fields=fields_to_update)
+            GradePullLog.objects.create(connection=connection, user=request.user,
+                counts={'operation': 'connection', 'errors': 0})
 
         caps = payload.get('capabilities', [])
         can_import = 'journal_roster_import' in caps
@@ -466,6 +518,8 @@ def test_source_connection(request, journal_id, connection_id):
             hint = "Маршрут API не знайдено. Перевірте адресу сайту та оновіть джерело з GitHub."
 
         full_msg = f"{err_msg} {hint}".strip() if hint and hint not in err_msg else err_msg
+        GradePullLog.objects.create(connection=connection, user=request.user,
+            counts={'operation': 'connection', 'errors': 1}, errors=[{'message': full_msg}])
         if is_ajax:
             return JsonResponse({
                 'success': False,
@@ -475,8 +529,10 @@ def test_source_connection(request, journal_id, connection_id):
                 'hint': hint,
             }, status=400)
         messages.error(request, full_msg)
-    except Exception as err:
-        full_msg = f"Помилка перевірки зв'язку: {err}. Перевірте адресу сервера."
+    except Exception:
+        full_msg = 'Помилка перевірки зв’язку. Перевірте адресу сервера та повторіть дію.'
+        GradePullLog.objects.create(connection=connection, user=request.user,
+            counts={'operation': 'connection', 'errors': 1}, errors=[{'message': full_msg}])
         if is_ajax:
             return JsonResponse({'success': False, 'status': 'error', 'message': full_msg}, status=400)
         messages.error(request, full_msg)
@@ -490,18 +546,15 @@ def test_source_connection(request, journal_id, connection_id):
 def quick_send_roster(request, journal_id, connection_id):
     """Швидка передача актуального списку учнів журналу на сайт джерела в один клік."""
     journal = _get_journal_or_403(request.user, journal_id, write=True)
-    connection = get_object_or_404(journal.grade_apis, pk=connection_id)
+    connection = get_object_or_404(journal.grade_apis, pk=connection_id, enabled=True)
     is_ajax = request.headers.get('x-requested-with') == 'XMLHttpRequest' or request.GET.get('format') == 'json'
 
     try:
         groups = group_connections_by_server(journal.grade_apis.filter(source=connection.source, enabled=True))
         group = next((g for g in groups if any(c.pk == connection.pk for c in g['connections'])), None)
-        if group and len(group['connections']) > 1:
-            active, _ = find_online_connection_in_group(group['connections'], preferred_id=connection.pk)
-            if active is None:
-                raise ExternalAPIError('Жодна адреса цього сервісу не підтвердила доступність та ідентичність. Перевірте підключення в Центрі API.')
-            connection = active
-        report = send_journal_roster(connection, request.user)
+        connection, report = exchange_with_fallback(group['connections'] if group else [connection],
+            lambda candidate: send_journal_roster(candidate, request.user),
+            preferred_id=connection.pk, selector=find_online_connection_in_group)
         connection.refresh_from_db()
         counts = report['counts']
         msg = (
@@ -517,14 +570,18 @@ def quick_send_roster(request, journal_id, connection_id):
                 'message': msg,
                 'level': 'warning' if counts.get('conflicts') or counts.get('needs_review') else 'success',
                 'operation': 'roster',
+                'attention_url': reverse('portal:journal_integrations', args=[journal.pk]) + '?tab=notifications',
                 'counts': counts,
                 'sent_at': timezone.localtime(connection.roster_sent_at).strftime('%d.%m.%Y %H:%M:%S') if connection.roster_sent_at else None
             })
         messages.success(request, msg)
     except ExternalAPIError as err:
         msg = f"Помилка передачі списку: {err}"
+        GradePullLog.objects.create(connection=connection, user=request.user,
+            counts={'operation': 'roster', 'errors': 1}, errors=[{'message': str(err)}])
         if is_ajax:
-            return JsonResponse({'success': False, 'operation': 'roster', 'message': msg}, status=400)
+            return JsonResponse({'success': False, 'operation': 'roster', 'message': msg,
+                'attention_url': reverse('portal:journal_integrations', args=[journal.pk]) + '?tab=notifications'}, status=400)
         messages.error(request, msg)
     except Exception:
         msg = 'Не вдалося підтвердити передачу списку. Перевірте діагностику в Центрі API; місцеві дані збережено.'
