@@ -1,5 +1,29 @@
 # Синхронізація, прокрутка та індикатори — Docker-перевірки
 
+## API та сповіщення — 1.3.34
+
+Окремий сценарій запускає тимчасовий Django-сервер на 127.0.0.1:19189. Використовуються `config.test_settings`, SQLite у `/tmp`, вигадані користувачі й підмінені відповіді джерел. Робочий `.env` та бази не читаються. Перевіряються простий вигляд API, дві адреси одного сайту, точні переходи зі сповіщень, розгортання блоків, пріоритет цілі над збереженою прокруткою, вирішення повідомлень та інструкція на великому й мобільному екранах.
+
+У першому терміналі:
+
+```bash
+mkdir -p /tmp/schooljournal-api-workspace-artifacts
+API_WORKSPACE_FIXTURE=/tmp/schooljournal-api-workspace-artifacts/api-workspace-browser-fixture.json \
+  .venv/bin/python tests/ux/api_workspace_server.py
+```
+
+Після повідомлення `API workspace synthetic fixture ready` у другому терміналі:
+
+```bash
+docker run --rm --network host \
+  -v "$PWD/static:/checks/static:ro" -v "$PWD/tests:/checks/tests:ro" \
+  -v /tmp/schooljournal-api-workspace-artifacts:/artifacts:rw -w /checks \
+  --entrypoint bash mcr.microsoft.com/playwright:v1.56.1-noble \
+  -lc 'npm install --prefix /tmp/pw playwright@1.56.1 --no-audit --no-fund --silent && node tests/site_lifecycle_check.js && node tests/site_sync_response_check.cjs && NODE_PATH=/tmp/pw/node_modules node tests/ux/api_workspace_check.cjs'
+```
+
+Після завершення зупиніть перший термінал через Ctrl+C: тимчасова БД і сесія приберуться. Для повторного проходу запустіть сервер знову, щоб відновити початкові невирішені сповіщення. Знімки залишаються в каталозі артефактів. Серверні регресії: `tests/test_api_workspace.py`; результати: `API_WORKSPACE_CHECKS.md`.
+
 ## Кнопки оцінок і списків — 1.3.32
 
 Окремий сценарій запускає справжні Django-сторінки й POST-маршрути на 127.0.0.1:19187. База тимчасова, налаштування `config.test_settings` не читають робочий `.env`, обидва джерела замінені вигаданими відповідями. Підтвердження списку з двома конфліктами не підміняє повідомлення про оцінки. Чотири кнопки перевіряються на ширинах 1440 і 390 пікселів.
