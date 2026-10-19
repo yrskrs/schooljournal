@@ -106,6 +106,9 @@ function applyJournalPage(html) {
   const focusedId = document.activeElement?.id;
   document.querySelectorAll('body > .student-action-dropdown').forEach(menu => menu.remove());
   current.replaceWith(incoming);
+  const noticeLink = document.querySelector('[data-api-notifications]');
+  const newNoticeLink = parsed.querySelector('[data-api-notifications]');
+  if (noticeLink && newNoticeLink) noticeLink.replaceChildren(...Array.from(newNoticeLink.childNodes));
   // Refresh server messages without removing client notifications.
   document.getElementById('messages-container')?.remove();
   const messages = parsed.getElementById('messages-container');
@@ -137,11 +140,12 @@ document.addEventListener('DOMContentLoaded', () => {
     const key = positionKey();
     const position = JSON.parse(sessionStorage.getItem(key) || 'null');
     sessionStorage.removeItem(key);
-    if (position && Date.now() - position.savedAt < 30 * 60 * 1000) {
+    if (!location.hash && position && Date.now() - position.savedAt < 30 * 60 * 1000) {
       restorePagePosition(position);
       requestAnimationFrame(() => restorePagePosition(position));
     }
   } catch (_) { /* Unavailable or stale storage is harmless. */ }
+  revealPageTarget();
   const htmxRequests = new Map();
   if (window.htmx) window.htmx.config.timeout = SITE_REQUEST_TIMEOUT;
   document.body.addEventListener('htmx:beforeRequest', event => {
@@ -156,6 +160,22 @@ document.addEventListener('DOMContentLoaded', () => {
   });
   document.body.addEventListener('htmx:timeout', () => showToast('Час очікування збереження вичерпано. Оновіть дані перед повторною дією.', 'warning'));
 });
+
+function revealPageTarget() {
+  if (!location.hash) return;
+  let id;
+  try { id = decodeURIComponent(location.hash.slice(1)); } catch (_) { return; }
+  const target = document.getElementById(id);
+  if (!target) return;
+  let element = target;
+  while (element) {
+    if (element.tagName === 'DETAILS') element.open = true;
+    element = element.parentElement;
+  }
+  target.scrollIntoView({block: 'start'});
+}
+
+window.addEventListener('hashchange', revealPageTarget);
 
 window.addEventListener('pagehide', rememberPagePosition);
 window.addEventListener('pageshow', () => {
@@ -192,9 +212,14 @@ document.addEventListener('submit', async event => {
         throw new Error('Отримано відповідь іншої операції. Оновіть журнал і повторіть дію.');
       }
       if (!response.ok || result.success !== true) {
+        if (form.dataset.syncOperation && result.attention_url) {
+          try { await refreshJournal(); } catch (_) { /* Keep the operation error visible. */ }
+          showSyncAttention(result.attention_url);
+        }
         throw new Error(result.message || 'Не вдалося зберегти зміни. Перевірте дані й повторіть.');
       }
       await refreshJournal();
+      if (form.dataset.syncOperation && result.level === 'warning' && result.attention_url) showSyncAttention(result.attention_url);
       showToast(result.message || 'Зміни збережено.', result.level || 'success');
       return;
     }
@@ -222,3 +247,15 @@ document.addEventListener('submit', async event => {
     if (button) button.disabled = false;
   }
 });
+
+function showSyncAttention(url) {
+  const container = document.getElementById('journalSyncAttention');
+  if (!container) return;
+  const target = new URL(url, location.href);
+  if (target.origin !== location.origin) return;
+  const link = document.createElement('a');
+  link.href = target.href;
+  link.className = 'api-attention-banner';
+  link.textContent = 'Є питання після обміну. Відкрити сповіщення та виправити →';
+  container.replaceChildren(link);
+}

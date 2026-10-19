@@ -366,7 +366,10 @@ def journal_detail(request, journal_id):
     test_connection = _pick_active_api(all_test_connections)
     work_connection = _pick_active_api(all_work_connections)
 
+    from apps.portal.api_workspace import request_overview
+    journal_api_notices = [n for n in request_overview(request)['notices'] if n['journal_id'] == journal.pk]
     context = {
+        'journal_api_notices': journal_api_notices,
         'integration_date_from': integration_start.isoformat(),
         'integration_date_to': integration_end.isoformat(),
         'journal': journal,

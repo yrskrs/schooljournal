@@ -1905,3 +1905,55 @@ body {
   .journal-api-bar .api-bar-label { display: none; }
   .journal-api-bar .api-status-chip { gap: .25rem; padding: .25rem .4rem; font-size: .72rem; }
 }
+/* API workspace: task-oriented navigation and persistent issue links. */
+.api-workspace { max-width: 1120px; margin: 0 auto; }
+.api-workspace-header, .api-section-heading { display: flex; justify-content: space-between; align-items: flex-start; gap: 1rem; flex-wrap: wrap; }
+.api-workspace-header { margin-bottom: 1.5rem; }
+.api-workspace-header h1 { margin: .15rem 0 .6rem; }
+.api-workspace-header p { max-width: 680px; }
+.api-eyebrow { color: var(--text-muted, #64748b); font-size: .85rem; margin: 0 0 .4rem; overflow-wrap: anywhere; }
+.api-actions { display: flex; flex-wrap: wrap; gap: .6rem; align-items: center; }
+.api-actions form { margin: 0; }
+.api-actions .form-select { width: auto; max-width: 100%; min-width: 0; flex: 1; }
+.api-start { padding: 1.25rem; margin-bottom: 1.25rem; scroll-margin-top: 5rem; }
+.api-start h2, .api-source-card h2 { font-size: 1.2rem; margin: 0 0 .5rem; }
+.api-start summary { cursor: pointer; font-weight: 600; }
+.api-start[open] summary { margin-bottom: .75rem; }
+.api-workspace-tabs { display: flex; flex-wrap: wrap; gap: .35rem; border-bottom: 1px solid var(--border, #e2e8f0); margin-bottom: 1.5rem; padding-bottom: .5rem; }
+.api-workspace-tabs a { display: inline-flex; gap: .5rem; align-items: center; padding: .7rem .9rem; border-radius: .5rem; font-weight: 600; color: var(--text-muted, #475569); text-decoration: none; }
+.api-workspace-tabs a[aria-current="page"] { background: #e8efff; color: #1e40af; }
+.api-workspace-tabs a:hover { background: #f1f5f9; }
+.api-workspace-tabs span, .api-notice-count { display: inline-flex; align-items: center; justify-content: center; min-width: 1.4rem; padding: .05rem .4rem; border-radius: 1rem; background: #e2e8f0; color: #334155; font-size: .78rem; }
+.api-notice-count { background: #fee2e2; color: #991b1b; }
+.api-source-card { padding: 1.4rem; margin: 1rem 0; }
+.api-state { padding: .35rem .7rem; border-radius: 1rem; background: #eff6ff; color: #1e40af; font-size: .8rem; font-weight: 600; }
+.api-state-warning { background: #fff3cd; color: #854d0e; }
+.api-state-paused { background: #f1f5f9; color: #475569; }
+.api-addresses { margin-top: 1.2rem; border-top: 1px solid var(--border, #e2e8f0); padding-top: .9rem; }
+.api-addresses summary, .api-advanced summary { cursor: pointer; font-weight: 600; padding: .25rem 0; }
+.api-address-row { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 1rem; padding: .9rem 0; border-bottom: 1px solid #edf2f7; }
+.api-address-url { overflow-wrap: anywhere; color: var(--text-muted, #475569); }
+.api-notice { display: flex; gap: 1rem; padding: 1.3rem; background: white; color: #1e293b; border: 1px solid #e2e8f0; border-left: 4px solid #d97706; border-radius: .65rem; text-decoration: none; margin: 1rem 0; scroll-margin-top: 5rem; }
+.api-notice:hover { background: #f8fafc; border-color: #94a3b8; }
+.api-notice h3 { font-size: 1.1rem; margin: .2rem 0 .5rem; }
+.api-notice p { margin-bottom: .6rem; overflow-wrap: anywhere; }
+.api-notice strong { color: #1d4ed8; }
+.api-notice-danger { border-left-color: #dc2626; }
+.api-notice-icon { flex-shrink: 0; display: inline-flex; align-items: center; justify-content: center; width: 1.7rem; height: 1.7rem; background: #fff7ed; color: #9a3412; border-radius: 50%; font-weight: 700; }
+.api-attention-banner { display: flex; flex-wrap: wrap; gap: .7rem; justify-content: space-between; padding: 1rem; margin-bottom: 1rem; border-radius: .5rem; background: #fff7ed; color: #9a3412; text-decoration: none; }
+.api-empty { padding: 2rem; text-align: center; }
+.api-empty > span { font-size: 2rem; color: #15803d; }
+.api-advanced { padding: 1rem 1.25rem; margin-top: 1.5rem; }
+.api-advanced .api-actions { align-items: flex-start; gap: 1rem; }
+.api-workspace a:focus-visible, .api-workspace summary:focus-visible { outline: 3px solid #2563eb; outline-offset: 3px; }
+.integration-page [id] { scroll-margin-top: 5rem; }
+.integration-page :target { outline: 3px solid #93c5fd; outline-offset: 4px; }
+@media (max-width: 600px) {
+  .api-workspace-header h1 { font-size: 1.7rem; }
+  .api-workspace-tabs a { padding: .65rem .6rem; font-size: .9rem; }
+  .api-start, .api-source-card, .api-notice { padding: 1rem; }
+  .api-notice { gap: .6rem; }
+  .api-actions { width: 100%; }
+  .api-actions .form-select { flex-basis: 100%; }
+  .api-source-card .api-actions .btn { flex-grow: 1; text-align: center; }
+}

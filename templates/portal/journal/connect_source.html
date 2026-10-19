@@ -4,16 +4,21 @@
 <div class="schedule-page integration-page">
   <div class="schedule-page-header">
     <div>
-      <h1>Підключити тести та завдання</h1>
+      <h1>{% if backup_connection %}Додати резервну адресу{% elif connection %}Налаштувати підключення{% else %}Підключити тести та завдання{% endif %}</h1>
       <p>Журнал: {{ journal.student_class.name }} · {{ journal.subject.name }}</p>
     </div>
     <div style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
-      <a class="btn btn-outline-secondary" href="{% url 'portal:teacher_api_keys' %}">Усі API ключі</a>
+      <a class="btn btn-outline-secondary" href="{% url 'portal:journal_integrations' journal.pk %}">API та обмін</a>
+      <a class="btn btn-outline-secondary" href="{% url 'portal:journal_integrations' journal.pk %}?tab=notifications">Сповіщення</a>
+      <a class="btn btn-outline-secondary" href="{% url 'portal:guide' %}#api-start">Як користуватися</a>
       <a class="btn btn-outline-primary" href="{% url 'portal:journal_detail' journal.pk %}">До журналу</a>
     </div>
   </div>
   <p>Вставте адресу й ключ. Журнал передасть копію свого класу та учнів у місцеву базу сайту. Надалі оцінки отримуються двома кнопками у журналі. Підключення необов’язкове для роботи будь-якого сайту.</p>
-  {% if connections %}
+  {% if backup_connection %}<div class="alert alert-info">Основне підключення: <strong>{{ backup_connection.name }}</strong> ({{ backup_connection.host_display }}). Вкажіть іншу адресу цього самого сайту та чинний для неї ключ. Клас, предмет і підтверджені учні перенесуться автоматично. Під час обміну журнал сам вибере доступну адресу.</div>{% endif %}
+  {% if connections and not backup_connection %}
+    <details>
+      <summary>Інші підключення цього журналу</summary>
     <div style="margin-bottom: 1.25rem;">
       <h3 style="font-size: 1rem; margin-bottom: 0.5rem;">Підключені до цього журналу сайти:</h3>
       {% for item in connections %}
@@ -29,8 +34,9 @@
         </div>
       {% endfor %}
     </div>
+    </details>
   {% endif %}
-  {% if available_sources and not connection %}
+  {% if available_sources and not connection and not backup_connection %}
   <section class="schedule-card">
     <h2>Уже підключений сайт</h2>
     <p>Адресу й ключ повторно вводити не потрібно. Журнал передасть учнів цього класу після натискання.</p>
@@ -71,7 +77,7 @@
       Через це результати та учні надходять з іншого класу. Перевірте секцію «Клас і предмет на сайті джерела» нижче та виберіть <strong>{{ journal.student_class.name }}</strong>.
     </div>
   {% endif %}
-  <section class="schedule-card"><h2>Список журналу → {{ connection.get_source_display }}</h2>
+  <section class="schedule-card" id="roster"><h2>Список журналу → {{ connection.get_source_display }}</h2>
     <p>Клас: {{ journal.student_class.name }}. Остання підтверджена передача: {{ connection.roster_sent_at|date:'d.m.Y H:i'|default:'ще не передано' }}. Учні зберігаються на сайті й доступні, коли журнал вимкнений.</p>
     {% if connection.roster_report.counts %}<p>Додано: {{ connection.roster_report.counts.created }}; оновлено: {{ connection.roster_report.counts.updated }}; виключено ігнорованих: {{ connection.roster_report.counts.ignored|default:0 }}; потребують відповідності: {{ connection.roster_report.counts.needs_review }}; конфлікти: {{ connection.roster_report.counts.conflicts }}.</p>{% endif %}
     <form method="post">{% csrf_token %}<input type="hidden" name="connection_id" value="{{ connection.pk }}">
@@ -83,7 +89,7 @@
   <details class="schedule-card"><summary>Оновити місцеву копію назв із сайту</summary><p>Назви збережені у журналі. Останнє отримання: {{ connection.roster_checked_at|date:'d.m.Y H:i' }}. Під час недоступності сайту ці дані залишаються.</p>
     <form method="post">{% csrf_token %}<input type="hidden" name="connection_id" value="{{ connection.pk }}"><button name="action" value="refresh" class="btn btn-outline-primary">Оновити назви класів та учнів</button></form>
   </details>
-  <details class="schedule-card" {% if not connection.source_class_id or not connection.source_subject_id or is_class_mismatched %}open{% endif %}><summary>Клас і предмет на сайті джерела</summary><p>Ці результати надходитимуть до {{ journal.student_class.name }} · {{ journal.subject.name }}. Однакові назви визначаються під час підключення. Якщо назви різні, оберіть потрібні тут.</p>
+  <details class="schedule-card" id="context" {% if not connection.source_class_id or not connection.source_subject_id or is_class_mismatched %}open{% endif %}><summary>Клас і предмет на сайті джерела</summary><p>Ці результати надходитимуть до {{ journal.student_class.name }} · {{ journal.subject.name }}. Однакові назви визначаються під час підключення. Якщо назви різні, оберіть потрібні тут.</p>
     {% if not connection.roster_cache.classes %}<p role="alert">На сайті ще немає доступних класів. У тестах виберіть клас і предмет для сесії; у завданнях призначте роботу класу. Потім оновіть назви тут.</p>{% endif %}
     <form method="post">{% csrf_token %}<input type="hidden" name="connection_id" value="{{ connection.pk }}">{{ context_form.as_p }}<button name="action" value="context" class="btn btn-primary">Підтвердити клас і предмет</button></form>
   </details>
@@ -94,21 +100,21 @@
       <button name="action" value="students" class="btn btn-primary">Зберегти підключення</button>
     </form>
   </details>{% endif %}
-  <details class="schedule-card" {% if setup_form.errors %}open{% endif %}><summary>Змінити IP, порт або ключ цього підключення</summary>
-  {% else %}<section class="schedule-card"><h2>1. Вкажіть адресу та ключ</h2><p>У тестах відкрийте «Підключення до журналу», у завданнях — «Налаштування → API та журнал». Натисніть «Створити ключ API». Скопіюйте адресу сайту та ключ у відповідні поля нижче.</p>{% endif %}
-    <form method="post">{% csrf_token %}{% if connection %}<input type="hidden" name="connection_id" value="{{ connection.pk }}">{% endif %}{{ setup_form.non_field_errors }}
+  <details class="schedule-card" id="address" {% if setup_form.errors %}open{% endif %}><summary>Змінити IP, порт або ключ цього підключення</summary>
+  {% else %}<section class="schedule-card" id="address"><h2>1. Вкажіть адресу та ключ</h2><p>У тестах відкрийте «Підключення до журналу», у завданнях — «Налаштування → API та журнал». Натисніть «Створити ключ API». Скопіюйте адресу сайту та ключ у відповідні поля нижче.</p>{% endif %}
+    <form method="post">{% csrf_token %}{% if backup_connection %}<input type="hidden" name="backup_for" value="{{ backup_connection.pk }}">{% endif %}{% if connection %}<input type="hidden" name="connection_id" value="{{ connection.pk }}">{% endif %}{{ setup_form.non_field_errors }}
       <p>{{ setup_form.source.label_tag }} {{ setup_form.source }} {{ setup_form.source.errors }}</p>
       <p>{{ setup_form.key_name.label_tag }} {{ setup_form.key_name }} {{ setup_form.key_name.errors }}<small>{{ setup_form.key_name.help_text }}</small></p>
       <p>{{ setup_form.site_url.label_tag }} {{ setup_form.site_url }} {{ setup_form.site_url.errors }}<small>{{ setup_form.site_url.help_text }}</small></p>
-      <p>{{ setup_form.api_key.label_tag }} {{ setup_form.api_key }} {{ setup_form.api_key.errors }}</p>
+      <p>{{ setup_form.api_key.label_tag }} {{ setup_form.api_key }} {{ setup_form.api_key.errors }}{% if setup_form.api_key.help_text %}<small>{{ setup_form.api_key.help_text }}</small>{% endif %}</p>
       <details {% if setup_form.connection_code.errors %}open{% endif %}><summary>Код зі старої версії</summary><p>{{ setup_form.connection_code.label_tag }} {{ setup_form.connection_code }} {{ setup_form.connection_code.errors }}</p></details>
-      <p style="margin: 0.75rem 0;">
+      {% if not backup_connection %}<p style="margin: 0.75rem 0;">
         <label style="display: inline-flex; align-items: center; gap: 0.5rem; cursor: pointer; font-weight: 500;">
           <input type="checkbox" name="apply_to_all_classes" value="1">
-          Підключити тести та завдання для всіх моїх класів/журналів одночасно
+          Використати це підключення також для всіх моїх журналів
         </label>
-      </p>
-      <p><button name="action" value="connect" class="btn btn-primary">Підключити й передати учнів</button></p>
+      </p>{% endif %}
+      <p><button name="action" value="connect" class="btn btn-primary">{% if backup_connection %}Зберегти резервну адресу{% else %}Підключити й передати учнів{% endif %}</button></p>
     </form>
   {% if connection %}
   </details>
@@ -125,6 +131,6 @@
   </section>
   {% endif %}
   <p>Ця сторінка не імпортує оцінок. Відкрийте журнал і натисніть «Синхронізувати з тестами» або «Синхронізувати із завданнями» за потрібний період.</p>
-  <p>Сайти можуть працювати на різних серверах і в різних мережах. У разі зміни IP чи порту змініть адресу в цьому підключенні. Коли джерело недоступне, журнал працює зі збереженими списками й оцінками. Після відновлення зв’язку повторіть синхронізацію.</p>
+  <p>Для ще однієї адреси цього самого сайту відкрийте «API та обмін → Резервна адреса». Якщо змінилася єдина адреса, виправте її тут. Коли жодна адреса недоступна, місцеві списки й оцінки зберігаються. Відкрийте «Сповіщення», виправте причину та повторіть дію.</p>
 </div>
 {% endblock %}

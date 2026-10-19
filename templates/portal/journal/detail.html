@@ -200,7 +200,7 @@
           Через це результати та учні надходять з іншого класу.
         </div>
       </div>
-      <a href="{% url 'portal:journal_integrations' journal.id %}" class="btn btn-sm" style="background: #b45309; color: white; font-weight: 600; text-decoration: none;">Виправити клас в Центрі API</a>
+      <a href="{% url 'portal:journal_integrations' journal.id %}?tab=notifications" class="btn btn-sm" style="background: #b45309; color: white; font-weight: 600; text-decoration: none;">Виправити клас в Центрі API</a>
     </div>
   {% endif %}
 
@@ -217,9 +217,9 @@
         <span style="font-weight: 600;">Тести:</span>
         {% if test_connection.has_multiple_endpoints %}
           <select id="selectTestEndpoint" onchange="const cid = this.value; document.getElementById('testConnectionId').value = cid; const targetId = cid || '{{ test_connection.id }}'; document.getElementById('testCheckBtn').dataset.connId = targetId; const rf = document.getElementById('formSendTestRoster'); if (rf) rf.action = `/journal/{{ journal.id }}/connection/${targetId}/send-roster/`;" style="font-size: 0.78rem; font-weight: 600; border-radius: 4px; border: 1px solid var(--border); padding: 0.12rem 0.35rem; background: white; max-width: 190px;" title="Оберіть активну мережу сервера (дім/школа) або залиште авто-вибір">
-            <option value="">⚡ Автовибір (Дім/Школа)</option>
+            <option value="" selected>⚡ Автоматично</option>
             {% for ep in test_connection.all_endpoints %}
-              <option value="{{ ep.id }}" {% if ep.id == test_connection.id %}selected{% endif %}>
+              <option value="{{ ep.id }}">
                 {{ ep.location_display|default:ep.name }} ({{ ep.host_display }})
               </option>
             {% endfor %}
@@ -263,9 +263,9 @@
         <span style="font-weight: 600;">Завдання:</span>
         {% if work_connection.has_multiple_endpoints %}
           <select id="selectWorkEndpoint" onchange="const cid = this.value; document.getElementById('workConnectionId').value = cid; const targetId = cid || '{{ work_connection.id }}'; document.getElementById('workCheckBtn').dataset.connId = targetId; const rf = document.getElementById('formSendWorkRoster'); if (rf) rf.action = `/journal/{{ journal.id }}/connection/${targetId}/send-roster/`;" style="font-size: 0.78rem; font-weight: 600; border-radius: 4px; border: 1px solid var(--border); padding: 0.12rem 0.35rem; background: white; max-width: 190px;" title="Оберіть активну мережу сервера (дім/школа) або залиште авто-вибір">
-            <option value="">⚡ Автовибір (Дім/Школа)</option>
+            <option value="" selected>⚡ Автоматично</option>
             {% for ep in work_connection.all_endpoints %}
-              <option value="{{ ep.id }}" {% if ep.id == work_connection.id %}selected{% endif %}>
+              <option value="{{ ep.id }}">
                 {{ ep.location_display|default:ep.name }} ({{ ep.host_display }})
               </option>
             {% endfor %}
@@ -311,11 +311,13 @@
       </div>
     {% endif %}
 
+    <a href="{% url 'portal:journal_integrations' journal.id %}?tab=notifications" class="btn btn-outline-primary btn-sm">Сповіщення{% if journal_api_notices %} ({{ journal_api_notices|length }}){% endif %}</a>
     <!-- Посилання в Центр API -->
     <a href="{% url 'portal:journal_integrations' journal.id %}" class="btn btn-outline-primary btn-sm" style="margin-left: auto; display: inline-flex; align-items: center; gap: 0.35rem; font-size: 0.82rem; padding: 0.2rem 0.6rem;" title="Відкрити повний Центр керування API та синхронізації">
       <span>⚙️ Центр керування API</span>
     </a>
   </div>
+  <div id="journalSyncAttention" aria-live="polite">{% if journal_api_notices %}<a class="api-attention-banner" href="{% url 'portal:journal_integrations' journal.id %}?tab=notifications"><strong>Питання API: {{ journal_api_notices|length }}</strong><span>Переглянути причину та виправити →</span></a>{% endif %}</div>
 </div>
 
 <!-- Панель фільтрів та інструментів сітки журналу -->

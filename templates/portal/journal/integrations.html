@@ -22,10 +22,23 @@
       <a class="btn btn-primary" href="{% url 'portal:connect_source' journal.pk %}" style="display: inline-flex; align-items: center; gap: 0.35rem;">
         <span>+ Підключити новий сайт</span>
       </a>
-      <a class="btn btn-outline-secondary" href="{% url 'portal:teacher_api_keys' %}">Усі API ключі</a>
+      <a class="btn btn-outline-secondary" href="{% url 'portal:journal_integrations' journal.pk %}">Простий вигляд · API та обмін</a>
+      <a class="btn btn-outline-secondary" href="{% url 'portal:journal_integrations' journal.pk %}?tab=notifications">Сповіщення</a>
       <a class="btn btn-outline-primary" href="{% url 'portal:journal_detail' journal.id %}">До журналу</a>
     </div>
   </div>
+
+  {% if can_edit %}{% if not editing_connection or editing_connection.contract_version == 1 %}
+  <details class="schedule-card" id="custom-api" {% if editing_connection or connection_form.is_bound %}open{% endif %}>
+    <summary>Нестандартне API · {% if editing_connection %}редагувати підключення{% else %}налаштувати вручну{% endif %}</summary>
+    <p>Для систем із власним форматом JSON. Повну адресу API та назви полів візьміть із документації цієї системи. Тести й завдання підключайте кнопкою «Додати API» у простому вигляді.</p>
+    <form method="post" action="{% url 'portal:journal_integrations' journal.pk %}">
+      {% csrf_token %}{% if editing_connection %}<input type="hidden" name="connection_id" value="{{ editing_connection.pk }}">{% endif %}
+      {{ connection_form.as_p }}
+      <button class="btn btn-primary" name="action" value="connection">Зберегти API</button>
+    </form>
+  </details>
+  {% endif %}{% endif %}
 
   <!-- Попередження про невідповідність класу, якщо є -->
   {% for api in journal_apis %}
@@ -83,7 +96,7 @@
           <div>
             <strong>Робота з сервером з різних місць (дім / школа)?</strong>
             <div style="font-size: 0.85rem; color: var(--text-muted);">
-              Якщо один і той самий сервер має різні IP вдома та в школі, відкрийте «✏️ Змінити налаштування» та вкажіть їм однакову <strong>«Групу сервера»</strong>. Журнал автоматично обиратиме доступну адресу без повідомлень про помилки!
+              У простому вигляді натисніть «Резервна адреса». Адреси підтвердженого сайту перемикаються автоматично. Ручна «Група сервера» потрібна лише для старих підключень без ідентичності сервісу. Однакова назва групи не об’єднує різні підтверджені сайти.
             </div>
           </div>
         </div>
@@ -239,19 +252,21 @@
                 {% endif %}
 
                 <!-- 4. Оновити назви -->
-                <form method="post" action="{% url 'portal:connect_source' journal.pk %}" style="display: inline;">
+                {% if api.contract_version == 2 %}<form method="post" action="{% url 'portal:connect_source' journal.pk %}" style="display: inline;">
                   {% csrf_token %}
                   <input type="hidden" name="connection_id" value="{{ api.id }}">
                   <input type="hidden" name="action" value="refresh">
                   <button type="submit" class="btn btn-outline-secondary btn-sm" title="Оновити перелік класів та предметів із сайту джерела">
                     <span>📥 Оновити назви з сайту</span>
                   </button>
-                </form>
+                </form>{% endif %}
 
                 <!-- 5. Редагувати налаштування -->
+                {% if api.contract_version == 1 %}<a href="{% url 'portal:journal_integrations' journal.pk %}?advanced=1&edit={{ api.id }}#custom-api" class="btn btn-outline-secondary btn-sm">Змінити налаштування</a>{% else %}
                 <button type="button" class="btn btn-outline-secondary btn-sm" onclick="toggleEditDetails('editSection_{{ api.id }}')">
                   <span>✏️ Змінити налаштування</span>
                 </button>
+                {% endif %}
 
                 <!-- 6. Видалити підключення -->
                 <form method="post" action="{% url 'portal:delete_source_connection' journal.pk api.id %}" style="display: inline; margin-left: auto;" onsubmit="return confirm('Видалити підключення до API «{{ api.name }}»?\n\nОцінки, які вже були виставлені в журналі, залишаться у повній безпеці.');">
@@ -567,6 +582,8 @@
                   <td style="padding: 0.5rem 0.75rem;">
                     {% if log.counts.operation == 'roster' %}
                       <span>📤 Передача списку</span>
+                    {% elif log.counts.operation == 'connection' %}
+                      <span>Перевірка зв’язку</span>
                     {% else %}
                       <span>📥 Отримання оцінок</span>
                     {% endif %}
@@ -587,6 +604,8 @@
                       <span style="color: var(--text-muted);">
                         {% if log.counts.operation == 'roster' %}
                           Створено: {{ log.counts.created|default:0 }}, оновлено: {{ log.counts.updated|default:0 }}
+                        {% elif log.counts.operation == 'connection' %}
+                          Зв’язок підтверджено. Оцінки не імпортувалися.
                         {% else %}
                           Додано: {{ log.counts.added|default:0 }}, оновлено: {{ log.counts.updated|default:0 }}, без змін: {{ log.counts.unchanged|default:0 }}
                         {% endif %}
@@ -741,7 +760,7 @@ function runHubConnectionTest(journalId, connectionId, btn) {
     if (banner) {
       banner.style.display = 'block';
       banner.className = 'api-test-banner ' + (ok ? 'banner-success' : 'banner-error');
-      banner.innerHTML = data.message;
+      banner.textContent = data.message;
     }
     if (window.showToast) {
       window.showToast(data.message, ok ? 'success' : 'error');
@@ -756,7 +775,7 @@ function runHubConnectionTest(journalId, connectionId, btn) {
     if (banner) {
       banner.style.display = 'block';
       banner.className = 'api-test-banner banner-error';
-      banner.innerHTML = errText;
+      banner.textContent = errText;
     }
     if (window.showToast) {
       window.showToast(errText, 'error');
