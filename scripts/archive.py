@@ -160,6 +160,17 @@ def install_source(archive_path, root):
             if target.is_symlink() or target.is_file():
                 target.unlink()
         archive.extractall(root, members=members, filter='data')
+        # Source snapshots contain files without directory entries. Under the
+        # maintenance umask their implicit parents would otherwise become 0700,
+        # making bind-mounted modules invisible to the application user.
+        for member in members:
+            path = root / member.name
+            if member.isfile():
+                path.chmod(path.stat().st_mode | 0o444)
+            directory = path if member.isdir() else path.parent
+            while directory != root:
+                directory.chmod(directory.stat().st_mode | 0o555)
+                directory = directory.parent
 
 
 def main():

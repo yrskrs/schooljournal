@@ -33,6 +33,8 @@ release/
 /reports/SYNC_REPAIR_*.md
 /reports/sync-diagnostics-*.json
 /reports/authorized-roster-check-*.json
+/reports/API_SYNC_AUDIT_*.json
+/reports/API_SYNC_AUDIT_*.md
 
 compose.override.yaml
 

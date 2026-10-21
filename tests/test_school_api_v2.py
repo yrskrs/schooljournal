@@ -2,7 +2,7 @@ import datetime as dt
 from unittest.mock import patch
 from django.test import TestCase, override_settings
 from django.urls import reverse
-from apps.journals.models import GradeAPIConnection, GradeStudentMapping, Grade, ExternalGrade
+from apps.journals.models import GradeAPIConnection, GradeStudentMapping, Grade, ExternalGrade, ExtraStudent
 from apps.journals.services.external_grades import import_grade_records, ExternalAPIError
 from school_sync.django_backend import operate, cycle
 from tests import test_journal_workflows as workflows
@@ -121,5 +121,60 @@ class SchoolAPIV2Tests(TestCase):
         self.assertEqual(log.counts['errors'], 0)
         self.assertEqual(Grade.objects.filter(lesson=self.l2).count(), 1)
         self.assertEqual(Grade.objects.get(student=self.empty_student).value, '11')
+
+    def test_late_attempt_keeps_session_lesson_when_completion_date_has_another_lesson(self):
+        GradeStudentMapping.objects.create(connection=self.connection, external_id='42', student=self.empty_student)
+        self.pull(self.row(id='schooltest:session:70:student:41', date=self.l1.date.isoformat()))
+        log = self.pull(self.row(id='schooltest:session:70:student:42', student_id=42,
+            date=self.l2.date.isoformat(), attempt_id=2))
+        self.assertEqual(log.counts['errors'], 0)
+        self.assertEqual(Grade.objects.get(student=self.empty_student).lesson_id, self.l1.pk)
+
+    def test_session_batch_is_independent_of_order_when_both_dates_have_lessons(self):
+        GradeStudentMapping.objects.create(connection=self.connection, external_id='42', student=self.empty_student)
+        rows = [self.row(id='schooltest:session:70:student:42', student_id=42,
+                    date=self.l2.date.isoformat(), attempt_id=2),
+                self.row(id='schooltest:session:70:student:41', date=self.l1.date.isoformat())]
+        log = import_grade_records(self.connection, rows, self.teacher, self.year.start_date, self.year.end_date)
+        self.assertEqual(log.counts['errors'], 0)
+        self.assertEqual(Grade.objects.filter(lesson=self.l1).count(), 2)
+
+    def test_reused_test_does_not_take_a_lesson_from_another_session(self):
+        GradeStudentMapping.objects.create(connection=self.connection, external_id='42', student=self.empty_student)
+        self.pull(self.row(id='schooltest:session:70:student:41', date=self.l1.date.isoformat()))
+        log = self.pull(self.row(id='schooltest:session:71:student:42', student_id=42,
+            date='2026-09-08', attempt_id=2))
+        self.assertEqual(log.counts['errors'], 1)
+        self.assertFalse(Grade.objects.filter(student=self.empty_student).exists())
+
+    def test_separate_pupil_session_uses_its_own_journal_and_original_date(self):
+        from apps.journals.services.extra_students import keep_separate
+        extra = ExtraStudent.objects.create(connection=self.connection, external_key='42',
+            name='Окремий Учень', is_separate=True)
+        keep_separate(extra, self.teacher)
+        extra.refresh_from_db()
+        for completion_date in ('2026-09-08', self.l2.date.isoformat()):
+            with self.subTest(completion_date=completion_date):
+                Grade.objects.all().delete()
+                ExternalGrade.objects.all().delete()
+                self.connection.inbox_results.all().delete()
+                rows = [self.row(id='schooltest:session:70:student:41', date=self.l1.date.isoformat()),
+                        self.row(id='schooltest:session:70:student:42', student_id=42,
+                            date=completion_date, attempt_id=2)]
+                log = import_grade_records(self.connection, rows, self.teacher, self.year.start_date, self.year.end_date)
+                self.assertEqual(log.counts['errors'], 0)
+                lesson = Grade.objects.get(student=extra.separate_student).lesson
+                self.assertEqual(lesson.journal_id, extra.separate_journal_id)
+                self.assertEqual(lesson.date, self.l1.date)
+
+    def test_explicit_separate_pupil_is_not_mapped_to_a_namesake_in_the_class(self):
+        from apps.journals.services.extra_students import keep_separate
+        extra = ExtraStudent.objects.create(connection=self.connection, external_key='42',
+            name=self.student.get_full_name_ukr(), is_separate=True)
+        keep_separate(extra, self.teacher)
+        log = self.pull(self.row(id='schooltest:session:70:student:42', student_id=42,
+            student_name=self.student.get_full_name_ukr()))
+        self.assertEqual(log.counts['errors'], 0)
+        self.assertFalse(GradeStudentMapping.objects.filter(connection=self.connection, external_id='42').exists())
 
 

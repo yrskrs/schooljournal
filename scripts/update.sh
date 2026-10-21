@@ -52,7 +52,9 @@ main() {
     fi
     update_started=1
     echo "Pre-update backup: $backup"
-    git merge --ff-only "$target"
+    # The maintenance umask protects backups, but mounted public source must
+    # remain readable by the unprivileged application container.
+    (umask 022; git merge --ff-only "$target")
     make_release_metadata_readable
     rm -f -- "$JOURNAL_ROOT/.release-image.yaml"
     printf 'services:\n  web:\n    image: %s\n    pull_policy: never\n' "$candidate" > "$JOURNAL_ROOT/.release-image.yaml"

@@ -46,7 +46,7 @@ SQL
     dc run --rm --no-deps -T --user 0 --entrypoint sh web -c 'find /app/media -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +; exec tar -xzf - -C /app/media' < "$work/media.tar.gz"
     commit=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["commit"])' "$work/manifest.json")
     if [[ $keep_code -eq 0 && "$commit" =~ ^[0-9a-f]{40}$ ]] && git rev-parse --is-inside-work-tree >/dev/null 2>&1 && git cat-file -e "$commit^{commit}" 2>/dev/null; then
-        git reset --hard "$commit"
+        (umask 022; git reset --hard "$commit")
     fi
     if [[ $keep_code -eq 0 ]]; then python3 "$JOURNAL_ROOT/scripts/archive.py" install-source "$work/source.tar.gz" "$JOURNAL_ROOT"; fi
     image_tag=$(python3 "$JOURNAL_ROOT/scripts/archive.py" tag "$work/manifest.json")

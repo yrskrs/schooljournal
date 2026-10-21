@@ -60,7 +60,10 @@ def keep_result(connection, row, start, end):
         if not isinstance(name, str) or not name.strip():
             name = next((s['name'] for s in connection.roster_cache.get('students', []) if s['id'] == identity), 'Учень, що потребує перевірки')
         from .extra_students import find_matching_class_student
-        matched = find_matching_class_student(connection.journal, name)
+        # A confirmed separate pupil or merged alias takes precedence over a
+        # coincidentally matching name in the teaching class.
+        can_match = not extra or not (extra.separate_student_id or extra.matched_student_id or extra.alias_of_id)
+        matched = find_matching_class_student(connection.journal, name) if can_match else None
         is_sep = True if not matched else False
         extra, created = ExtraStudent.objects.get_or_create(connection=connection, external_key=identity,
             defaults={'name': name.strip()[:200], 'is_separate': is_sep, 'matched_student': matched})

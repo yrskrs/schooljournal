@@ -1,6 +1,7 @@
 import importlib.util
 import io
 import json
+import os
 import tarfile
 import tempfile
 import unittest
@@ -113,6 +114,30 @@ class SnapshotSafetyTests(unittest.TestCase):
         self.assertTrue((destination / 'school_sync' / '__init__.py').exists())
         self.assertFalse((destination / 'school_sync' / '__pycache__').exists())
         self.assertFalse((destination / 'school_sync' / 'obsolete.py').exists())
+
+    def test_restore_source_is_readable_by_container_under_private_maintenance_umask(self):
+        package = self.root / 'apps' / 'synthetic'
+        package.mkdir(parents=True)
+        source = package / '__init__.py'
+        source.write_text('# public synthetic module')
+        source.chmod(0o600)
+        snapshot.create(self.work, self.root, 'sha256:' + 'a' * 64)
+        destination = Path(self.tmp.name) / 'installed-private-umask'
+        destination.mkdir()
+        secret = destination / '.env'
+        secret.write_text('synthetic-retained-secret')
+        secret.chmod(0o600)
+        previous_umask = os.umask(0o077)
+        try:
+            snapshot.install_source(self.work / 'source.tar.gz', destination)
+        finally:
+            os.umask(previous_umask)
+        module = destination / 'apps' / 'synthetic' / '__init__.py'
+        self.assertEqual(module.stat().st_mode & 0o444, 0o444)
+        for parent in (module.parent, module.parent.parent):
+            self.assertEqual(parent.stat().st_mode & 0o555, 0o555)
+        self.assertEqual(secret.stat().st_mode & 0o777, 0o600)
+        self.assertEqual(secret.read_text(), 'synthetic-retained-secret')
 
     def test_unwritable_source_is_rejected_before_any_file_is_removed(self):
         destination = Path(self.tmp.name) / 'blocked-source'

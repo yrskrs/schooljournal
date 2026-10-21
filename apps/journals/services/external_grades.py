@@ -113,20 +113,10 @@ def _resolve_target_lesson(target_journal, journal, connection, row, date, numbe
             raise ValueError('Некоректний номер уроку на дату.')
         lessons = lessons.filter(lesson_number=int(number))
 
-    # 1. Exact single match on date
-    if lessons.count() == 1:
-        lesson = lessons.first()
-        if session_id:
-            batch_session_lessons[session_id] = lesson
-        if work_id:
-            batch_work_lessons[work_id] = lesson
-        return lesson
-
-    # 2. Check if another student from the same test session was already matched in this batch
-    if session_id and session_id in batch_session_lessons:
-        return batch_session_lessons[session_id]
-
-    # 3. Check if another student from the same test session was previously imported in DB
+    session_key = (target_journal.pk, session_id)
+    work_key = (target_journal.pk, work_id)
+    # A known session wins over a different lesson on the completion date.
+    # Every cache entry belongs to a journal, including separate pupil journals.
     if session_id:
         prev = ExternalGrade.objects.filter(
             connection=connection,
@@ -134,28 +124,46 @@ def _resolve_target_lesson(target_journal, journal, connection, row, date, numbe
             external_id__startswith=f'{session_id}:'
         ).select_related('lesson').first()
         if prev and prev.lesson:
-            batch_session_lessons[session_id] = prev.lesson
+            batch_session_lessons[session_key] = prev.lesson
             return prev.lesson
+        if session_key in batch_session_lessons:
+            return batch_session_lessons[session_key]
 
-    # 4. Check if another student with the same work_id was already matched in this batch
-    if work_id and work_id in batch_work_lessons:
-        return batch_work_lessons[work_id]
-
-    # 5. Check if another student with the same work_id was previously imported in DB
-    if work_id:
+    # Tests can be reused in independent sessions. Their shared work_id must
+    # never override an explicit session identity.
+    if work_id and not session_id:
         prev = ExternalGrade.objects.filter(
             connection=connection,
             lesson__journal=target_journal,
             source_payload__work_id=row.get('work_id')
         ).select_related('lesson').first()
         if prev and prev.lesson:
-            batch_work_lessons[work_id] = prev.lesson
+            batch_work_lessons[work_key] = prev.lesson
             return prev.lesson
+        if work_key in batch_work_lessons:
+            return batch_work_lessons[work_key]
 
-    # 6. For separate extra student journal, auto-create lesson based on main journal/defaults
+    main_session_lesson = None
+    if target_journal != journal and session_id:
+        previous = ExternalGrade.objects.filter(connection=connection,
+            lesson__journal=journal, external_id__startswith=f'{session_id}:').select_related('lesson').first()
+        main_session_lesson = previous.lesson if previous else batch_session_lessons.get((journal.pk, session_id))
+
+    if lessons.count() == 1 and not main_session_lesson:
+        lesson = lessons.first()
+        if session_id:
+            batch_session_lessons[session_key] = lesson
+        elif work_id:
+            batch_work_lessons[work_key] = lesson
+        return lesson
+
+    # Copy the main session's lesson into the separate journal; never return
+    # the main journal's lesson for a separate pupil.
     if target_journal != journal:
-        main_lesson = journal.lessons.filter(date=date).first()
-        l_num = int(number) if number is not None else (main_lesson.lesson_number if main_lesson else 1)
+        main_lesson = main_session_lesson or journal.lessons.filter(date=date).first()
+        if main_lesson:
+            date = main_lesson.date
+        l_num = main_lesson.lesson_number if main_session_lesson else (int(number) if number is not None else (main_lesson.lesson_number if main_lesson else 1))
         topic = main_lesson.topic if main_lesson else (row.get('title') if connection.contract_version == 2 else json_field(row, connection.title_key, 'Позакласна робота'))
         homework = main_lesson.homework if main_lesson else ''
         l_type = main_lesson.lesson_type if main_lesson else LessonType.ORDINARY
@@ -172,6 +180,10 @@ def _resolve_target_lesson(target_journal, journal, connection, row, date, numbe
                 'created_by': user,
             }
         )
+        if session_id:
+            batch_session_lessons[session_key] = lesson
+        elif work_id:
+            batch_work_lessons[work_key] = lesson
         return lesson
 
     # 7. Check if test title matches a lesson topic in target journal
@@ -182,9 +194,9 @@ def _resolve_target_lesson(target_journal, journal, connection, row, date, numbe
             l_top = (l.topic or '').strip()
             if l_top and len(l_top) >= 3 and (l_top.lower() in title.lower() or title.lower() in l_top.lower()):
                 if session_id:
-                    batch_session_lessons[session_id] = l
-                if work_id:
-                    batch_work_lessons[work_id] = l
+                    batch_session_lessons[session_key] = l
+                elif work_id:
+                    batch_work_lessons[work_key] = l
                 return l
 
     raise ValueError('Не знайдено однозначний урок на дату. Створіть урок або надайте lesson_number.')
@@ -215,6 +227,12 @@ def import_grade_records(connection, rows, user, date_from, date_to):
     for r in (rows if isinstance(rows, list) else []):
         if not isinstance(r, dict):
             continue
+        if connection.contract_version == 2 and (
+                r.get('source') != connection.source
+                or str(r.get('class_id')) != connection.source_class_id
+                or str(r.get('subject_id')) != connection.source_subject_id
+                or r.get('status') != 'final' or r.get('approved_by_teacher') is not True):
+            continue
         r_date_text = r.get('date') if connection.contract_version == 2 else json_field(r, connection.date_key)
         if not isinstance(r_date_text, str) or len(r_date_text) != 10:
             continue
@@ -222,18 +240,24 @@ def import_grade_records(connection, rows, user, date_from, date_to):
             r_date = dt.date.fromisoformat(r_date_text)
         except ValueError:
             continue
+        if not (date_from <= r_date <= date_to and journal.academic_year.start_date <= r_date <= journal.academic_year.end_date):
+            continue
         r_num = r.get('lesson_number') if connection.contract_version == 2 else json_field(r, connection.lesson_key)
+        if r_num is not None and (isinstance(r_num, bool) or not str(r_num).isdigit() or int(r_num) < 1):
+            continue
         matching_ls = journal.lessons.filter(date=r_date).exclude(lesson_type__in=SUMMARY_TYPES)
         if r_num is not None and str(r_num).isdigit():
             matching_ls = matching_ls.filter(lesson_number=int(r_num))
         if matching_ls.count() == 1:
             matched_l = matching_ls.first()
             s_id = _extract_session_id(r)
-            if s_id and s_id not in batch_session_lessons:
-                batch_session_lessons[s_id] = matched_l
+            s_key = (journal.pk, s_id)
+            if s_id and (s_key not in batch_session_lessons or matched_l.date < batch_session_lessons[s_key].date):
+                batch_session_lessons[s_key] = matched_l
             w_id = str(r.get('work_id')) if r.get('work_id') is not None else (str(json_field(r, 'work_id')) if json_field(r, 'work_id') is not None else None)
-            if w_id and w_id not in batch_work_lessons:
-                batch_work_lessons[w_id] = matched_l
+            w_key = (journal.pk, w_id)
+            if w_id and not s_id and w_key not in batch_work_lessons:
+                batch_work_lessons[w_key] = matched_l
 
     for index, row in enumerate(rows, 1):
         inbox = None
