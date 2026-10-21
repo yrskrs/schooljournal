@@ -1,0 +1,61 @@
+const { chromium } = require('playwright');
+const fs = require('node:fs');
+const assert = require('node:assert/strict');
+(async () => {
+  const browser = await chromium.launch({headless: true});
+  const fixture = JSON.parse(fs.readFileSync('/artifacts/grade-placement-browser-fixture.json'));
+  const origin = fixture.url;
+  let checks = 0;
+  const errors = [];
+  try {
+    for (const viewport of [{width: 1440, height: 1000}, {width: 390, height: 844}]) {
+      const context = await browser.newContext({viewport});
+      await context.addCookies(fixture.cookies);
+      const page = await context.newPage();
+      page.on('pageerror', error => errors.push(error.message));
+      await page.route('**/*', route => new URL(route.request().url()).hostname === '127.0.0.1' ? route.continue() : route.abort());
+      await context.request.get(origin + '/__synthetic__/reset');
+      await page.goto(`${origin}/journal/${fixture.journal}/?month=2026-10`);
+      await page.getByRole('link', {name: 'Обрати урок', exact: true}).click();
+      await page.getByRole('heading', {name: 'Обрати урок для оцінок', exact: true}).waitFor();
+      let state = await (await context.request.get(origin + '/__synthetic__/state')).json();
+      assert.equal(state.fetches.preview, 0, 'GET must not fetch external results');
+      await page.locator('[name=date_from]').fill('2026-10-01');
+      await page.locator('[name=date_to]').fill('2026-10-31');
+      await page.getByRole('button', {name: 'Показати роботи', exact: true}).click();
+      await page.locator('.grade-placement-card').first().waitFor();
+      assert.equal(await page.locator('.grade-placement-card').count(), 2);
+      state = await (await context.request.get(origin + '/__synthetic__/state')).json();
+      assert.equal(state.grades.length, 1, 'Preview must preserve existing grades');
+      assert.equal(state.assignments, 0);
+      const card = page.locator('.grade-placement-card').filter({has: page.getByRole('heading', {name: 'Тест минулого тижня', exact: true})});
+      await card.locator('select[name=lesson]').selectOption(String(fixture.lesson));
+      assert.match(await card.locator('select[name=lesson] option:checked').innerText(), /05\.09\.2026/);
+      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+      await page.evaluate(() => window.scrollTo(0, 0));
+      await page.screenshot({path: `/artifacts/grade-lesson-preview-${viewport.width}.png`, fullPage: true});
+      checks += 6;
+      await card.getByRole('button', {name: 'Зберегти вибір і отримати оцінки цієї роботи', exact: true}).click();
+      await page.getByText('Додано 1;', {exact: false}).first().waitFor();
+      assert.equal(await page.locator('.grade-placement-card').count(), 1, 'Other work remains unimported');
+      state = await (await context.request.get(origin + '/__synthetic__/state')).json();
+      assert.equal(state.grades.length, 2);
+      assert.equal(state.assignments, 1);
+      assert.equal(state.fetches.preview, 1, 'Confirmation must use the staged preview');
+      assert.equal(state.grades.every(g => g.lesson__date === '2026-09-05'), true);
+      assert.equal(state.records.some(id => id.includes('session:71:')), false);
+      checks += 6;
+      await page.getByRole('link', {name: 'До журналу', exact: true}).click();
+      await page.getByRole('button', {name: 'Синхронізувати з тестами', exact: true}).click();
+      await page.waitForFunction(async () => (await (await fetch('/__synthetic__/state')).json()).grades.length === 3);
+      state = await (await context.request.get(origin + '/__synthetic__/state')).json();
+      assert.equal(state.grades.every(g => g.lesson__date === '2026-09-05'), true, 'Later automatic results use the saved lesson');
+      assert.equal(state.fetches.automatic, 1);
+      await page.screenshot({path: `/artifacts/grade-lesson-applied-${viewport.width}.png`, fullPage: true});
+      checks += 2;
+      await context.close();
+    }
+    assert.deepEqual(errors, []);
+    console.log(`PASS: ${checks} browser checks for teacher lesson choice and later automatic sync`);
+  } finally { await browser.close(); }
+})().catch(error => { console.error(error); process.exit(1); });

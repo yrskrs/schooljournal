@@ -1,0 +1,62 @@
+{% extends 'base.html' %}
+{% block title %}Обрати урок для оцінок | {{ journal.student_class.name }}{% endblock %}
+{% block extra_head %}
+<style>
+.grade-placement-page { max-width: 960px; margin: 0 auto; }
+.grade-placement-page .schedule-card { min-width: 0; }
+.grade-placement-page > .alert-info { display: block; }
+.grade-placement-page > .alert-info p { margin: .65rem 0 0; }
+.grade-placement-period { display: flex; flex-wrap: wrap; gap: 1rem; align-items: end; }
+.grade-placement-period p { margin: 0; }
+.grade-placement-period label { display: block; margin-bottom: .4rem; }
+.grade-placement-period input[type=date] { border: 1px solid var(--border); border-radius: 6px; padding: .55rem .65rem; font: inherit; background: white; min-width: 0; box-sizing: border-box; }
+.grade-placement-card h2 { overflow-wrap: anywhere; }
+.grade-placement-card select { width: 100%; max-width: 100%; margin: .5rem 0 1rem; }
+.grade-placement-page .schedule-row-actions { flex-wrap: wrap; }
+@media(max-width: 520px) { .grade-placement-period > *, .grade-placement-period input { width: 100%; } }
+</style>
+{% endblock %}
+{% block content %}
+<div class="schedule-page grade-placement-page">
+  <div class="schedule-page-header">
+    <div><h1>Обрати урок для оцінок</h1><p>{{ journal.student_class.name }} · {{ journal.subject.name }} · {{ source_title }}</p></div>
+    <a class="btn btn-outline-primary" href="{% url 'portal:journal_detail' journal.pk %}">До журналу</a>
+  </div>
+  <div class="alert alert-info">
+    <strong>Учні завершили одну роботу в різні дні?</strong>
+    <p>Отримайте список робіт, знайдіть потрібну й оберіть урок, за який виставити оцінки. Пізні результати цієї роботи надалі потраплятимуть на обраний урок також під час звичайної синхронізації.</p>
+    <p>Уже записані оцінки залишаться на своїх місцях. Якщо клітинка зайнята іншою оцінкою або відвідуванням, журнал покаже конфлікт для вашого рішення.</p>
+  </div>
+  {% if not has_lessons %}<p class="alert alert-warning">У цьому журналі ще немає звичайних уроків. Спершу створіть потрібний урок у журналі.</p>{% endif %}
+  <section class="schedule-card">
+    <h2>1. За який період учні завершували роботи?</h2>
+    <p>Це дати завершення на сайті тестів або завдань. Урок для оцінок можна обрати за інший день навчального року.</p>
+    <form method="post" action="{% url 'portal:choose_grade_lesson' journal.pk source %}" class="grade-placement-period">
+      {% csrf_token %}<input type="hidden" name="connection_id" value="{{ connection_id }}">
+      {{ pull_form.non_field_errors }}
+      {% for field in pull_form %}<p>{{ field.label_tag }}{{ field }}{{ field.errors }}</p>{% endfor %}
+      <button class="btn btn-primary" name="action" value="preview">Показати роботи</button>
+    </form>
+    <p class="text-muted">Ця дія лише отримує список робіт і не виставляє оцінок. Попередній перегляд доступний 20 хвилин.</p>
+  </section>
+  {% if preview %}
+    <h2>2. Оберіть урок для потрібної роботи</h2>
+    <p>Інші роботи не зміняться. Щоб повернути звичайний режим для роботи, оберіть «Автоматично за сесією та датою».</p>
+    {% for card in cards %}
+      <article class="schedule-card grade-placement-card" data-work-id="{{ card.id }}">
+        <h2>{{ card.title }}</h2>
+        <p>{{ card.connection }} · результатів: <strong>{{ card.count }}</strong> · уже отримано: {{ card.known }}</p>
+        {% if card.date_from %}<p>Завершено: {{ card.date_from|date:'d.m.Y' }}{% if card.date_to != card.date_from %} — {{ card.date_to|date:'d.m.Y' }}{% endif %}</p>{% endif %}
+        <form method="post" action="{% url 'portal:choose_grade_lesson' journal.pk source %}">
+          {% csrf_token %}<input type="hidden" name="preview_token" value="{{ preview.token }}">
+          <input type="hidden" name="work_id" value="{{ card.id }}">
+          {{ card.form.lesson.label_tag }}{{ card.form.lesson }}
+          <button class="btn btn-primary" name="action" value="apply">Зберегти вибір і отримати оцінки цієї роботи</button>
+        </form>
+      </article>
+    {% empty %}<p class="schedule-card">Немає робіт для вибору. Змініть період або отримайте список знову.</p>{% endfor %}
+    {% if cards.has_other_pages %}<nav aria-label="Сторінки робіт">{% if cards.has_previous %}<a href="?page={{ cards.previous_page_number }}">Попередні роботи</a>{% endif %} · {{ cards.number }} / {{ cards.paginator.num_pages }} · {% if cards.has_next %}<a href="?page={{ cards.next_page_number }}">Наступні роботи</a>{% endif %}</nav>{% endif %}
+  {% endif %}
+  <p><a href="{% url 'portal:external_grade_review' journal.pk %}">Оцінки з робіт: конфлікти та помилки</a> · <a href="{% url 'portal:guide' %}#grade-lesson">Як обрати урок</a></p>
+</div>
+{% endblock %}

@@ -1,7 +1,8 @@
 import re
 from django import forms
 from django.contrib.auth import authenticate
-from apps.journals.models import GradeAPIConnection
+from apps.journals.models import GradeAPIConnection, Lesson
+from apps.journals.services.scheduling import SUMMARY_TYPES
 from apps.journals.services.external_grades import validate_api_url
 
 
@@ -72,6 +73,22 @@ class PullGradesForm(forms.Form):
         if data.get('date_from') and data.get('date_to') and data['date_from'] > data['date_to']:
             raise forms.ValidationError('Кінець періоду має бути не раніше початку.')
         return data
+
+
+class LessonChoiceField(forms.ModelChoiceField):
+    def label_from_instance(self, lesson):
+        return f'{lesson.date:%d.%m.%Y} · урок №{lesson.lesson_number} · {lesson.topic or "Без теми"}'
+
+
+class GradeLessonForm(forms.Form):
+    lesson = LessonChoiceField(queryset=Lesson.objects.none(), required=False,
+        label='За який урок виставити нові оцінки', empty_label='Автоматично за сесією та датою',
+        widget=forms.Select(attrs={'class': 'form-control'}))
+
+    def __init__(self, *args, journal, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fields['lesson'].queryset = journal.lessons.exclude(lesson_type__in=SUMMARY_TYPES).filter(
+            date__gte=journal.academic_year.start_date, date__lte=journal.academic_year.end_date).order_by('-date', 'lesson_number', 'pk')
 
 
 class LocalProfileLinkForm(forms.Form):

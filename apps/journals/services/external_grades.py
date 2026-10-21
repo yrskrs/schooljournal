@@ -208,6 +208,9 @@ def import_grade_records(connection, rows, user, date_from, date_to):
     from apps.portal.permissions import has_journal_access
     if not has_journal_access(user, journal, write=True):
         raise ExternalAPIError('Доступ до журналу змінився. Оновіть сторінку.')
+    from .grade_placement import assignment_map, peer_connections, work_key, validate_lesson
+    placement_peers = peer_connections(connection)
+    assigned_lessons = assignment_map(connection, peers=placement_peers)
     ignored_student_ids = set(journal.ignored_students.values_list('pk', flat=True))
     students = {}
     for student in journal_students(journal):
@@ -368,19 +371,41 @@ def import_grade_records(connection, rows, user, date_from, date_to):
             number = row.get('lesson_number') if connection.contract_version == 2 else json_field(row, connection.lesson_key)
             session_id = _extract_session_id(row)
             work_id = str(row.get('work_id')) if row.get('work_id') is not None else (str(json_field(row, 'work_id')) if json_field(row, 'work_id') is not None else None)
-            lesson = _resolve_target_lesson(
-                target_journal=target_journal,
-                journal=journal,
-                connection=connection,
-                row=row,
-                date=date,
-                number=number,
-                user=user,
-                session_id=session_id,
-                work_id=work_id,
-                batch_session_lessons=batch_session_lessons,
-                batch_work_lessons=batch_work_lessons,
-            )
+            selected_key = work_key(connection, source_payload or row)
+            selected_lesson = assigned_lessons.get(selected_key)
+            if selected_key in assigned_lessons and selected_lesson is None:
+                raise ValueError('Збережено різні уроки для цієї роботи. Відкрийте «Обрати урок» і підтвердьте потрібний.')
+            previous = ExternalGrade.objects.filter(connection__in=placement_peers, external_id=external_id).select_related('lesson').order_by('pk').first() if selected_lesson else None
+            if selected_lesson:
+                validate_lesson(journal, selected_lesson)
+            if selected_lesson and previous:
+                # Teacher choices place new results; existing grade history is
+                # never moved, cleared or duplicated by changing the selection.
+                if previous.student_id != student.pk:
+                    raise ValueError('Цей результат уже належить іншому учню. Історію збережено; перевірте відповідності.')
+                lesson = previous.lesson
+            elif selected_lesson and target_journal.pk == journal.pk:
+                lesson = selected_lesson
+            elif selected_lesson:
+                lesson, _ = Lesson.objects.get_or_create(journal=target_journal,
+                    date=selected_lesson.date, lesson_number=selected_lesson.lesson_number,
+                    defaults={'topic': selected_lesson.topic, 'homework': selected_lesson.homework,
+                        'lesson_type': selected_lesson.lesson_type, 'semester': selected_lesson.semester,
+                        'created_by': user})
+            else:
+                lesson = _resolve_target_lesson(
+                    target_journal=target_journal,
+                    journal=journal,
+                    connection=connection,
+                    row=row,
+                    date=date,
+                    number=number,
+                    user=user,
+                    session_id=session_id,
+                    work_id=work_id,
+                    batch_session_lessons=batch_session_lessons,
+                    batch_work_lessons=batch_work_lessons,
+                )
             if not (date_from <= date <= date_to or date_from <= lesson.date <= date_to):
                 raise ValueError('Дата оцінки поза вибраним періодом.')
             if not (journal.academic_year.start_date <= lesson.date <= journal.academic_year.end_date):

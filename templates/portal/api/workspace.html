@@ -65,6 +65,7 @@
       <div class="api-actions">
         {% if can_edit %}<a class="btn btn-primary" href="{{ group.setup_url }}">Налаштувати</a>{% endif %}
         <a class="btn btn-secondary" href="{% url 'portal:journal_detail' group.journal.pk %}">До журналу</a>
+        {% if can_edit and group.enabled %}<a class="btn btn-secondary" href="{% url 'portal:choose_grade_lesson' group.journal.pk group.primary.source %}?connection_id={{ group.primary.pk }}">Обрати урок для оцінок</a>{% endif %}
         {% if group.notices %}<a class="btn btn-outline-primary" href="{{ group.hub_url }}?tab=notifications">Вирішити питання ({{ group.notices|length }})</a>{% endif %}
         {% if can_edit and group.primary.contract_version == 2 %}<a class="btn btn-secondary" href="{% url 'portal:connect_source' group.journal.pk %}?backup_for={{ group.primary.pk }}">+ Резервна адреса</a>{% endif %}
       </div>

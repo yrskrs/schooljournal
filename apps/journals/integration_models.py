@@ -101,6 +101,17 @@ class GradeAPIConnection(models.Model):
         return f"{source_title} (Ключ: {self.masked_key}) — {self.capabilities_description}"
 
 
+class GradeLessonAssignment(models.Model):
+    connection = models.ForeignKey(GradeAPIConnection, on_delete=models.CASCADE, related_name='lesson_assignments')
+    work_key = models.CharField(max_length=64)
+    lesson = models.ForeignKey('journals.Lesson', on_delete=models.CASCADE, related_name='api_assignments')
+    selected_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=['connection', 'work_key'], name='unique_api_work_lesson')]
+
+
 class GradeStudentMapping(models.Model):
     connection = models.ForeignKey(GradeAPIConnection, on_delete=models.CASCADE, related_name='student_mappings')
     external_id = models.CharField(max_length=100)

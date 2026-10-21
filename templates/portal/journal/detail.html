@@ -239,6 +239,7 @@
             <input type="hidden" name="next" value="{{ request.get_full_path }}">
             <button type="submit" form="formPullTestGrades" class="btn-chip" title="Синхронізувати з тестами: отримати оцінки за період ({{ integration_date_from }} — {{ integration_date_to }})" aria-label="Синхронізувати з тестами">📥 Оцінки</button>
           </form>
+          <a class="btn-chip" href="{% url 'portal:choose_grade_lesson' journal.pk 'schooltest' %}?date_from={{ integration_date_from }}&amp;date_to={{ integration_date_to }}" title="Обрати урок для оцінок певного тесту">Обрати урок</a>
           {% if test_connection.can_send_roster %}
             <form method="post" id="formSendTestRoster" data-sync-operation="roster" action="{% url 'portal:quick_send_roster' journal.id test_connection.id %}" style="display: inline;" onsubmit="return confirm('Передати актуальний список учнів класу {{ journal.student_class.name }} на сайт тестів?');">
               {% csrf_token %}
@@ -285,6 +286,7 @@
             <input type="hidden" name="next" value="{{ request.get_full_path }}">
             <button type="submit" form="formPullWorkGrades" class="btn-chip" title="Синхронізувати із завданнями: отримати оцінки за період ({{ integration_date_from }} — {{ integration_date_to }})" aria-label="Синхронізувати із завданнями">📥 Оцінки</button>
           </form>
+          <a class="btn-chip" href="{% url 'portal:choose_grade_lesson' journal.pk 'schoolwork' %}?date_from={{ integration_date_from }}&amp;date_to={{ integration_date_to }}" title="Обрати урок для оцінок певного завдання">Обрати урок</a>
           {% if work_connection.can_send_roster %}
             <form method="post" id="formSendWorkRoster" data-sync-operation="roster" action="{% url 'portal:quick_send_roster' journal.id work_connection.id %}" style="display: inline;" onsubmit="return confirm('Передати актуальний список учнів класу {{ journal.student_class.name }} на сайт завдань?');">
               {% csrf_token %}

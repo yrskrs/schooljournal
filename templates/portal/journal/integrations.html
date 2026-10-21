@@ -238,6 +238,7 @@
                       <span>📥 Отримати оцінки</span>
                     </button>
                   </form>
+                  <a class="btn btn-outline-primary btn-sm" href="{% url 'portal:choose_grade_lesson' journal.pk api.source %}?connection_id={{ api.id }}">Обрати урок</a>
                 {% endif %}
 
                 <!-- 3. Передати учнів на сайт -->

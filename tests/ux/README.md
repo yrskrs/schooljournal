@@ -1,5 +1,37 @@
 # Синхронізація, прокрутка та індикатори — Docker-перевірки
 
+## Вибір уроку для пізніх результатів — 1.3.36
+
+Стенд створює тимчасову SQLite у `/tmp`, вигаданого вчителя й учнів, уроки
+та вже імпортовану оцінку. Відповіді API підмінено; робочі `.env`, бази й
+томи не використовуються. Перевіряються окремий попередній перегляд,
+вибір старішого уроку поза періодом завершення робіт, імпорт лише потрібної
+сесії, збереження наявної оцінки й наступний автоматичний імпорт на обраний
+урок. Екрани: 1440×1000 та 390×844.
+
+Перший термінал:
+
+```bash
+mkdir -p /tmp/schooljournal-grade-placement-artifacts
+GRADE_PLACEMENT_FIXTURE=/tmp/schooljournal-grade-placement-artifacts/grade-placement-browser-fixture.json \
+  .venv/bin/python tests/ux/grade_placement_server.py
+```
+
+Другий термінал після повідомлення про готовність:
+
+```bash
+docker run --rm --network host --security-opt label=disable \
+  -v "$PWD/tests/ux:/checks:ro" \
+  -v /tmp/schooljournal-grade-placement-artifacts:/artifacts:rw \
+  --entrypoint bash mcr.microsoft.com/playwright:v1.56.1-noble \
+  -lc 'npm install --prefix /tmp/pw playwright@1.56.1 --no-audit --no-fund --silent && NODE_PATH=/tmp/pw/node_modules node /checks/grade_placement_check.cjs'
+```
+
+Очікується 28 успішних перевірок. Знімки залишаються в каталозі артефактів.
+Зупиніть сервер через Ctrl+C для видалення його тимчасової бази й сесії.
+Серверні регресії: `tests/test_grade_placement.py`; результати:
+[GRADE_PLACEMENT_CHECKS.md](../../GRADE_PLACEMENT_CHECKS.md).
+
 ## API та сповіщення — 1.3.34
 
 Окремий сценарій запускає тимчасовий Django-сервер на 127.0.0.1:19189. Використовуються `config.test_settings`, SQLite у `/tmp`, вигадані користувачі й підмінені відповіді джерел. Робочий `.env` та бази не читаються. Перевіряються простий вигляд API, дві адреси одного сайту, точні переходи зі сповіщень, розгортання блоків, пріоритет цілі над збереженою прокруткою, вирішення повідомлень та інструкція на великому й мобільному екранах.
