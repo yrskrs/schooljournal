@@ -92,6 +92,104 @@ def _boolean(row, key, default):
     return value
 
 
+def _extract_session_id(row):
+    raw_id = str(row.get('id') or '')
+    if raw_id.startswith('schooltest:session:'):
+        parts = raw_id.split(':')
+        if len(parts) >= 3 and parts[2].isdigit():
+            return f"schooltest:session:{parts[2]}"
+    elif raw_id.startswith('schoolwork:assignment:'):
+        parts = raw_id.split(':')
+        if len(parts) >= 3 and parts[2].isdigit():
+            return f"schoolwork:assignment:{parts[2]}"
+    return None
+
+
+def _resolve_target_lesson(target_journal, journal, connection, row, date, number, user,
+                           session_id, work_id, batch_session_lessons, batch_work_lessons):
+    lessons = target_journal.lessons.filter(date=date).exclude(lesson_type__in=SUMMARY_TYPES)
+    if number is not None:
+        if isinstance(number, bool) or not str(number).isdigit() or int(number) < 1:
+            raise ValueError('Некоректний номер уроку на дату.')
+        lessons = lessons.filter(lesson_number=int(number))
+
+    # 1. Exact single match on date
+    if lessons.count() == 1:
+        lesson = lessons.first()
+        if session_id:
+            batch_session_lessons[session_id] = lesson
+        if work_id:
+            batch_work_lessons[work_id] = lesson
+        return lesson
+
+    # 2. Check if another student from the same test session was already matched in this batch
+    if session_id and session_id in batch_session_lessons:
+        return batch_session_lessons[session_id]
+
+    # 3. Check if another student from the same test session was previously imported in DB
+    if session_id:
+        prev = ExternalGrade.objects.filter(
+            connection=connection,
+            lesson__journal=target_journal,
+            external_id__startswith=f'{session_id}:'
+        ).select_related('lesson').first()
+        if prev and prev.lesson:
+            batch_session_lessons[session_id] = prev.lesson
+            return prev.lesson
+
+    # 4. Check if another student with the same work_id was already matched in this batch
+    if work_id and work_id in batch_work_lessons:
+        return batch_work_lessons[work_id]
+
+    # 5. Check if another student with the same work_id was previously imported in DB
+    if work_id:
+        prev = ExternalGrade.objects.filter(
+            connection=connection,
+            lesson__journal=target_journal,
+            source_payload__work_id=row.get('work_id')
+        ).select_related('lesson').first()
+        if prev and prev.lesson:
+            batch_work_lessons[work_id] = prev.lesson
+            return prev.lesson
+
+    # 6. For separate extra student journal, auto-create lesson based on main journal/defaults
+    if target_journal != journal:
+        main_lesson = journal.lessons.filter(date=date).first()
+        l_num = int(number) if number is not None else (main_lesson.lesson_number if main_lesson else 1)
+        topic = main_lesson.topic if main_lesson else (row.get('title') if connection.contract_version == 2 else json_field(row, connection.title_key, 'Позакласна робота'))
+        homework = main_lesson.homework if main_lesson else ''
+        l_type = main_lesson.lesson_type if main_lesson else LessonType.ORDINARY
+        sem = main_lesson.semester if main_lesson else None
+        lesson, _ = Lesson.objects.get_or_create(
+            journal=target_journal,
+            date=date,
+            lesson_number=l_num,
+            defaults={
+                'topic': topic or 'Позакласна робота',
+                'homework': homework,
+                'lesson_type': l_type,
+                'semester': sem,
+                'created_by': user,
+            }
+        )
+        return lesson
+
+    # 7. Check if test title matches a lesson topic in target journal
+    raw_title = row.get('title') if isinstance(row, dict) else None
+    title = (str(raw_title) if raw_title is not None else '').strip()
+    if title and len(title) >= 3:
+        for l in target_journal.lessons.exclude(lesson_type__in=SUMMARY_TYPES).order_by('-date'):
+            l_top = (l.topic or '').strip()
+            if l_top and len(l_top) >= 3 and (l_top.lower() in title.lower() or title.lower() in l_top.lower()):
+                if session_id:
+                    batch_session_lessons[session_id] = l
+                if work_id:
+                    batch_work_lessons[work_id] = l
+                return l
+
+    raise ValueError('Не знайдено однозначний урок на дату. Створіть урок або надайте lesson_number.')
+
+
 @transaction.atomic
 def import_grade_records(connection, rows, user, date_from, date_to):
     journal = Journal.objects.select_for_update().get(pk=connection.journal_id)
@@ -111,6 +209,32 @@ def import_grade_records(connection, rows, user, date_from, date_to):
     seen = set()
     if not isinstance(rows, list) or len(rows) > (50000 if connection.contract_version == 2 else 1000):
         raise ExternalAPIError('Завелика або некоректна відповідь API.')
+    batch_session_lessons = {}
+    batch_work_lessons = {}
+    # Pre-scan rows to detect lessons for sessions and works present in this batch
+    for r in (rows if isinstance(rows, list) else []):
+        if not isinstance(r, dict):
+            continue
+        r_date_text = r.get('date') if connection.contract_version == 2 else json_field(r, connection.date_key)
+        if not isinstance(r_date_text, str) or len(r_date_text) != 10:
+            continue
+        try:
+            r_date = dt.date.fromisoformat(r_date_text)
+        except ValueError:
+            continue
+        r_num = r.get('lesson_number') if connection.contract_version == 2 else json_field(r, connection.lesson_key)
+        matching_ls = journal.lessons.filter(date=r_date).exclude(lesson_type__in=SUMMARY_TYPES)
+        if r_num is not None and str(r_num).isdigit():
+            matching_ls = matching_ls.filter(lesson_number=int(r_num))
+        if matching_ls.count() == 1:
+            matched_l = matching_ls.first()
+            s_id = _extract_session_id(r)
+            if s_id and s_id not in batch_session_lessons:
+                batch_session_lessons[s_id] = matched_l
+            w_id = str(r.get('work_id')) if r.get('work_id') is not None else (str(json_field(r, 'work_id')) if json_field(r, 'work_id') is not None else None)
+            if w_id and w_id not in batch_work_lessons:
+                batch_work_lessons[w_id] = matched_l
+
     for index, row in enumerate(rows, 1):
         inbox = None
         target_journal = journal
@@ -126,11 +250,23 @@ def import_grade_records(connection, rows, user, date_from, date_to):
                     continue
                 if (inbox.extra_student and inbox.extra_student.is_separate
                         and not inbox.extra_student.matched_student_id and not inbox.extra_student.separate_student_id):
-                    inbox.resolved = True
-                    inbox.reason = 'Збережено для окремого учня без зарахування до класу.'
-                    inbox.save(update_fields=['resolved', 'reason'])
-                    counts['added' if inbox.payload_created else 'updated' if inbox.payload_changed else 'unchanged'] += 1
-                    continue
+                    from .extra_students import find_matching_class_student
+                    student_candidate = find_matching_class_student(journal, inbox.extra_student.name or row.get('student_name'))
+                    if student_candidate:
+                        inbox.extra_student.matched_student = student_candidate
+                        inbox.extra_student.is_separate = False
+                        inbox.extra_student.save(update_fields=['matched_student', 'is_separate', 'updated_at'])
+                        from apps.journals.models import GradeStudentMapping
+                        GradeStudentMapping.objects.update_or_create(
+                            connection=connection, external_id=inbox.extra_student.external_key,
+                            defaults={'student': student_candidate}
+                        )
+                    else:
+                        inbox.resolved = True
+                        inbox.reason = 'Збережено для окремого учня без зарахування до класу.'
+                        inbox.save(update_fields=['resolved', 'reason'])
+                        counts['added' if inbox.payload_created else 'updated' if inbox.payload_changed else 'unchanged'] += 1
+                        continue
                 if inbox.extra_student and inbox.extra_student.separate_journal_id:
                     target_journal = Journal.objects.select_for_update().get(pk=inbox.extra_student.separate_journal_id)
                     if not has_journal_access(user, target_journal, write=True):
@@ -205,38 +341,26 @@ def import_grade_records(connection, rows, user, date_from, date_to):
                 date = dt.date.fromisoformat(date_text)
             except ValueError:
                 raise ValueError('Дата має бути у форматі YYYY-MM-DD.') from None
-            if not date_from <= date <= date_to or not journal.academic_year.start_date <= date <= journal.academic_year.end_date:
-                raise ValueError('Дата оцінки поза вибраним періодом / навчальним роком.')
-            lessons = target_journal.lessons.filter(date=date).exclude(lesson_type__in=SUMMARY_TYPES)
             number = row.get('lesson_number') if connection.contract_version == 2 else json_field(row, connection.lesson_key)
-            if number is not None:
-                if isinstance(number, bool) or not str(number).isdigit() or int(number) < 1:
-                    raise ValueError('Некоректний номер уроку на дату.')
-                lessons = lessons.filter(lesson_number=int(number))
-            if lessons.count() != 1:
-                if target_journal != journal:
-                    main_lesson = journal.lessons.filter(date=date).first()
-                    l_num = int(number) if number is not None else (main_lesson.lesson_number if main_lesson else 1)
-                    topic = main_lesson.topic if main_lesson else (row.get('title') if connection.contract_version == 2 else json_field(row, connection.title_key, 'Позакласна робота'))
-                    homework = main_lesson.homework if main_lesson else ''
-                    l_type = main_lesson.lesson_type if main_lesson else LessonType.ORDINARY
-                    sem = main_lesson.semester if main_lesson else None
-                    lesson, _ = Lesson.objects.get_or_create(
-                        journal=target_journal,
-                        date=date,
-                        lesson_number=l_num,
-                        defaults={
-                            'topic': topic or 'Позакласна робота',
-                            'homework': homework,
-                            'lesson_type': l_type,
-                            'semester': sem,
-                            'created_by': user,
-                        }
-                    )
-                else:
-                    raise ValueError('Не знайдено однозначний урок на дату. Створіть урок або надайте lesson_number.')
-            else:
-                lesson = lessons.first()
+            session_id = _extract_session_id(row)
+            work_id = str(row.get('work_id')) if row.get('work_id') is not None else (str(json_field(row, 'work_id')) if json_field(row, 'work_id') is not None else None)
+            lesson = _resolve_target_lesson(
+                target_journal=target_journal,
+                journal=journal,
+                connection=connection,
+                row=row,
+                date=date,
+                number=number,
+                user=user,
+                session_id=session_id,
+                work_id=work_id,
+                batch_session_lessons=batch_session_lessons,
+                batch_work_lessons=batch_work_lessons,
+            )
+            if not (date_from <= date <= date_to or date_from <= lesson.date <= date_to):
+                raise ValueError('Дата оцінки поза вибраним періодом.')
+            if not (journal.academic_year.start_date <= lesson.date <= journal.academic_year.end_date):
+                raise ValueError('Дата уроку поза навчальним роком цього журналу.')
             raw_value = row.get('value') if connection.contract_version == 2 else json_field(row, connection.value_key)
             if isinstance(raw_value, bool) or not str(raw_value).isdigit() or not 1 <= int(raw_value) <= 12:
                 raise ValueError('Оцінка має бути цілим числом від 1 до 12.')

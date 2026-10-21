@@ -2,6 +2,7 @@ from pathlib import Path
 import shutil
 import subprocess
 import tempfile
+import unittest
 from io import StringIO
 from unittest.mock import patch
 
@@ -202,6 +203,7 @@ class InitialSetupMigrationTests(TransactionTestCase):
             MigrationExecutor(connection).migrate([after])
 
 
+@unittest.skipUnless(shutil.which('bash'), 'bash is not available')
 class SetupScriptTests(TestCase):
     def test_public_url_allows_lan_host_and_origin_without_rotating_existing_secrets(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -126,6 +126,8 @@ class SnapshotSafetyTests(unittest.TestCase):
         self.assertEqual(marker.read_text(), '# keep this source')
         self.assertTrue(blocked.is_dir())
 
+    import sys
+    @unittest.skipIf(sys.platform == 'win32', 'Symlinks require special privileges on Windows')
     def test_source_symlink_is_rejected_before_another_directory_is_removed(self):
         destination = Path(self.tmp.name) / 'linked-source'
         (destination / 'apps').mkdir(parents=True)

@@ -48,7 +48,7 @@ class NZOfflineContractTests(TestCase):
 
     def test_saved_journal_schema_parses_due_date_separately(self):
         service = NZService()
-        html = (Path(__file__).parent / 'fixtures/nz_journal_synthetic.html').read_text()
+        html = (Path(__file__).parent / 'fixtures/nz_journal_synthetic.html').read_text(encoding='utf-8')
         response = MagicMock(status_code=200, url='https://nz.ua/journal/index', text=html)
         with patch.object(service.session, 'get', return_value=response), patch.object(service.session, 'post') as post:
             data = service.fetch_journal_data('7001')

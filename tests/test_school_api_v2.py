@@ -14,9 +14,11 @@ class SchoolAPIV2Tests(TestCase):
             source_class_id='7',source_subject_id='3',url='http://schooltest-api:8000/api/v2/journal/grades/',api_key='synthetic')
         GradeStudentMapping.objects.create(connection=self.connection,external_id='41',student=self.student)
     def row(self, **extra):
-        return dict(source='schooltest',id='synthetic-session-student',student_id=41,class_id=7,subject_id=3,work_id=9,
+        data = dict(source='schooltest',id='synthetic-session-student',student_id=41,class_id=7,subject_id=3,work_id=9,
             title='Вигаданий тест',points=8,max_points=12,value='8',grading_scale=12,date=self.l1.date.isoformat(),
-            status='final',updated_at='2026-10-10T12:00:00+03:00',attempt_id=1,is_ai=False,approved_by_teacher=True,**extra)
+            status='final',updated_at='2026-10-10T12:00:00+03:00',attempt_id=1,is_ai=False,approved_by_teacher=True)
+        data.update(extra)
+        return data
     def pull(self, row):
         return import_grade_records(self.connection,[row],self.teacher,self.year.start_date,self.year.end_date)
     def test_repeat_and_correction_update_one_import(self):
@@ -65,3 +67,59 @@ class SchoolAPIV2Tests(TestCase):
             self.assertEqual(payload['schema_version'],2);self.assertEqual(len(payload['records']),3)
             self.assertEqual(self.client.get(reverse('portal:roster_sync')).status_code,200)
             cycle();self.assertFalse(Grade.objects.exists())
+
+    def test_students_who_completed_test_on_different_dates_attached_to_same_lesson(self):
+        GradeStudentMapping.objects.create(connection=self.connection, external_id='42', student=self.empty_student)
+        row1 = self.row(id='schooltest:session:10:student:41', student_id=41, date='2026-09-05', value='10')
+        row2 = self.row(id='schooltest:session:10:student:42', student_id=42, date='2026-09-06', value='11', attempt_id=2)
+        log = import_grade_records(self.connection, [row1, row2], self.teacher, self.year.start_date, self.year.end_date)
+        self.assertEqual(log.counts['errors'], 0)
+        self.assertEqual(log.counts['added'], 2)
+        self.assertEqual(Grade.objects.filter(lesson=self.l1).count(), 2)
+        self.assertEqual(Grade.objects.get(student=self.student).value, '10')
+        self.assertEqual(Grade.objects.get(student=self.empty_student).value, '11')
+
+    def test_subsequent_sync_attaches_to_session_lesson(self):
+        GradeStudentMapping.objects.create(connection=self.connection, external_id='42', student=self.empty_student)
+        row1 = self.row(id='schooltest:session:11:student:41', student_id=41, date='2026-09-05', value='9')
+        log1 = import_grade_records(self.connection, [row1], self.teacher, self.year.start_date, self.year.end_date)
+        self.assertEqual(log1.counts['added'], 1)
+
+        # Later, student 2 finishes on 2026-09-08 (no lesson)
+        row2 = self.row(id='schooltest:session:11:student:42', student_id=42, date='2026-09-08', value='12', attempt_id=2)
+        log2 = import_grade_records(self.connection, [row2], self.teacher, self.year.start_date, self.year.end_date)
+        self.assertEqual(log2.counts['errors'], 0)
+        self.assertEqual(log2.counts['added'], 1)
+        self.assertEqual(Grade.objects.filter(lesson=self.l1).count(), 2)
+
+    def test_reversed_order_students_attach_to_session_lesson(self):
+        GradeStudentMapping.objects.create(connection=self.connection, external_id='42', student=self.empty_student)
+        # row2 (finished on 2026-09-07, non-lesson day) comes BEFORE row1 (lesson day 2026-09-05)
+        row2 = self.row(id='schooltest:session:12:student:42', student_id=42, date='2026-09-07', value='10', attempt_id=2)
+        row1 = self.row(id='schooltest:session:12:student:41', student_id=41, date='2026-09-05', value='8')
+        log = import_grade_records(self.connection, [row2, row1], self.teacher, self.year.start_date, self.year.end_date)
+        self.assertEqual(log.counts['errors'], 0)
+        self.assertEqual(log.counts['added'], 2)
+        self.assertEqual(Grade.objects.filter(lesson=self.l1).count(), 2)
+
+    def test_auto_match_student_by_name_imports_to_class(self):
+        # Student has no mapping in GradeStudentMapping, student_name is 'Вигаданий Учень'
+        row = self.row(id='schooltest:unmapped:99', student_id=None, student_key='unmapped:99',
+                       student_name=self.student.get_full_name_ukr(), value='10', date='2026-09-05', attempt_id=99)
+        log = import_grade_records(self.connection, [row], self.teacher, self.year.start_date, self.year.end_date)
+        self.assertEqual(log.counts['errors'], 0)
+        self.assertEqual(log.counts['added'], 1)
+        self.assertEqual(Grade.objects.get(student=self.student).value, '10')
+
+    def test_test_completed_on_weekend_attaches_to_matching_topic_lesson(self):
+        # Lesson l2 is on 2026-10-09 with topic 'Тема B'.
+        # Students complete test on Saturday 2026-10-10 with title containing 'Тема B'
+        GradeStudentMapping.objects.create(connection=self.connection, external_id='42', student=self.empty_student)
+        row = self.row(id='schooltest:session:15:student:42', student_id=42, date='2026-10-10',
+                       title='Контрольний тест: Тема B', value='11', work_id=55)
+        log = import_grade_records(self.connection, [row], self.teacher, self.year.start_date, self.year.end_date)
+        self.assertEqual(log.counts['errors'], 0)
+        self.assertEqual(Grade.objects.filter(lesson=self.l2).count(), 1)
+        self.assertEqual(Grade.objects.get(student=self.empty_student).value, '11')
+
+

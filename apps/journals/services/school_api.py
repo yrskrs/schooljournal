@@ -87,7 +87,8 @@ def normalize_v2_grade(connection, row):
     from .api_inbox import resolve_student
     local_id = resolve_student(connection, row)
     normalized = {'id': row.get('id'), 'student_id': local_id, 'date': row.get('date'),
-        'value': row.get('value'), 'is_ai': row.get('is_ai'), 'approved_by_teacher': row.get('approved_by_teacher')}
+        'value': row.get('value'), 'is_ai': row.get('is_ai'), 'approved_by_teacher': row.get('approved_by_teacher'),
+        'title': row.get('title'), 'work_id': row.get('work_id')}
     if row.get('lesson_number') is not None:
         normalized['lesson_number'] = row['lesson_number']
     metadata = {key: row.get(key) for key in ('source', 'id', 'student_id', 'class_id', 'subject_id',

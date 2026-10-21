@@ -278,8 +278,10 @@ def journal_detail(request, journal_id):
         else:
             month_number = int(selected_month)
             year_number = journal.academic_year.start_date.year if month_number >= journal.academic_year.start_date.month else journal.academic_year.end_date.year
-        integration_start = max(integration_start, datetime.date(year_number, month_number, 1))
-        integration_end = min(integration_end, datetime.date(year_number, month_number, calendar.monthrange(year_number, month_number)[1]))
+        m_start = datetime.date(year_number, month_number, 1)
+        m_end = datetime.date(year_number, month_number, calendar.monthrange(year_number, month_number)[1])
+        integration_start = max(integration_start, m_start - datetime.timedelta(days=7))
+        integration_end = min(integration_end, m_end + datetime.timedelta(days=14))
 
     extra_journal = Journal.objects.filter(
         school=journal.school,

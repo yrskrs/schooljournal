@@ -9,6 +9,35 @@ from apps.portal.permissions import has_journal_access
 from .external_grades import ExternalAPIError
 
 
+def find_matching_class_student(journal, raw_name):
+    """Find a unique student in journal whose Ukrainian name matches raw_name."""
+    if not journal or not raw_name or not isinstance(raw_name, str):
+        return None
+    from apps.journals.services.assessment import journal_students
+
+    def clean(s):
+        return ''.join(ch.lower() for ch in (s or '') if ch.isalnum())
+
+    target_clean = clean(raw_name)
+    if not target_clean or len(target_clean) < 3:
+        return None
+
+    matches = []
+    for s in journal_students(journal):
+        variants = {
+            clean(s.get_full_name_ukr()),
+            clean(f"{s.last_name} {s.first_name}"),
+            clean(f"{s.first_name} {s.last_name}"),
+            clean(f"{s.last_name}{s.first_name}"),
+        }
+        if target_clean in variants:
+            matches.append(s)
+
+    if len(matches) == 1:
+        return matches[0]
+    return None
+
+
 def sync_topics_from_main_journal(extra_journal, main_journal=None):
     """
     Підтягує або оновлює теми уроків з основного навчального журналу
