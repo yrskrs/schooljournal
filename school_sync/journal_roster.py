@@ -21,9 +21,7 @@ def similar(left, right):
     left, right = left.casefold().split(), right.casefold().split()
     if not left or not right:
         return False
-    return (SequenceMatcher(None, ' '.join(left), ' '.join(right)).ratio() >= .68
-        or (SequenceMatcher(None, left[0], right[0]).ratio() >= .8
-            and len(left) > 1 and len(right) > 1 and left[1][0] == right[1][0]))
+    return SequenceMatcher(None, ' '.join(left), ' '.join(right)).ratio() >= .68
 
 
 def validate(payload):

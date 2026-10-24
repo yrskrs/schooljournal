@@ -45,38 +45,27 @@ def _same_revision(updated_at, submitted):
 def find_suggested_student(extra_name, students):
     if not extra_name or not students:
         return None
-    name_clean = ' '.join(extra_name.strip().casefold().split())
-    parts = name_clean.split()
-    if not parts:
-        return None
-
-    # 1. Exact full name match
-    for s in students:
-        s_full = ' '.join(s.get_full_name_ukr().strip().casefold().split())
-        if s_full == name_clean:
-            return s
-
-    # 2. Exact (last_name + first_name)
-    if len(parts) >= 2:
-        for s in students:
-            s_last = s.last_name.strip().casefold()
-            s_first = s.first_name.strip().casefold()
-            if (parts[0] == s_last and parts[1] == s_first) or (parts[0] == s_first and parts[1] == s_last):
-                return s
-            if parts[0] == s_last and s_first and parts[1][0] == s_first[0]:
-                return s
-
-    # 3. Surname match only (if unique in this class!)
-    matching_surname = [s for s in students if s.last_name.strip().casefold() == parts[0] or (len(parts) > 1 and s.last_name.strip().casefold() == parts[-1])]
-    if len(matching_surname) == 1:
-        return matching_surname[0]
-
-    # 4. Fuzzy similarity
+    exact = [s for s in students if s.get_full_name_ukr().casefold() == extra_name.casefold()]
+    if len(exact) == 1: return exact[0]
+    if len(exact) > 1: return None
     candidates = [s for s in students if similar(extra_name, s.get_full_name_ukr())]
-    if len(candidates) == 1:
-        return candidates[0]
+    return candidates[0] if len(candidates) == 1 else None
 
-    return None
+
+def exact_preview(journal):
+    from collections import Counter
+    from school_sync.journal_roster import signature
+    students = list(journal_students(journal))
+    extras = list(ExtraStudent.objects.filter(connection__journal=journal, connection__enabled=True, alias_of__isnull=True,
+        matched_student__isnull=True, separate_student__isnull=True).order_by('pk'))
+    local_counts = Counter(s.get_full_name_ukr().casefold() for s in students)
+    remote_counts = Counter((e.connection_id, e.name.casefold()) for e in extras)
+    pairs = [(e, next(s for s in students if s.get_full_name_ukr().casefold() == e.name.casefold()))
+        for e in extras if local_counts[e.name.casefold()] == 1 and remote_counts[e.connection_id, e.name.casefold()] == 1]
+    revision = signature([[(s.pk, s.get_full_name_ukr()) for s in students],
+        [(e.pk, e.name, e.updated_at.isoformat()) for e in extras]])
+    return pairs, revision
+
 
 
 @login_required
@@ -91,20 +80,12 @@ def api_inbox(request, journal_id):
                     raise PermissionDenied('Доступ до журналу змінився.')
                 action = request.POST.get('action')
                 if action == 'batch_match':
-                    count = 0
-                    class_students = list(journal_students(journal))
-                    unmatched_extras = ExtraStudent.objects.select_for_update().filter(
-                        connection__journal=journal, alias_of__isnull=True, matched_student__isnull=True, separate_student__isnull=True
-                    )
-                    for ext in unmatched_extras:
-                        sug = find_suggested_student(ext.name, class_students)
-                        if sug:
-                            match_student(ext, sug, request.user)
-                            ext.results.filter(resolved=False, is_ignored=False).update(
-                                reason='Відповідність підтверджено автоматично. Оцінки синхронізуються.'
-                            )
-                            count += 1
-                    messages.success(request, f'Успішно підтверджено {count} учнів за прізвищами! Надалі вони синхронізуватимуться автоматично без запиту.')
+                    pairs, revision = exact_preview(journal)
+                    if request.POST.get('batch_version') != revision or request.POST.get('confirm') != 'on':
+                        raise ExternalAPIError('Список змінився або немає підтвердження. Перевірте показані ID й повторіть дію.')
+                    for ext, student in pairs:
+                        match_student(ext, student, request.user)
+                    messages.success(request, f'Підтверджено точних відповідностей: {len(pairs)}. Неточні збіги й тезки залишено для ручного вибору.')
                 elif action == 'unmatch':
                     extra = get_object_or_404(ExtraStudent.objects.select_for_update(),
                         pk=request.POST.get('extra_id') if str(request.POST.get('extra_id', '')).isdigit() else 0,
@@ -326,7 +307,7 @@ def api_inbox(request, journal_id):
         if conn.source_class_id and conn.roster_cache:
             classes = conn.roster_cache.get('classes', [])
             c_name = next((c['name'] for c in classes if str(c['id']) == str(conn.source_class_id)), None)
-            if c_name:
+            if c_name and not conn.service_connection_id:
                 def _cl(s): return ''.join(ch for ch in s.casefold() if ch.isalnum())
                 if _cl(c_name) != _cl(journal.student_class.name):
                     mismatched_connections.append({
@@ -414,11 +395,8 @@ def api_inbox(request, journal_id):
     for key in ('page', 'results_page', 'ignored_page'):
         filters.pop(key, None)
 
-    unconfirmed_all = ExtraStudent.objects.filter(
-        connection__journal=journal, connection__enabled=True,
-        alias_of__isnull=True, matched_student__isnull=True, separate_student__isnull=True
-    )
-    auto_matched_count = sum(1 for e in unconfirmed_all if find_suggested_student(e.name, students))
+    batch_pairs, batch_version = exact_preview(journal)
+    auto_matched_count = len(batch_pairs)
 
     return render(request, 'portal/journal/api_inbox.html', {
         'journal': journal,
@@ -428,7 +406,7 @@ def api_inbox(request, journal_id):
         'ignored_results': ignored_results,
         'extra_journal': extra_journal,
         'students': students,
-        'auto_matched_count': auto_matched_count,
+        'auto_matched_count': auto_matched_count, 'batch_pairs': batch_pairs, 'batch_version': batch_version,
         'other_school_students': other_school_students,
         'mismatched_connections': mismatched_connections,
         'show_all': request.GET.get('all') == '1',

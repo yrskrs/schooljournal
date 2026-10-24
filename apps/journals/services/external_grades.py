@@ -277,23 +277,12 @@ def import_grade_records(connection, rows, user, date_from, date_to):
                     continue
                 if (inbox.extra_student and inbox.extra_student.is_separate
                         and not inbox.extra_student.matched_student_id and not inbox.extra_student.separate_student_id):
-                    from .extra_students import find_matching_class_student
-                    student_candidate = find_matching_class_student(journal, inbox.extra_student.name or row.get('student_name'))
-                    if student_candidate:
-                        inbox.extra_student.matched_student = student_candidate
-                        inbox.extra_student.is_separate = False
-                        inbox.extra_student.save(update_fields=['matched_student', 'is_separate', 'updated_at'])
-                        from apps.journals.models import GradeStudentMapping
-                        GradeStudentMapping.objects.update_or_create(
-                            connection=connection, external_id=inbox.extra_student.external_key,
-                            defaults={'student': student_candidate}
-                        )
-                    else:
-                        inbox.resolved = True
-                        inbox.reason = 'Збережено для окремого учня без зарахування до класу.'
-                        inbox.save(update_fields=['resolved', 'reason'])
-                        counts['added' if inbox.payload_created else 'updated' if inbox.payload_changed else 'unchanged'] += 1
-                        continue
+                    inbox.resolved = True
+                    inbox.reason = 'Збережено окремо. Підтвердьте відповідність учня за ID.'
+                    inbox.save(update_fields=['resolved', 'reason'])
+                    counts['added' if inbox.payload_created else 'updated' if inbox.payload_changed else 'unchanged'] += 1
+                    counts['outside'] = counts.get('outside', 0) + 1
+                    continue
                 if inbox.extra_student and inbox.extra_student.separate_journal_id:
                     target_journal = Journal.objects.select_for_update().get(pk=inbox.extra_student.separate_journal_id)
                     if not has_journal_access(user, target_journal, write=True):

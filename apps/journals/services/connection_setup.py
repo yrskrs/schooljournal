@@ -151,8 +151,11 @@ def verify_source_identity(connection):
 
 
 def roster_version(connection):
+    from .assessment import journal_students
     state = [connection.roster_cache, connection.roster_report, connection.source_class_id, connection.source_subject_id,
-        list(connection.student_mappings.order_by('external_id').values_list('external_id', 'student_id'))]
+        list(connection.student_mappings.order_by('external_id').values_list('external_id', 'student_id')),
+        sorted((s.pk, s.get_full_name_ukr(), s.status) for s in journal_students(connection.journal)),
+        sorted(connection.journal.ignored_students.values_list('pk', flat=True))]
     return hashlib.sha256(json.dumps(state, sort_keys=True).encode()).hexdigest()
 
 

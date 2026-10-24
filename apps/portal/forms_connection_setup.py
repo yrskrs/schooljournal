@@ -4,7 +4,7 @@ from django import forms
 
 from apps.journals.services.assessment import journal_students
 from apps.journals.services.connection_setup import SOURCES, source_urls, selected_students
-from school_sync.journal_roster import similar
+from difflib import SequenceMatcher
 
 
 class ConnectSourceForm(forms.Form):
@@ -59,7 +59,7 @@ class SourceContextForm(forms.Form):
         super().__init__(*args, **kwargs)
         for field, kind in [('source_class_id', 'classes'), ('source_subject_id', 'subjects')]:
             rows = connection.roster_cache.get(kind, [])
-            self.fields[field].choices = [('', '— Оберіть назву —')] + [(row['id'], row['name']) for row in rows]
+            self.fields[field].choices = [('', '— Оберіть назву —')] + [(row['id'], f"{row['name']} · ID {row['id']}") for row in rows]
 
 
 class ConfirmStudentsForm(forms.Form):
@@ -73,7 +73,7 @@ class ConfirmStudentsForm(forms.Form):
         source = selected_students(connection)
         source_counts = Counter(row['name'].casefold() for row in source)
         mappings = {row.external_id: str(row.student_id) for row in connection.student_mappings.all()}
-        choices = [('', 'Позакласний учень / перевірити пізніше')] + [(str(student.pk), student.get_full_name_ukr()) for student in local]
+        choices = [('', 'Позакласний учень / перевірити пізніше')] + [(str(student.pk), f'{student.get_full_name_ukr()} · ID {student.pk}') for student in local]
         choices.append(('new', 'Додати як нового учня цього класу'))
         for row in source:
             suggested = mappings.get(row['id'], '')
@@ -81,9 +81,21 @@ class ConfirmStudentsForm(forms.Form):
                 suggested = next(str(student.pk) for student in local if student.get_full_name_ukr().casefold() == row['name'].casefold())
             self.fields['pupil_' + row['id']] = forms.ChoiceField(label=row['name'], choices=choices, required=False, initial=suggested)
             if not suggested:
-                names = [s.get_full_name_ukr() for s in local if similar(row['name'], s.get_full_name_ukr())]
+                names = [s.get_full_name_ukr() for s in local if SequenceMatcher(None,
+                    row['name'].casefold(), s.get_full_name_ukr().casefold()).ratio() >= .68]
                 if names:
                     self.fields['pupil_' + row['id']].help_text = 'Можлива помилка або скорочення: ' + ', '.join(names[:5]) + '. Оберіть учня лише після перевірки.'
+            self.fields['pupil_' + row['id']].label = f"{row['name']} · ID {row['id']}"
+
+    def exact_matches(self, connection):
+        local = list(journal_students(connection.journal))
+        source = selected_students(connection)
+        local_counts = Counter(s.get_full_name_ukr().casefold() for s in local)
+        remote_counts = Counter(r['name'].casefold() for r in source)
+        known = set(connection.student_mappings.values_list('external_id', flat=True))
+        return {r['id']: str(next(s.pk for s in local if s.get_full_name_ukr().casefold() == r['name'].casefold()))
+            for r in source if r['id'] not in known and local_counts[r['name'].casefold()] == 1
+            and remote_counts[r['name'].casefold()] == 1}
 
 
 class EditConnectionForm(forms.Form):

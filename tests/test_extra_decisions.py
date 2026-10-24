@@ -246,14 +246,14 @@ class ExtraDecisionTests(TestCase):
         self.assertEqual(detail_resp.context['mismatched_connections'][0]['connection'].pk, conn.pk)
 
     def test_auto_match_suggestion_and_batch_match(self):
-        extra = self.extra(external_key='101', name=self.student.last_name)
+        extra = self.extra(external_key='101', name=self.student.get_full_name_ukr())
         resp = self.client.get(self.url())
         self.assertContains(resp, 'Знайдено збіг')
         self.assertContains(resp, '★ (підібрано)')
-        self.assertContains(resp, 'Підтвердити всі підібрані')
+        self.assertContains(resp, 'Підтвердити всі точні збіги')
 
-        batch_resp = self.client.post(self.url(), {'action': 'batch_match'}, follow=True)
-        self.assertContains(batch_resp, 'Успішно підтверджено 1 учнів за прізвищами')
+        batch_resp = self.client.post(self.url(), {'action': 'batch_match', 'confirm': 'on', 'batch_version': resp.context['batch_version']}, follow=True)
+        self.assertContains(batch_resp, 'Підтверджено точних відповідностей: 1')
         extra.refresh_from_db()
         self.assertEqual(extra.matched_student_id, self.student.pk)
         self.assertTrue(GradeStudentMapping.objects.filter(connection=extra.connection, external_id='101', student=self.student).exists())

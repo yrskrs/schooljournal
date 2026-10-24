@@ -102,14 +102,16 @@ class SchoolAPIV2Tests(TestCase):
         self.assertEqual(log.counts['added'], 2)
         self.assertEqual(Grade.objects.filter(lesson=self.l1).count(), 2)
 
-    def test_auto_match_student_by_name_imports_to_class(self):
-        # Student has no mapping in GradeStudentMapping, student_name is 'Вигаданий Учень'
+    def test_equal_name_without_confirmed_id_stays_outside_class(self):
         row = self.row(id='schooltest:unmapped:99', student_id=None, student_key='unmapped:99',
                        student_name=self.student.get_full_name_ukr(), value='10', date='2026-09-05', attempt_id=99)
         log = import_grade_records(self.connection, [row], self.teacher, self.year.start_date, self.year.end_date)
         self.assertEqual(log.counts['errors'], 0)
         self.assertEqual(log.counts['added'], 1)
-        self.assertEqual(Grade.objects.get(student=self.student).value, '10')
+        self.assertFalse(Grade.objects.filter(student=self.student).exists())
+        self.assertFalse(self.connection.student_mappings.filter(external_id='unmapped:99').exists())
+        self.assertIsNone(ExtraStudent.objects.get(external_key='unmapped:99').matched_student_id)
+        self.assertEqual(log.counts['outside'], 1)
 
     def test_test_completed_on_weekend_attaches_to_matching_topic_lesson(self):
         # Lesson l2 is on 2026-10-09 with topic 'Тема B'.

@@ -28,6 +28,7 @@ urlpatterns = [
     path('connections/profiles/new/', views_connections.profile_edit, name='connection_profile_new'),
     path('connections/profiles/<int:profile_id>/', views_connections.profile_edit, name='connection_profile_edit'),
     path('connections/service/<int:service_id>/check/', views_connections.connection_check, name='connection_check'),
+    path('connections/service/<int:service_id>/roster/', views_connections.refresh_service_roster, name='connection_roster_refresh'),
     path('connections/service/<int:service_id>/edit/', views_connections.connection_edit, name='connection_edit'),
     path('connections/service/<int:service_id>/address/<int:endpoint_id>/', views_connections.endpoint_edit, name='connection_endpoint_edit'),
     path('connections/matching/', views_connections.matching, name='connections_matching'),

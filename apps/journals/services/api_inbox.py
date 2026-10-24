@@ -59,29 +59,12 @@ def keep_result(connection, row, start, end):
         name = row.get('student_name')
         if not isinstance(name, str) or not name.strip():
             name = next((s['name'] for s in connection.roster_cache.get('students', []) if s['id'] == identity), 'Учень, що потребує перевірки')
-        from .extra_students import find_matching_class_student
-        # A confirmed separate pupil or merged alias takes precedence over a
-        # coincidentally matching name in the teaching class.
-        can_match = not extra or not (extra.separate_student_id or extra.matched_student_id or extra.alias_of_id)
-        matched = find_matching_class_student(connection.journal, name) if can_match else None
-        is_sep = True if not matched else False
+        # Names are display text. Only a teacher decision may bind identities.
         extra, created = ExtraStudent.objects.get_or_create(connection=connection, external_key=identity,
-            defaults={'name': name.strip()[:200], 'is_separate': is_sep, 'matched_student': matched})
-        if not created:
-            updated_fields = []
-            if extra.name != name.strip()[:200]:
-                extra.name = name.strip()[:200]
-                updated_fields.append('name')
-            if matched and not extra.matched_student_id and not extra.separate_student_id:
-                extra.matched_student = matched
-                extra.is_separate = False
-                updated_fields.extend(['matched_student', 'is_separate'])
-            if updated_fields:
-                extra.save(update_fields=updated_fields + ['updated_at'])
-        if matched:
-            connection.student_mappings.update_or_create(
-                external_id=identity, defaults={'student': matched}
-            )
+            defaults={'name': name.strip()[:200], 'is_separate': True})
+        if not created and extra.name != name.strip()[:200]:
+            extra.name = name.strip()[:200]
+            extra.save(update_fields=['name', 'updated_at'])
     if extra and extra.alias_of_id:
         extra = extra.alias_of
     record, created = APIInboxResult.objects.get_or_create(connection=connection, external_id=str(raw_id),
@@ -108,17 +91,6 @@ def resolve_student(connection, row):
     if mapping:
         return mapping.student_id
     raw_name = row.get('student_name') or (extra.name if extra else '')
-    from .extra_students import find_matching_class_student
-    matched = find_matching_class_student(connection.journal, raw_name)
-    if matched:
-        connection.student_mappings.update_or_create(
-            external_id=identity, defaults={'student': matched}
-        )
-        if extra:
-            extra.matched_student = matched
-            extra.is_separate = False
-            extra.save(update_fields=['matched_student', 'is_separate', 'updated_at'])
-        return matched.pk
     name = (raw_name or 'Учень')[:200]
     raise ValueError(f'«{name}»: позакласний учень або помилка в імені. Відкрийте «Позакласні учні та результати» й підтвердьте відповідність, якщо це учень вашого класу.')
 

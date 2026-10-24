@@ -282,10 +282,44 @@ def endpoint_edit(request, service_id, endpoint_id):
 @never_cache
 @require_GET
 def matching(request):
+    from apps.journals.services.extra_students import extra_parent
     journals = [j for j in get_user_journals(request.user).filter(is_archived=False).select_related(
-        'student_class', 'subject', 'academic_year', 'nz_owner') if has_journal_access(request.user, j, write=True)]
-    return render(request, 'portal/api/matching.html', {'journals': journals,
-        'services': ServiceConnection.objects.filter(owner=request.user, enabled=True)})
+        'student_class', 'subject', 'academic_year', 'nz_owner').order_by('-academic_year__start_date',
+        'student_class__name', 'subject__name') if has_journal_access(request.user, j, write=True) and not extra_parent(j)]
+    if request.GET.get('journal'):
+        selected = _get_journal_or_403(request.user, request.GET['journal'], write=True) if request.GET['journal'].isdecimal() else None
+        journals = [j for j in journals if selected and j.student_class_id == selected.student_class_id]
+    services = ServiceConnection.objects.filter(owner=request.user, enabled=True)
+    if request.GET.get('service'):
+        selected_service = _owned_service(request, request.GET['service'])
+        services = services.filter(pk=selected_service.pk)
+    from school_sync.django_backend import operate
+    from apps.journals.models import RosterState
+    state = RosterState.objects.filter(pk=1).only('data').first()
+    origin = state.data.get('origin') if state and isinstance(state.data, dict) else None
+    origin = origin or operate(lambda engine, store: engine.origin)
+    from apps.journals.services.class_matching import matrix_rows
+    return render(request, 'portal/api/matching.html', {'matrix': matrix_rows(journals, list(services), origin),
+        'services': services})
+
+
+@login_required
+@never_cache
+@require_POST
+def refresh_service_roster(request, service_id):
+    service = _owned_service(request, service_id)
+    try:
+        endpoint, _ = resolve_endpoint(service)
+        payload = fetch_source_roster(endpoint.api_url('grades', current_journal_host.get()), service.token, service.source)
+        if payload.get('instance_id') != str(service.instance_id):
+            raise ConnectionFailure('За цією адресою інший сервіс. Збережені класи залишилися чинними.', 'identity_mismatch')
+        with transaction.atomic():
+            fresh = ServiceConnection.objects.select_for_update().get(pk=service.pk, owner=request.user)
+            if fresh.token_fingerprint != service.token_fingerprint: raise ConnectionFailure('Ключ змінився. Повторіть дію.', 'stale')
+            fresh.roster_cache = payload; fresh.save(update_fields=['roster_cache'])
+        messages.success(request, 'Назви класів і предметів оновлено. Учнів та оцінки не змінено.')
+    except ExternalAPIError as error: messages.error(request, str(error))
+    return redirect('portal:connections_matching')
 
 
 @login_required
@@ -318,7 +352,19 @@ def bind_service(request, journal_id):
         payload = fetch_source_roster(url, service.token, service.source)
         if payload.get('instance_id') != str(service.instance_id):
             raise ConnectionFailure('Ідентичність джерела змінилася. Журнал і відповідності збережено.', 'identity_mismatch')
+        class_id, subject_id = request.POST.get('source_class_id', ''), request.POST.get('source_subject_id', '')
+        create_class = request.POST.get('action') == 'create_class'
+        if class_id and class_id not in {r['id'] for r in payload['classes']}:
+            raise ConnectionFailure('Клас більше не доступний. Оновіть назви та оберіть його повторно.', 'stale')
+        if subject_id and subject_id not in {r['id'] for r in payload['subjects']}:
+            raise ConnectionFailure('Предмет більше не доступний. Оновіть назви.', 'stale')
+        if create_class:
+            class_id, subject_id = '', ''
+            if 'journal_roster_import' not in payload.get('capabilities', []):
+                raise ConnectionFailure('Це джерело ще не підтримує створення класу з журналу.', 'unsupported')
         with transaction.atomic():
+            from .views_connection_setup import _lock
+            journal = _lock(journal, request.user)
             fresh = ServiceConnection.objects.select_for_update().get(pk=service.pk, owner=request.user)
             if fresh.token_fingerprint != service.token_fingerprint: raise ConnectionFailure('Ключ змінився. Повторіть дію.', 'stale')
             binding = journal.grade_apis.filter(service_connection=service).order_by('-is_default_for_group', 'pk').first()
@@ -329,7 +375,22 @@ def bind_service(request, journal_id):
             else:
                 binding.roster_cache, binding.roster_checked_at = payload, timezone.now()
                 binding.save(update_fields=['roster_cache', 'roster_checked_at'])
+            if create_class and binding.source_class_id:
+                raise ConnectionFailure('Клас уже пов’язаний. Передайте учнів через чинну прив’язку; копія класу не потрібна.', 'already_bound')
+            if class_id or subject_id:
+                if not class_id or not subject_id:
+                    raise ConnectionFailure('Оберіть і клас, і предмет. Для порожнього джерела скористайтеся створенням класу.', 'context')
+                if (binding.source_class_id, binding.source_subject_id) != (class_id, subject_id) and (
+                        binding.records.exists() or binding.student_mappings.exists()):
+                    raise ConnectionFailure('Для чинної прив’язки вже є учні або історія. Перевірте її окремо — перепризначення не виконано.', 'history')
+                binding.source_class_id, binding.source_subject_id = class_id, subject_id
+                binding.save(update_fields=['source_class_id', 'source_subject_id'])
             fresh.roster_cache = payload; fresh.save(update_fields=['roster_cache'])
+        if create_class:
+            from apps.journals.services.connection_setup import exchange_with_fallback
+            from apps.journals.services.roster_transfer import send_journal_roster
+            _, report = exchange_with_fallback([binding], lambda c: send_journal_roster(c, request.user))
+            messages.success(request, f"Клас створено й пов’язано за ID. Нових учнів: {report['counts']['created']}; потребують перевірки: {report['counts']['needs_review']}.")
         return redirect(reverse('portal:connect_source', args=[journal.pk]) + f'?connection={binding.pk}#roster')
     except ExternalAPIError as error:
         messages.error(request, str(error))

@@ -54,15 +54,18 @@
   {% if auto_matched_count and can_edit %}
     <div style="background: #ecfdf5; border: 1px solid #6ee7b7; border-radius: 8px; padding: 0.85rem 1.25rem; margin-bottom: 1rem; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 0.75rem;">
       <div>
-        <strong style="color: #065f46; font-size: 1rem;">✨ Знайдено збіги за прізвищами ({{ auto_matched_count }})</strong>
+        <strong style="color: #065f46; font-size: 1rem;">✨ Знайдено точні збіги ({{ auto_matched_count }})</strong>
         <p style="margin: 0.25rem 0 0 0; color: #047857; font-size: 0.85rem;">
-          Система автоматично підібрала учнів класу за прізвищами з джерела. Після підтвердження вони запам'ятаються назавжди і більше не запитуватимуться.
+          Перевірте наведені ID. Після вашого підтвердження зв’язок зберігається за ID; неточні збіги та тезки не об’єднуються.
         </p>
       </div>
       <form method="post" style="margin: 0;">
         {% csrf_token %}
+        <input type="hidden" name="batch_version" value="{{ batch_version }}">
+        <details><summary>Перевірити всі {{ auto_matched_count }} відповідності</summary>{% for extra, student in batch_pairs %}<p>{{ extra.name }} · {{ extra.connection.name }} ID {{ extra.external_key }} → {{ student.get_full_name_ukr }} · ID {{ student.pk }}</p>{% endfor %}</details>
+        <label><input type="checkbox" name="confirm" required> Я перевірив(ла) відповідності за ID.</label>
         <button class="btn btn-success" name="action" value="batch_match" style="font-weight: 600; padding: 0.5rem 1rem;">
-          ✅ Підтвердити всі підібрані ({{ auto_matched_count }})
+          ✅ Підтвердити всі точні збіги ({{ auto_matched_count }})
         </button>
       </form>
     </div>

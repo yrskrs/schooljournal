@@ -1,4 +1,4 @@
-{% extends 'base.html' %}
+{% extends 'base.html' %}{% load static %}
 {% block title %}Підключити тести та завдання | Журнал{% endblock %}
 {% block content %}
 <div class="schedule-page integration-page">
@@ -111,9 +111,11 @@
     {% if not connection.roster_cache.classes %}<p role="alert">На сайті ще немає доступних класів. У тестах виберіть клас і предмет для сесії; у завданнях призначте роботу класу. Потім оновіть назви тут.</p>{% endif %}
     <form method="post">{% csrf_token %}<input type="hidden" name="connection_id" value="{{ connection.pk }}">{{ context_form.as_p }}<button name="action" value="context" class="btn btn-primary">Підтвердити клас і предмет</button></form>
   </details>
-  {% if mapping_form %}<details class="schedule-card" id="students" {% if needs_mapping or mapping_form.errors %}open{% endif %}><summary>Перевірити відповідності учнів</summary><p>Зліва — ім’я на сайті джерела, у списку — учень цього журналу. Однакові імена є лише підказкою: відповідність зберігається після вашого підтвердження. Для різних учнів з однаковими іменами виберіть записи вручну. Якщо один і той самий учень має кілька записів чи спроб на сайті джерела, ви можете пов’язати їх з одним учнем журналу (оцінки будуть об’єднані). Дитину, якої немає в класі, залиште позакласною; її результати доступні в окремому списку.</p>
+  {% if mapping_form %}<p class="text-muted">Ідентичність джерела: <code>{{ connection.roster_cache.instance_id }}</code> · клас ID {{ connection.source_class_id }}. Учні зіставляються за показаними ID; alias позакласних записів доступні в окремій вкладці.</p><details class="schedule-card" id="students" {% if needs_mapping or mapping_form.errors %}open{% endif %}><summary>Перевірити відповідності учнів</summary><p>Зліва — ім’я на сайті джерела, у списку — учень цього журналу. Однакові імена є лише підказкою: відповідність зберігається після вашого підтвердження. Для різних учнів з однаковими іменами виберіть записи вручну. Якщо один і той самий учень має кілька записів чи спроб на сайті джерела, ви можете пов’язати їх з одним учнем журналу (оцінки будуть об’єднані). Дитину, якої немає в класі, залиште позакласною; її результати доступні в окремому списку.</p>
+    {% if exact_count %}<form method="post" class="schedule-card">{% csrf_token %}<input type="hidden" name="connection_id" value="{{ connection.pk }}"><input type="hidden" name="version" value="{{ mapping_form.version.value }}"><p>Знайдено однозначних точних збігів: {{ exact_count }}. Тезки та неточні збіги залишаться для ручної перевірки.</p><label><input type="checkbox" name="confirm" required> Я перевірив(ла) ці імена та підтверджую відповідності за показаними ID.</label><button name="action" value="confirm_exact" class="btn btn-secondary">Підтвердити всі точні збіги</button></form>{% endif %}
     <form method="post">{% csrf_token %}<input type="hidden" name="connection_id" value="{{ connection.pk }}">{{ mapping_form.non_field_errors }}{{ mapping_form.version }}
-      {% for field in mapping_form %}{% if field.name != 'version' and field.name != 'confirm' %}<p>{{ field.label_tag }} {{ field }} {{ field.errors }}{% if field.help_text %}<small>{{ field.help_text }}</small>{% endif %}</p>{% endif %}{% endfor %}
+      <label for="pupil-search">Знайти учня джерела за ім’ям або ID</label><input type="search" id="pupil-search" class="form-control" data-pupil-search autocomplete="off"><p role="status" data-pupil-search-status></p>
+      {% for field in mapping_form %}{% if field.name != 'version' and field.name != 'confirm' %}<p data-pupil-row>{{ field.label_tag }} {{ field }} {{ field.errors }}{% if field.help_text %}<small>{{ field.help_text }}</small>{% endif %}</p>{% endif %}{% endfor %}
       <p>{{ mapping_form.confirm }} {{ mapping_form.confirm.label_tag }} {{ mapping_form.confirm.errors }}</p>
       <button name="action" value="students" class="btn btn-primary">Зберегти підключення</button>
     </form>
@@ -154,3 +156,5 @@
   <p>Коли жодна адреса недоступна, місцеві списки й оцінки зберігаються. Причину відкрийте у «Сповіщеннях» або перевірте сервіс на сторінці «Підключення».</p>
 </div>
 {% endblock %}
+
+{% block extra_js %}<script src="{% static 'js/pupil_matching.js' %}?v={{ site_version }}" defer></script>{% endblock %}

@@ -289,14 +289,25 @@ def connect_source(request, journal_id, allow_legacy_address_form=False):
                         connection.save(update_fields=['source_class_id', 'source_subject_id', 'enabled'])
                     messages.success(request, 'Клас і предмет вибрано. Перевірте відповідність учнів.')
                     return redirect(destination + '?connection=' + str(connection.pk) + '#students')
-            elif action == 'students' and connection and connection.source_class_id and connection.source_subject_id:
-                mapping = ConfirmStudentsForm(request.POST, connection=connection)
+            elif action in ('students', 'confirm_exact') and connection and connection.source_class_id and connection.source_subject_id:
+                mapping_data = request.POST
+                if action == 'confirm_exact':
+                    mapping_data = request.POST.copy()
+                    exact = ConfirmStudentsForm(connection=connection).exact_matches(connection)
+                    for row in selected_students(connection):
+                        mapping_data['pupil_' + row['id']] = exact.get(row['id'], '')
+                mapping = ConfirmStudentsForm(mapping_data, connection=connection)
                 if mapping.is_valid():
+                    current_payload = fetch_connection_roster(connection) if connection.service_connection_id else None
                     with transaction.atomic():
                         journal = _lock(journal, request.user)
                         connection = GradeAPIConnection.objects.select_for_update().get(pk=connection.pk)
                         if mapping.cleaned_data['version'] != roster_version(connection):
                             raise ExternalAPIError('Списки оновилися. Оновіть сторінку перед підтвердженням.')
+                        if current_payload is not None:
+                            ensure_same_source(connection, current_payload)
+                            if current_payload != connection.roster_cache:
+                                raise ExternalAPIError('Список на джерелі змінився. Натисніть «Оновити назви класів та учнів» і перевірте відповідності повторно.')
                         local = {str(student.pk): student for student in journal_students(journal)}
                         proposals = []
                         for row in selected_students(connection):
@@ -405,7 +416,7 @@ def connect_source(request, journal_id, allow_legacy_address_form=False):
     if connection and connection.source_class_id and connection.roster_cache:
         classes = connection.roster_cache.get('classes', [])
         source_class_name = next((c['name'] for c in classes if str(c['id']) == str(connection.source_class_id)), None)
-        if source_class_name:
+        if source_class_name and not connection.service_connection_id:
             def _cl(s): return ''.join(ch for ch in s.casefold() if ch.isalnum())
             is_class_mismatched = _cl(source_class_name) != _cl(journal.student_class.name)
     notice_log = None
@@ -426,6 +437,7 @@ def connect_source(request, journal_id, allow_legacy_address_form=False):
         'setup_form': setup, 'context_form': context, 'mapping_form': mapping,
         'allow_legacy_address_form': allow_legacy_address_form,
         'source_class_name': source_class_name, 'is_class_mismatched': is_class_mismatched,
+        'exact_count': len(mapping.exact_matches(connection)) if mapping else 0,
         'connections': journal.grade_apis.filter(contract_version=2).order_by('source', 'pk'), 'available_sources': available,
         'needs_mapping': bool(connection and any(row['id'] not in mapped_keys for row in selected_students(connection)))})
     response['Cache-Control'] = 'no-store'

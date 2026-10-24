@@ -193,7 +193,7 @@ def journal_integrations(request, journal_id):
         s_name = next((s['name'] for s in subjects if str(s['id']) == str(conn.source_subject_id)), None) if conn.source_subject_id else None
 
         is_mismatched = False
-        if c_name:
+        if c_name and not conn.service_connection_id:
             def _cl(s): return ''.join(ch for ch in s.casefold() if ch.isalnum())
             is_mismatched = _cl(c_name) != _cl(journal.student_class.name)
 
