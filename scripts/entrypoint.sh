@@ -10,6 +10,7 @@ if [ "${SKIP_INIT:-0}" != 1 ]; then
         done
     fi
     python manage.py migrate --noinput
+    python manage.py bootstrap_connections
     python manage.py collectstatic --noinput
     if [ "${SEED_DEMO_DATA:-False}" = true ] || [ "${SEED_DEMO_DATA:-False}" = 1 ]; then
         python manage.py seed_demo_data

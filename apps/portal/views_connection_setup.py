@@ -14,7 +14,7 @@ from apps.curriculum.models import Student, ClassEnrollment
 from apps.journals.models import Journal, GradeAPIConnection, GradeStudentMapping, AuditLog, StudentAPIGrant, GradePullLog
 from apps.journals.services.assessment import journal_students
 from apps.journals.services.connection_setup import (
-    fetch_source_roster, roster_version, selected_students, SOURCES,
+    fetch_source_roster, fetch_connection_roster, roster_version, selected_students, SOURCES,
     ensure_same_source, existing_source_connection, safely_delete_grade_api_connection,
     group_connections_by_server, find_online_connection_in_group, exchange_with_fallback
 )
@@ -247,7 +247,8 @@ def connect_source(request, journal_id):
                 messages.success(request, f"Список передано: додано {counts['created']}, оновлено {counts['updated']}, виключено ігнорованих {counts.get('ignored', 0)}, потребують відповідності {counts['needs_review']}, конфлікти {counts['conflicts']}. Оцінки не імпортувалися.")
                 return redirect(destination + '?connection=' + str(connection.pk))
             elif action == 'refresh' and connection:
-                payload = fetch_source_roster(connection.url, connection.api_key, connection.source)
+                payload = (fetch_connection_roster(connection) if connection.service_connection_id else
+                    fetch_source_roster(connection.url, connection.api_key, connection.source))
                 with transaction.atomic():
                     _lock(journal, request.user)
                     connection = GradeAPIConnection.objects.select_for_update().get(pk=connection.pk)
@@ -467,7 +468,8 @@ def test_source_connection(request, journal_id, connection_id):
                 return JsonResponse({'success': True, 'status': 'ok', 'message': msg})
             messages.success(request, msg)
             return redirect(request.POST.get('next') or reverse('portal:journal_integrations', args=[journal.pk]))
-        payload = fetch_source_roster(connection.url, connection.api_key, source=None)
+        payload = (fetch_connection_roster(connection) if connection.service_connection_id else
+            fetch_source_roster(connection.url, connection.api_key, source=None))
         payload_source = payload.get('source')
         source_switched = False
         if payload_source and payload_source != connection.source:

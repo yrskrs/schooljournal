@@ -17,18 +17,22 @@ def fetch_v2_grades(connection, start, end):
     try:
         from .connection_setup import verify_source_identity
         verify_source_identity(connection)
-        validate_api_url(connection.url, resolve=True)
+        from .network_connections import transport_credentials, api_failure, verify_prepared_transport
+        url, token = transport_credentials(connection)
+        validate_api_url(url, resolve=True)
         records, cursor = [], 0
         with requests.Session() as session:
             session.trust_env = False
             for page in range(100):
-                with session.get(connection.url, headers={'Accept': 'application/json',
-                        'Authorization': 'Bearer ' + connection.api_key}, params={
+                if page:
+                    verify_prepared_transport(connection)
+                with session.get(url, headers={'Accept': 'application/json',
+                        'Authorization': 'Bearer ' + token}, params={
                         'class_id': connection.source_class_id, 'subject_id': connection.source_subject_id,
                         'date_from': start.isoformat(), 'date_to': end.isoformat(), 'cursor': cursor,
                     }, timeout=(5, 20), allow_redirects=False, stream=True) as response:
                     if response.status_code != 200:
-                        raise ExternalAPIError(f'API {connection.get_source_display()} повернув HTTP {response.status_code}. Перевірте адресу, ключ і версію API.')
+                        raise api_failure(response.status_code, connection.source)
                     data = bytearray()
                     for chunk in response.iter_content(65536):
                         data.extend(chunk)
@@ -53,7 +57,8 @@ def fetch_v2_grades(connection, start, end):
     except ValidationError as error:
         raise ExternalAPIError(' '.join(error.messages)) from error
     except (requests.RequestException, ValueError, TypeError) as error:
-        raise ExternalAPIError('Джерело недоступне або повернуло некоректну відповідь. Повторіть запит; збережені дані не змінено.') from error
+        from .network_connections import ConnectionFailure
+        raise ConnectionFailure('Джерело недоступне або повернуло некоректну відповідь. Повторіть запит; збережені дані не змінено.') from error
 
 
 def _timestamp(value):

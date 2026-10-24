@@ -8,6 +8,18 @@ from .site_info import release_info
 
 
 @require_GET
+@never_cache
+def service_ping(request):
+    from apps.journals.models import RosterState
+    from school_sync.django_backend import operate
+    from school_sync.discovery import ping_payload
+    state = RosterState.objects.filter(pk=1).only('data').first()
+    identity = state.data.get('origin') if state and isinstance(state.data, dict) else None
+    identity = identity or operate(lambda engine, store: engine.origin)
+    return JsonResponse(ping_payload('schooljournal', identity, release_info()[0]))
+
+
+@require_GET
 def guide(request):
     return render(request, 'portal/public/guide.html')
 

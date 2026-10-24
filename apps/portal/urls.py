@@ -31,6 +31,8 @@ urlpatterns = [
     path('updates/api/status/', views_updates.update_status_api_view, name='updates_status_api'),
     path('updates/api/rollback/', views_updates.rollback_api_view, name='updates_rollback_api'),
     path('healthz/', views_public.health, name='health'),
+    path('api/v2/ping', views_public.service_ping, name='service_ping'),
+    path('api/v2/ping/', views_public.service_ping),
     path('api/v2/roster-sync/', roster_views.roster_api, name='roster_sync_api'),
     path('roster-sync/', roster_views.roster_ui, name='roster_sync'),
     path('api/v1/journals/<int:journal_id>/students/', views_integrations.student_list_api, name='student_list_api'),

@@ -90,19 +90,20 @@ def send_journal_roster(connection, user, resolutions=None):
         except SyncError as error:
             raise ExternalAPIError(str(error)) from error
         verify_source_identity(connection)
-        _, url = source_urls(connection.url)
+        from .network_connections import transport_credentials, api_failure
+        url, token = transport_credentials(connection, 'roster')
         validate_api_url(url, resolve=True)
         with requests.Session() as session:
             session.trust_env = False
-            with session.post(url, headers={'Accept': 'application/json', 'Authorization': 'Bearer ' + connection.api_key},
+            with session.post(url, headers={'Accept': 'application/json', 'Authorization': 'Bearer ' + token},
                     json=payload, timeout=(5, 20), allow_redirects=False, stream=True) as response:
                 http_status = response.status_code
                 if response.status_code in (401, 403):
-                    raise ExternalAPIError('Ключ не дозволяє передавати список. Створіть ключ для журналу з обома дозволами.')
+                    raise api_failure(response.status_code, connection.source, 'roster_import')
                 if response.status_code in (404, 405):
                     raise ExternalAPIError('Джерело ще не підтримує передачу списків. Оновіть його з GitHub.')
                 if response.status_code != 200:
-                    raise ExternalAPIError(f'Не вдалося передати список (HTTP {response.status_code}). Перевірте підтверджені ID учнів, клас і права ключа у Центрі API. Місцеві дані збережено.')
+                    raise api_failure(response.status_code, connection.source, 'roster_import')
                 content = bytearray()
                 for chunk in response.iter_content(65536):
                     content.extend(chunk)
@@ -112,6 +113,9 @@ def send_journal_roster(connection, user, resolutions=None):
         if not isinstance(report, dict) or report.get('schema_version') != 2 or report.get('source') != connection.source:
             raise ExternalAPIError('Несумісна відповідь передачі списку. Прив’язки журналу збережено.')
         ensure_same_source(connection, report)
+        if (connection.service_connection_id and
+                report.get('instance_id') != str(connection._central_transport['service'].instance_id)):
+            raise ExternalAPIError('Джерело змінило ідентичність у відповіді. Прив’язки та історію збережено.')
         class_id, subject_id = str(report.get('class_id')), str(report.get('subject_id'))
         if not class_id.isdigit() or int(class_id) < 1 or not subject_id.isdigit() or int(subject_id) < 1:
             raise ExternalAPIError('Джерело не підтвердило клас і предмет.')
@@ -135,8 +139,14 @@ def send_journal_roster(connection, user, resolutions=None):
         with transaction.atomic():
             journal = Journal.objects.select_for_update().get(pk=connection.journal_id)
             fresh = GradeAPIConnection.objects.select_for_update().get(pk=connection.pk)
-            if not has_journal_access(user, journal, write=True) or fresh.url != connection.url:
+            if (not has_journal_access(user, journal, write=True) or fresh.url != connection.url
+                    or fresh.service_connection_id != connection.service_connection_id):
                 raise ExternalAPIError('Доступ або підключення змінилися. Оновіть сторінку.')
+            if fresh.service_connection_id:
+                service = fresh.service_connection
+                sent = connection._central_transport['service']
+                if service.instance_id != sent.instance_id or service.token_fingerprint != sent.token_fingerprint:
+                    raise ExternalAPIError('Підключення змінилося під час передачі. Повторіть дію; історію збережено.')
             current, _ = roster_request(fresh)
             if signature(current) != before:
                 raise ExternalAPIError('Списки змінилися під час передачі. Повторіть її, щоб підтвердити актуальні відповідності.')
@@ -188,6 +198,13 @@ def send_journal_roster(connection, user, resolutions=None):
                 'code': 'roster_http_error' if http_status and http_status != 200 else 'roster_validation_error',
                 'http_status': http_status}])
         raise
+    except requests.RequestException as error:
+        from .network_connections import ConnectionFailure
+        message = 'Передачу списку не підтверджено. Перевірте доступність джерела та повторіть; місцеві списки й оцінки збережено.'
+        GradePullLog.objects.create(connection=connection, user=user,
+            counts={'operation': 'roster', 'errors': 1}, errors=[{'message': message,
+                'code': 'roster_transport_or_response_error', 'http_status': http_status}])
+        raise ConnectionFailure(message) from error
     except Exception as error:
         # Do not expose requests exception strings, URLs with keys or upstream HTML.
         message = 'Передачу списку не підтверджено. Перевірте доступність джерела та повторіть; місцеві списки й оцінки збережено.'

@@ -96,11 +96,13 @@ def fetch_source_roster(url, key, source=None):
             with session.get(roster_url, headers={'Accept': 'application/json', 'Authorization': 'Bearer ' + key},
                     timeout=(5, 15), allow_redirects=False, stream=True) as response:
                 if response.status_code in (401, 403):
-                    raise ExternalAPIError('Ключ не прийнято. Створіть на сайті джерела ключ для журналу з доступом до оцінок.')
+                    from .network_connections import api_failure
+                    raise api_failure(response.status_code, source)
                 if response.status_code == 404:
                     raise ExternalAPIError('API списків не знайдено. Перевірте адресу сайту та оновіть його з GitHub.')
                 if response.status_code != 200:
-                    raise ExternalAPIError(f'Сайт тимчасово не відповідає правильно (HTTP {response.status_code}). Повторіть пізніше; місцеві дані збережено.')
+                    from .network_connections import api_failure
+                    raise api_failure(response.status_code, source)
                 content = bytearray()
                 for chunk in response.iter_content(65536):
                     content.extend(chunk)
@@ -109,12 +111,34 @@ def fetch_source_roster(url, key, source=None):
                 return validate_roster(json.loads(content), source)
     except ValidationError as error:
         raise ExternalAPIError(' '.join(error.messages)) from error
-    except (requests.RequestException, ValueError, TypeError) as error:
+    except requests.RequestException as error:
+        from .network_connections import ConnectionFailure
+        raise ConnectionFailure('Не вдалося отримати списки. Перевірте адресу та доступність сайту. Попередні списки й оцінки збережено.') from error
+    except (ValueError, TypeError) as error:
         raise ExternalAPIError('Не вдалося отримати списки. Перевірте адресу та доступність сайту. Попередні списки й оцінки збережено.') from error
+
+
+def fetch_connection_roster(connection):
+    if connection.service_connection_id:
+        from .network_connections import exchange_central, transport_credentials
+        def receive(binding):
+            url, token = transport_credentials(binding)
+            payload = fetch_source_roster(url, token, binding.source)
+            ensure_same_source(binding, payload)
+            if payload.get('instance_id') != str(binding._central_transport['service'].instance_id):
+                raise ExternalAPIError('Джерело змінило ідентичність під час отримання списку. Прив’язки збережено.')
+            return payload
+        return exchange_central(connection, receive)
+    return fetch_source_roster(connection.url, connection.api_key, connection.source)
 
 
 def verify_source_identity(connection):
     """Verify the live instance once per connection object, before any exchange."""
+    if connection.service_connection_id:
+        if not getattr(connection, '_central_in_exchange', False):
+            from .network_connections import prepare_binding
+            prepare_binding(connection)
+        return
     instance = connection.roster_cache.get('instance_id')
     if not instance:
         return
@@ -159,8 +183,16 @@ def probe_connection_reachability(connection, timeout=1.5):
     Швидка перевірка (до 1.5 с) фізичної доступності хоста й порту сервера.
     Запобігає зависанню на 10-20 секунд та хибним тривогам для неактивних адрес.
     """
+    if connection.service_connection_id:
+        from .network_connections import prepare_binding, ConnectionFailure
+        try:
+            prepare_binding(connection)
+            return True, 'У мережі · сервіс підтверджено'
+        except ConnectionFailure as error:
+            return False, str(error)
     import socket
     try:
+        validate_api_url(connection.url, resolve=True)
         parsed = urlsplit(connection.url)
         host = parsed.hostname
         port = parsed.port or (443 if parsed.scheme == 'https' else 80)
@@ -264,6 +296,16 @@ def exchange_with_fallback(connections, exchange, preferred_id=None, selector=No
     remaining = [c for c in connections if c.enabled]
     if not remaining:
         raise ExternalAPIError('Підключення вимкнене. Увімкніть його в розділі «API та обмін».')
+    if all(c.service_connection_id for c in remaining):
+        from .network_connections import exchange_central
+        remaining.sort(key=lambda c: (str(c.pk) != str(preferred_id), not c.is_default_for_group, c.pk))
+        last_error = None
+        for candidate in remaining:
+            try:
+                return candidate, exchange_central(candidate, exchange)
+            except ExternalAPIError as error:
+                last_error = error
+        raise last_error
     if len(remaining) == 1:
         return remaining[0], exchange(remaining[0])
     selector = selector or find_online_connection_in_group
