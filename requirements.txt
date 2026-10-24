@@ -5,4 +5,5 @@ reportlab==5.0.1
 gunicorn==26.2.0
 python-dotenv==1.2.4
 requests==2.34.2
+cryptography==49.0.0
 beautifulsoup4==4.15.0

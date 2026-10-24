@@ -267,7 +267,7 @@ class ConnectionSetupTests(TestCase):
             self.assertEqual(resp.status_code, 302)
         conn = GradeAPIConnection.objects.get(journal=self.journal)
         self.assertEqual(conn.name, 'Мій унікальний тестовий ключ')
-        self.assertEqual(conn.masked_key, '...retkey')
+        self.assertEqual(conn.masked_key, '••••••')
         self.assertEqual(conn.capabilities_description, 'може отримувати та передавати дані')
         self.assertIn('Мій унікальний тестовий ключ', conn.key_display_name)
         self.assertIn('може отримувати та передавати дані', conn.key_display_name)

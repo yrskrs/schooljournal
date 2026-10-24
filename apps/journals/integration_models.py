@@ -1,6 +1,7 @@
 """Journal-scoped external APIs. Imported lazily at the end of models.py."""
 from django.conf import settings
 from django.db import models
+from .secret_fields import EncryptedTokenField
 
 
 class RosterReplica(models.Model):
@@ -36,7 +37,12 @@ class GradeAPIConnection(models.Model):
     name = models.CharField(max_length=100, verbose_name='Назва сервера робіт')
     url = models.URLField(max_length=500, verbose_name='Адреса API оцінок')
     enabled = models.BooleanField(default=True, verbose_name='Підключення активне')
-    api_key = models.TextField(blank=True, verbose_name='Ключ зовнішнього API')
+    api_key = EncryptedTokenField(blank=True, verbose_name='Ключ зовнішнього API')
+    service_connection = models.ForeignKey('journals.ServiceConnection', null=True, blank=True,
+        on_delete=models.SET_NULL, related_name='journal_bindings')
+    default_period_days = models.PositiveSmallIntegerField(default=30)
+    default_lesson = models.ForeignKey('journals.Lesson', null=True, blank=True, on_delete=models.SET_NULL,
+        related_name='+')
     student_identifier = models.CharField(max_length=15, default='id', choices=[
         ('id', 'Локальний ID учня'), ('nz_student_id', 'ID учня nz.ua'), ('internal_id', 'Внутрішній ID учня')],
         verbose_name='Ідентифікатор учня на сервері робіт')
@@ -84,9 +90,7 @@ class GradeAPIConnection(models.Model):
     @property
     def masked_key(self):
         key = (self.api_key or '').strip()
-        if len(key) <= 6:
-            return key or '—'
-        return f"...{key[-6:]}"
+        return '••••••' if key else '—'
 
     @property
     def capabilities_description(self):

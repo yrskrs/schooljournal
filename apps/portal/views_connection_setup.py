@@ -356,11 +356,12 @@ def connect_source(request, journal_id):
                 with transaction.atomic():
                     if del_all:
                         matching = GradeAPIConnection.objects.filter(
-                            source=item.source, url=item.url, api_key=item.api_key,
+                            source=item.source, url=item.url,
                             journal__school=journal.school
                         ).filter(
                             Q(journal__teacher=request.user) | Q(journal__nz_owner__user=request.user) | Q(journal__local_profile=request.user)
                         )
+                        matching = matching.filter(pk__in=[m.pk for m in matching if m.api_key == item.api_key])
                         count = matching.count()
                         name = item.name or item.get_source_display()
                         for m in matching:
@@ -774,9 +775,9 @@ def delete_api_key_group(request):
 
     with transaction.atomic():
         if delete_all:
-            matching = list(GradeAPIConnection.objects.filter(
-                source=conn.source, url=conn.url, api_key=conn.api_key, journal__in=journals
-            ))
+            matching = [item for item in GradeAPIConnection.objects.filter(
+                source=conn.source, url=conn.url, journal__in=journals
+            ) if item.api_key == conn.api_key]
             count = len(matching)
             name = conn.name or conn.get_source_display()
             for item in matching:

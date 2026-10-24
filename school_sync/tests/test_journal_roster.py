@@ -150,5 +150,15 @@ class JournalRosterTests(unittest.TestCase):
         self.assertFalse(self.engine.native.rows['class'])
 
 
+    def test_distinct_ids_in_one_import_can_have_identical_names(self):
+        import uuid
+        self.payload['students'].append({**self.payload['students'][0], 'id': str(uuid.uuid4())})
+        first = self.send()
+        self.assertEqual(first['counts']['created'], 2)
+        self.assertEqual(first['counts']['needs_review'], 0)
+        ids = [row['local_id'] for row in first['mappings']]
+        self.assertEqual(len(set(ids)), 2)
+        self.assertEqual(ids, [row['local_id'] for row in self.send()['mappings']])
+
 if __name__ == '__main__':
     unittest.main()

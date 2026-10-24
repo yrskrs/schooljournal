@@ -277,10 +277,18 @@ class Engine:
         else:
             raise SyncError('Оберіть доступну версію.')
         if native_id is not None:
+            if record['kind'] == 'student':
+                parent = self.store.get(self.canonical(record['payload']['class_ref']))
+                native = self.native.read('student', native_id)
+                if not native or not parent or native['native_class_id'] != parent.get('native_id'):
+                    raise SyncError('Оберіть учня лише з відповідного класу. Спочатку зіставте клас.')
             current = self.payload(record['kind'], native_id)
             if current is None:
                 raise SyncError('Оберіть коректний локальний запис із приєднаного класу.')
             old = self.native_record(record['kind'], native_id)
+            if (record['kind'] == 'student' and old and old['ref'] != ref
+                    and (set(old['clock']) & set(record['clock'])) - {self.origin}):
+                raise SyncError('Цей учень уже прив’язаний до іншого ID цього джерела. Перевірте тезок.')
             if old and old['ref'] != ref:
                 old_clock = old['clock']
                 record['clock'] = {key: max(record['clock'].get(key, 0), old_clock.get(key, 0)) for key in set(record['clock']) | set(old_clock)}

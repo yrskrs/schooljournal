@@ -158,6 +158,9 @@ def import_students(engine, store, payload, owner, allowed_classes):
                 continue
             candidates = []
             for local_id in engine.native.students(class_id):
+                # A distinct stable UUID cannot be suggested as another pupil.
+                if local_id in claimed and claimed[local_id] != ref:
+                    continue
                 current = engine.native.read('student', local_id)
                 if current and similar(current['name'], desired['name']):
                     candidates.append({'id': local_id, 'name': current['name']})
