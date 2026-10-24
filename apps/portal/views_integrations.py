@@ -22,6 +22,7 @@ from apps.journals.services.assessment import journal_students
 from apps.journals.services.external_grades import fetch_grade_payload, import_grade_records, review_external_grade, ExternalAPIError
 from apps.journals.services.roster_transfer import send_journal_roster
 from apps.journals.services.integration_diagnostics import build_diagnostic_report
+from apps.journals.services.api_messages import log_error_rows
 from apps.journals.services.connection_setup import (
     group_connections_by_server, find_online_connection_in_group, safely_delete_grade_api_connection,
     exchange_with_fallback,
@@ -254,20 +255,38 @@ def journal_integrations(request, journal_id):
             known.add(identity)
             available.append(item)
 
-    recent_logs = GradePullLog.objects.filter(connection__journal=journal).select_related('connection').order_by('-created_at', '-pk')[:25]
+    log_query = GradePullLog.objects.filter(connection__journal=journal).select_related('connection')
+    selected_log = None
+    requested_log = request.GET.get('log') or request.GET.get('notice_log')
+    if requested_log:
+        if not requested_log.isdigit():
+            return HttpResponseBadRequest('Некоректний номер звіту.')
+        selected_log = get_object_or_404(log_query, pk=requested_log)
+        selected_log.display_errors = log_error_rows(selected_log)
+    recent_logs = list(log_query.order_by('-created_at', '-pk')[:25])
+    if selected_log and all(log.pk != selected_log.pk for log in recent_logs):
+        recent_logs.insert(0, selected_log)
+    for log in recent_logs:
+        log.display_errors = log_error_rows(log)
     external_review_count = ExternalGrade.objects.filter(
         connection__journal=journal, connection__enabled=True,
         status__in=[ExternalGrade.Status.PENDING, ExternalGrade.Status.CONFLICT]
     ).count()
     inbox_count = APIInboxResult.objects.filter(connection__journal=journal, resolved=False, is_ignored=False).count()
+    selected_inbox_count = APIInboxResult.objects.filter(connection__journal=journal,
+        connection__source=selected_log.connection.source, resolved=False, is_ignored=False).count() if selected_log else 0
+    selected_review_count = ExternalGrade.objects.filter(connection__journal=journal,
+        connection__source=selected_log.connection.source, connection__enabled=True,
+        status__in=[ExternalGrade.Status.PENDING, ExternalGrade.Status.CONFLICT]).count() if selected_log else 0
     grouped_connections = group_connections_by_server(connections)
     new_api_key = request.session.pop(f'student_api_key_{journal.pk}', '')
 
     response = render(request, 'portal/journal/integrations.html', {
         'journal': journal, 'grant': grant, 'api_form': api_form, 'connections': connections,
         'grouped_connections': grouped_connections,
-        'journal_apis': journal_apis, 'available_sources': available, 'recent_logs': recent_logs,
+        'journal_apis': journal_apis, 'available_sources': available, 'recent_logs': recent_logs, 'selected_log': selected_log,
         'external_review_count': external_review_count, 'inbox_count': inbox_count,
+        'selected_inbox_count': selected_inbox_count, 'selected_review_count': selected_review_count,
         'active_tab': 'grants' if new_api_key else request.GET.get('tab', 'connections'),
         'connection_form': connection_form, 'editing_connection': instance, 'link_form': link_form,
         'mapping_students': journal_students(journal),

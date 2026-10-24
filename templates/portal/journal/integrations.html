@@ -28,6 +28,7 @@
     </div>
   </div>
 
+  {% if selected_log and active_tab != 'diagnostics' %}<section class="schedule-card" role="status"><h2>Причина сповіщення</h2><p>Звіт від {{ selected_log.created_at|date:'d.m.Y H:i:s' }}.</p>{% for error in selected_log.display_errors %}<p>{{ error.message }}</p>{% endfor %}</section>{% endif %}
   {% if can_edit %}{% if not editing_connection or editing_connection.contract_version == 1 %}
   <details class="schedule-card" id="custom-api" {% if editing_connection or connection_form.is_bound %}open{% endif %}>
     <summary>Нестандартне API · {% if editing_connection %}редагувати підключення{% else %}налаштувати вручну{% endif %}</summary>
@@ -535,6 +536,7 @@
 
   <!-- ВКЛАДКА 4: ДІАГНОСТИКА ТА ЖУРНАЛ ПОМИЛОК -->
   <div id="panel_diagnostics" class="api-hub-panel {% if active_tab == 'diagnostics' %}active{% endif %}">
+    {% if selected_log %}<section class="schedule-card" role="status"><h2>Звіт зі сповіщення</h2><p>Нижче виділено саме виклик від {{ selected_log.created_at|date:'d.m.Y H:i:s' }}. Він показаний навіть поза останніми 25 записами. Це історія конкретної спроби; відкриття сторінки не повторює синхронізацію.</p>{% if selected_inbox_count or selected_review_count %}<p>{% if selected_inbox_count %}<a href="{% url 'portal:api_inbox' journal.pk %}?source={{ selected_log.connection.source }}">Перевірити збережені результати та їхні причини</a> · {% endif %}{% if selected_review_count %}<a href="{% url 'portal:external_grade_review' journal.pk %}">Розглянути оцінки, що очікують рішення</a>{% endif %}</p>{% else %}<p>У черзі немає збережених результатів для ручного виправлення. Це звіт попереднього запиту, а не поточний список конфліктів. Для актуального стану повторіть синхронізацію з журналу.</p>{% endif %}<p><a href="{% url 'portal:journal_detail' journal.pk %}">Відкрити журнал і повторити синхронізацію після виправлення</a></p></section>{% endif %}
     <div class="schedule-card" style="padding: 1.25rem; margin-bottom: 1rem;">
       <a class="btn btn-outline-primary" href="{% url 'portal:integration_diagnostics' journal.id %}">📄 Завантажити знеособлений звіт для діагностики</a>
       <p style="margin: 0.75rem 0 0;">JSON-звіт містить технічні коди, кількості та останні 25 викликів кожного підключення. Без ПІБ, оцінок, ID учнів, адрес серверів і ключів. Завантаження не запускає синхронізацію.</p>
@@ -577,7 +579,7 @@
             </thead>
             <tbody>
               {% for log in recent_logs %}
-                <tr style="border-bottom: 1px solid var(--border);">
+                <tr id="sync-log-{{ log.pk }}" {% if selected_log.pk == log.pk %}aria-current="true" style="border: 2px solid var(--primary); background: var(--bg-secondary);"{% else %}style="border-bottom: 1px solid var(--border);"{% endif %}>
                   <td style="padding: 0.5rem 0.75rem; white-space: nowrap;">{{ log.created_at|date:'d.m.Y H:i:s' }}</td>
                   <td style="padding: 0.5rem 0.75rem; font-weight: 600;">{{ log.connection.name|default:log.connection.get_source_display }}</td>
                   <td style="padding: 0.5rem 0.75rem;">
@@ -597,9 +599,9 @@
                     {% endif %}
                   </td>
                   <td style="padding: 0.5rem 0.75rem;">
-                    {% if log.errors %}
-                      {% for err in log.errors %}
-                        <div style="color: #dc2626; font-weight: 500;">{{ err.message|default:err }}</div>
+                    {% if log.display_errors %}
+                      {% for err in log.display_errors %}
+                        <div style="color: #dc2626; font-weight: 500;">{% if err.row %}Рядок {{ err.row }}: {% endif %}{{ err.message }}</div>
                       {% endfor %}
                     {% else %}
                       <span style="color: var(--text-muted);">

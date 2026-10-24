@@ -70,6 +70,15 @@
   </section>
   {% endif %}
   {% if connection %}
+  {% if notice_log %}
+  <section class="schedule-card" id="sync-log-{{ notice_log.pk }}" role="status">
+    <h2>Причина сповіщення</h2>
+    <p>Звіт від {{ notice_log.created_at|date:'d.m.Y H:i:s' }} · {{ connection.name|default:connection.get_source_display }}.</p>
+    {% for error in notice_errors %}<p><strong>{% if error.row %}Рядок {{ error.row }}: {% endif %}{{ error.message }}</strong></p>{% empty %}<p>У цьому звіті немає деталей помилки. Повторіть відповідну перевірку, щоб отримати актуальний стан.</p>{% endfor %}
+    <p>Це збережений результат конкретної спроби. Перегляд нічого не змінює. Після виправлення повторіть передачу списку або перевірку зв’язку нижче.</p>
+    <p>{% if notice_log.counts.operation == 'roster' %}<a href="#roster" class="btn btn-primary">Перевірити та повторно передати список</a>{% else %}<a href="#address" class="btn btn-primary">Перевірити адресу та ключ</a>{% endif %}</p>
+  </section>
+  {% endif %}
   {% if is_class_mismatched %}
     <div class="alert alert-warning" style="background: #fffbeb; border: 1px solid #fde68a; color: #92400e; padding: 0.85rem 1rem; border-radius: 8px; margin-bottom: 1rem;">
       <strong>⚠️ Увага: невідповідність класу!</strong>
@@ -84,7 +93,16 @@
       {% for row in connection.roster_report.conflicts %}<p><strong>{{ row.name }}</strong>: на сайті «{{ row.local_name }}».<input type="hidden" name="version_{{ row.journal_id }}" value="{{ row.version }}"><select name="resolve_{{ row.journal_id }}"><option value="">Залишити для перевірки</option><option value="journal">Використати ім’я з журналу на сайті</option><option value="local">Залишити місцеве ім’я на сайті</option></select></p>{% endfor %}
       <button name="action" value="send_roster" class="btn btn-primary">Передати учнів журналу на сайт</button>
     </form>
-    {% if connection.roster_report.needs_review %}<p>Є схожі імена. Перевірте відповідності нижче й натисніть «Зберегти підключення». Автоматичного об’єднання людей за ПІБ немає.</p>{% endif %}
+    {% if connection.roster_report.needs_review %}
+    <h3>Кому потрібно підтвердити відповідність</h3>
+    {% for row in connection.roster_report.needs_review %}<p><strong>У журналі: {{ row.name }}</strong>. На сайті:
+      {% for candidate in row.candidates %}<a href="#id_pupil_{{ candidate.id }}">{{ candidate.name }}</a>{% if not forloop.last %}, {% endif %}{% empty %}немає підтвердженого кандидата{% endfor %}.
+    </p>{% endfor %}
+    <p>Відкрийте відповідності нижче, виберіть правильного учня й натисніть «Зберегти підключення». Автоматичного об’єднання людей за ПІБ немає.</p>
+    {% endif %}
+    {% if connection.roster_report.counts.needs_review and not connection.roster_report.needs_review or connection.roster_report.counts.conflicts and not connection.roster_report.conflicts %}
+    <p role="status">Старий звіт містить кількість питань без переліку записів. Натисніть «Передати учнів журналу на сайт», щоб отримати конкретні актуальні причини. Оцінки ця дія не імпортує.</p>
+    {% endif %}
   </section>
   <details class="schedule-card"><summary>Оновити місцеву копію назв із сайту</summary><p>Назви збережені у журналі. Останнє отримання: {{ connection.roster_checked_at|date:'d.m.Y H:i' }}. Під час недоступності сайту ці дані залишаються.</p>
     <form method="post">{% csrf_token %}<input type="hidden" name="connection_id" value="{{ connection.pk }}"><button name="action" value="refresh" class="btn btn-outline-primary">Оновити назви класів та учнів</button></form>
@@ -100,7 +118,7 @@
       <button name="action" value="students" class="btn btn-primary">Зберегти підключення</button>
     </form>
   </details>{% endif %}
-  <details class="schedule-card" id="address" {% if setup_form.errors %}open{% endif %}><summary>Змінити IP, порт або ключ цього підключення</summary>
+  <details class="schedule-card" id="address" {% if setup_form.errors or notice_log and notice_log.counts.operation != 'roster' %}open{% endif %}><summary>Змінити IP, порт або ключ цього підключення</summary>
   {% else %}<section class="schedule-card" id="address"><h2>1. Вкажіть адресу та ключ</h2><p>У тестах відкрийте «Підключення до журналу», у завданнях — «Налаштування → API та журнал». Натисніть «Створити ключ API». Скопіюйте адресу сайту та ключ у відповідні поля нижче.</p>{% endif %}
     <form method="post">{% csrf_token %}{% if backup_connection %}<input type="hidden" name="backup_for" value="{{ backup_connection.pk }}">{% endif %}{% if connection %}<input type="hidden" name="connection_id" value="{{ connection.pk }}">{% endif %}{{ setup_form.non_field_errors }}
       <p>{{ setup_form.source.label_tag }} {{ setup_form.source }} {{ setup_form.source.errors }}</p>

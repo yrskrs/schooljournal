@@ -254,11 +254,18 @@ def nz_journal_import_view(request, journal_id=None):
                 is_current=True
             )
 
+        from apps.curriculum.class_labels import class_fields
+        inferred_class = class_fields(class_name)
         student_class, _ = StudentClass.objects.get_or_create(
             school=school,
             academic_year=academic_year,
-            name=class_name
+            name=class_name,
+            defaults=inferred_class or {},
         )
+        if inferred_class and any(getattr(student_class, key) != value for key, value in inferred_class.items()):
+            for key, value in inferred_class.items():
+                setattr(student_class, key, value)
+            student_class.save(update_fields=list(inferred_class))
 
         subject, _ = Subject.objects.get_or_create(
             school=school,

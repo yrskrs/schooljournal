@@ -127,13 +127,31 @@ def verify_source_identity(connection):
 
 
 def roster_version(connection):
-    state = [connection.roster_cache, connection.source_class_id, connection.source_subject_id,
+    state = [connection.roster_cache, connection.roster_report, connection.source_class_id, connection.source_subject_id,
         list(connection.student_mappings.order_by('external_id').values_list('external_id', 'student_id'))]
     return hashlib.sha256(json.dumps(state, sort_keys=True).encode()).hexdigest()
 
 
 def selected_students(connection):
-    return [row for row in connection.roster_cache.get('students', []) if row['class_id'] == connection.source_class_id]
+    rows = [row for row in connection.roster_cache.get('students', []) if row['class_id'] == connection.source_class_id]
+    report = connection.roster_report if isinstance(connection.roster_report, dict) else {}
+    if (report.get('schema_version') != 2 or str(report.get('class_id')) != connection.source_class_id
+            or report.get('instance_id') != connection.roster_cache.get('instance_id')):
+        return rows
+    known = {str(row['id']) for row in rows}
+    # Unconfirmed candidates are absent from the confirmed mapping response.
+    # Keep their explicit source IDs available in the teacher's review form.
+    for item in report.get('needs_review', []):
+        if not isinstance(item, dict):
+            continue
+        for candidate in item.get('candidates', []):
+            if not isinstance(candidate, dict):
+                continue
+            identity, name = str(candidate.get('id', '')), candidate.get('name')
+            if identity.isascii() and identity.isdecimal() and int(identity) > 0 and isinstance(name, str) and identity not in known:
+                rows.append({'id': identity, 'name': name, 'class_id': connection.source_class_id})
+                known.add(identity)
+    return rows
 
 
 def probe_connection_reachability(connection, timeout=1.5):

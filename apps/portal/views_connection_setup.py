@@ -21,6 +21,7 @@ from apps.journals.services.connection_setup import (
 from apps.journals.services.external_grades import ExternalAPIError
 from apps.journals.services.roster_transfer import send_journal_roster
 from apps.journals.services.api_inbox import keep_roster_extras
+from apps.journals.services.api_messages import log_error_rows
 from apps.portal.forms_connection_setup import ConnectSourceForm, SourceContextForm, ConfirmStudentsForm, EditConnectionForm
 from apps.portal.permissions import has_journal_access, get_user_journals
 from apps.portal.views_journal import _get_journal_or_403
@@ -397,8 +398,21 @@ def connect_source(request, journal_id):
         if source_class_name:
             def _cl(s): return ''.join(ch for ch in s.casefold() if ch.isalnum())
             is_class_mismatched = _cl(source_class_name) != _cl(journal.student_class.name)
+    notice_log = None
+    if connection:
+        log_query = GradePullLog.objects.filter(connection=connection).select_related('connection')
+        requested_log = request.GET.get('notice_log')
+        if requested_log:
+            if not requested_log.isdigit():
+                from django.http import HttpResponseBadRequest
+                return HttpResponseBadRequest('Некоректний номер звіту.')
+            notice_log = get_object_or_404(log_query, pk=requested_log)
+        else:
+            candidate = log_query.order_by('-created_at', '-pk').first()
+            if candidate and candidate.counts.get('errors'):
+                notice_log = candidate
     response = render(request, 'portal/journal/connect_source.html', {'journal': journal, 'connection': connection,
-        'backup_connection': backup,
+        'backup_connection': backup, 'notice_log': notice_log, 'notice_errors': log_error_rows(notice_log),
         'setup_form': setup, 'context_form': context, 'mapping_form': mapping,
         'source_class_name': source_class_name, 'is_class_mismatched': is_class_mismatched,
         'connections': journal.grade_apis.filter(contract_version=2).order_by('source', 'pk'), 'available_sources': available,

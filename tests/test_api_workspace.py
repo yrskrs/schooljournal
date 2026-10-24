@@ -68,7 +68,8 @@ class APIWorkspaceTests(TestCase):
         self.log(connection)
         notice, = self.overview()['notices']
         self.assertIn('Список', notice['title'])
-        self.assertTrue(notice['url'].endswith('#roster'))
+        self.assertIn('&notice_log=', notice['url'])
+        self.assertIn('#sync-log-', notice['url'])
 
     def test_successful_sibling_resolves_group_error_but_other_instances_stay_separate(self):
         first, backup = self.connection(), self.connection()
@@ -85,10 +86,65 @@ class APIWorkspaceTests(TestCase):
 
     def test_failed_check_links_to_exact_address_in_group(self):
         first, backup = self.connection(), self.connection()
-        self.log(backup, 'connection', errors=1)
+        log = self.log(backup, 'connection', errors=1)
         notice, = self.overview()['notices']
-        self.assertIn(f'?connection={backup.pk}#address', notice['url'])
+        self.assertIn(f'?connection={backup.pk}&notice_log={log.pk}#sync-log-{log.pk}', notice['url'])
         self.assertNotIn(f'?connection={first.pk}#address', notice['url'])
+
+    def test_old_failed_grade_log_remains_visible_from_its_notification(self):
+        connection = self.connection(mappings=True)
+        error = self.log(connection, errors=1)
+        error.errors = [{'row': 4, 'message': 'Оцінка має бути цілим числом. synthetic-key'}]
+        error.save()
+        for _ in range(30):
+            self.log(connection, 'connection')
+        notice = next(n for n in self.overview()['notices'] if n['id'].endswith('-grades'))
+        self.assertIn(f'log={error.pk}#sync-log-{error.pk}', notice['url'])
+        response = self.client.get(notice['url'])
+        self.assertEqual(response.status_code, 200)
+        soup = BeautifulSoup(response.content, 'html.parser')
+        highlighted = soup.select_one(f'#sync-log-{error.pk}[aria-current=true]')
+        self.assertIsNotNone(highlighted)
+        self.assertIn('Рядок 4:', highlighted.text)
+        self.assertIn('цілим числом', highlighted.text)
+        self.assertNotContains(response, 'synthetic-key')
+
+        self.assertContains(response, 'У черзі немає збережених результатів для ручного виправлення.')
+        self.assertNotContains(response, 'Перевірити збережені результати та їхні причини')
+
+    def test_roster_failure_page_displays_the_persisted_reason(self):
+        connection = self.connection(mappings=True)
+        log = self.log(connection, 'roster', errors=1)
+        log.errors = [{'message': 'Потрібне підтвердження ID. synthetic-key'}]
+        log.save()
+        notice, = self.overview()['notices']
+        page = self.client.get(notice['url'])
+        self.assertContains(page, 'Причина сповіщення')
+        self.assertContains(page, 'Потрібне підтвердження ID.')
+        self.assertNotContains(page, 'synthetic-key')
+
+    def test_review_candidates_missing_from_cache_have_real_form_fields(self):
+        connection = self.connection(mappings=True)
+        connection.roster_report = {'schema_version': 2, 'source': connection.source,
+            'instance_id': connection.roster_cache['instance_id'], 'class_id': connection.source_class_id,
+            'counts': {'needs_review': 1, 'conflicts': 0},
+            'needs_review': [{'journal_id': 'synthetic-stable-id', 'name': 'Учень журналу',
+                              'candidates': [{'id': 99, 'name': 'Кандидат джерела'}]}]}
+        connection.save()
+        notice, = self.overview()['notices']
+        page = self.client.get(notice['url'])
+        self.assertContains(page, 'Учень журналу')
+        self.assertContains(page, 'Кандидат джерела')
+        self.assertContains(page, 'id="id_pupil_99"')
+        self.assertContains(page, 'id="students" open')
+
+    def test_selected_log_cannot_open_another_journal_or_connection(self):
+        first, second = self.connection(), self.connection()
+        log = self.log(second, 'roster', errors=1)
+        url = reverse('portal:connect_source', args=[self.journal.pk])
+        self.assertEqual(self.client.get(url, {'connection': first.pk, 'notice_log': log.pk}).status_code, 404)
+        url = reverse('portal:journal_integrations', args=[self.journal.pk])
+        self.assertEqual(self.client.get(url, {'advanced': 1, 'tab': 'diagnostics', 'log': 'bad'}).status_code, 400)
 
     def test_notification_is_a_clickable_card_with_context_and_persisted_reason(self):
         connection = self.connection()
@@ -99,7 +155,8 @@ class APIWorkspaceTests(TestCase):
         self.assertIn('Ключ не прийнято.', card.text)
         self.assertIn(self.group.name, card.text)
         self.assertIn(self.subject.name, card.text)
-        self.assertIn(f'?connection={connection.pk}#roster', card['href'])
+        self.assertIn(f'?connection={connection.pk}&notice_log=', card['href'])
+        self.assertIn('#sync-log-', card['href'])
         self.assertEqual(self.client.get(reverse('portal:api_notifications')).context['api_notices'], response.context['api_notices'])
 
     def test_confirmed_roster_conflicts_link_to_roster_and_disappear_after_new_report(self):

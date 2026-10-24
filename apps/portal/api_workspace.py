@@ -79,12 +79,12 @@ def build_overview(journals):
             error_connection = next(c for c in items if c.pk == log.connection_id)
             error_setup = (reverse('portal:connect_source', args=[journal.pk]) + f'?connection={error_connection.pk}'
                            if error_connection.contract_version == 2 else hub + f'?advanced=1&edit={error_connection.pk}')
-            target = error_setup + ('#address' if error_connection.contract_version == 2 else '#custom-api')
+            target = error_setup + f'&notice_log={log.pk}' + (f'#sync-log-{log.pk}' if error_connection.contract_version == 2 else '#custom-api')
             action = 'Перевірити адресу та ключ'
             if operation == 'roster':
-                target, action = error_setup + ('#roster' if error_connection.contract_version == 2 else '#custom-api'), 'Перевірити список учнів'
+                target, action = error_setup + f'&notice_log={log.pk}' + (f'#sync-log-{log.pk}' if error_connection.contract_version == 2 else '#custom-api'), 'Перевірити список учнів'
             elif record_errors:
-                target, action = hub + '?advanced=1&tab=diagnostics', 'Переглянути причину'
+                target, action = hub + f'?advanced=1&tab=diagnostics&log={log.pk}#sync-log-{log.pk}', 'Переглянути причину'
                 detail = 'Частину результатів не додано. Відкрийте причину, перевірте учня, дату уроку й оцінку та повторіть синхронізацію.'
             notice(operation, label, detail, action, target, 'danger')
         if primary.contract_version == 2:

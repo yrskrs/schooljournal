@@ -296,6 +296,8 @@ class NZIntegrationTests(TestCase):
         ).first()
         self.assertIsNotNone(created_j)
         self.assertEqual(created_j.student_class.name, '8-Б')
+        self.assertEqual(created_j.student_class.grade_level, 8)
+        self.assertEqual(created_j.student_class.letter, 'Б')
         self.assertEqual(created_j.subject.name, 'Геометрія')
         self.assertEqual(created_j.nz_subgroup_id, '1')
 
