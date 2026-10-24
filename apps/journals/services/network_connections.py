@@ -36,6 +36,29 @@ def api_failure(status, source, operation='export'):
     return ConnectionFailure(f'Сервіс тимчасово не завершив запит (HTTP {status}). Перевірте «Підключення» та повторіть дію.', 'http', status)
 
 
+def inspect_address(source, site_url, token, expected_instance=None):
+    """Validate wizard input before storing any credential or changing a row."""
+    status, payload = get_small_json(site_url.rstrip('/') + '/api/v2/ping')
+    if status == 404:
+        raise ConnectionFailure('Оновіть сайт джерела, щоб він підтримував підключення через мережеві профілі.', 'unsupported')
+    if status != 200: raise api_failure(status, source)
+    try:
+        ping = validate_ping(payload, source, expected_instance)
+    except SyncError as error:
+        raise ConnectionFailure(str(error), 'identity_mismatch') from error
+    status, payload = get_small_json(site_url.rstrip('/') + '/api/v2/journal/connection/', token)
+    if status != 200: raise api_failure(status, source)
+    try:
+        info = validate_ping(payload, source, ping['instance_id'])
+    except SyncError as error:
+        raise ConnectionFailure('Сайт змінив ідентичність під час перевірки. Збережений ключ не змінено.', 'identity_mismatch') from error
+    rights = payload.get('permissions')
+    if (payload.get('schema_version') != 2 or not isinstance(rights, dict)
+            or any(not isinstance(rights.get(k), bool) for k in ('export', 'roster_import'))):
+        raise ConnectionFailure('Сайт не підтвердив права ключа. Оновіть його та повторіть перевірку.', 'invalid_response')
+    return {**info, 'permissions': {k: rights[k] for k in ('export', 'roster_import')}}
+
+
 def _http_json(url, token, timeout):
     """Network-only worker; no database, session or pupil access."""
     try:

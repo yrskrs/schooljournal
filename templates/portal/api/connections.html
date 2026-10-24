@@ -1,0 +1,36 @@
+{% extends 'base.html' %}
+{% load static %}
+{% block title %}Підключення | Шкільний журнал{% endblock %}
+{% block extra_head %}<link rel="stylesheet" href="{% static 'css/connections.css' %}?v={{ site_version }}">{% endblock %}
+{% block content %}
+<main class="connections-page">
+  <header class="connections-heading"><div><p class="text-muted">Ваші сайти та мережі</p><h1>Підключення</h1><p>Налаштуйте адресу й ключ один раз. У журналах залишаться лише класи, учні та синхронізація.</p></div><a class="btn btn-primary" href="{% url 'portal:connect_service' %}">+ Підключити сервіс</a></header>
+  <nav class="connections-tabs" aria-label="Підключення та обмін">
+    <a href="{% url 'portal:connections' %}" aria-current="page">Підключення</a>
+    <a href="{% url 'portal:connections_matching' %}">Зіставлення класів</a>
+    <a href="{% url 'portal:api_workspace' %}?tab=notifications">Сповіщення <span>{{ api_notices|length }}</span></a>
+    <a href="{% url 'portal:outside_students' %}">Позакласні учні</a>
+  </nav>
+  <section class="card network-bar" aria-label="Поточна мережа">
+    <form method="post" action="{% url 'portal:connections_network' %}">{% csrf_token %}<label for="network-mode">Мережа</label><select name="profile" id="network-mode" class="form-control"><option value="">Автовизначення</option>{% for profile in profiles %}<option value="{{ profile.pk }}" {% if selection.selected_profile_id == profile.pk %}selected{% endif %}>{{ profile.name }}{% if not profile.enabled %} · вимкнена{% endif %}</option>{% endfor %}</select><button class="btn btn-secondary">Застосувати</button></form>
+    <p class="text-muted">В автовизначенні журнал сам знаходить підтверджений сайт. Поточну адресу видно на картці сервісу; ключі при зміні мережі залишаються чинними.</p>
+    <a href="{% url 'portal:connection_profile_new' %}">+ Додати мережу</a>
+  </section>
+  <div class="connection-grid">
+  {% for card in cards %}
+    <article class="card connection-card" id="connection-{{ card.id }}" data-connection-card data-check-url="{{ card.check_url }}">
+      <header><div><p class="text-muted">{{ card.source_label }}</p><h2>{{ card.name }}</h2></div><span class="connection-state {% if card.ready %}is-online{% endif %}" data-field="status_label">{% if card.ready %}🟢{% else %}⚪{% endif %} {{ card.status_label }}</span></header>
+      <dl><div><dt>Адреса зараз</dt><dd data-field="active_url">{{ card.active_url|default:'Ще не перевірена' }}</dd></div><div><dt>Мережа</dt><dd data-field="profile_name">{{ card.profile_name|default:'Автовизначення' }}</dd></div><div><dt>Версія</dt><dd data-field="version">{{ card.version }}</dd></div><div><dt>Ідентифікатор сайту</dt><dd><code data-field="instance_short" title="{{ card.instance_id }}">{{ card.instance_short }}</code></dd></div><div><dt>Ключ</dt><dd data-field="token_label">{{ card.token_label }}</dd></div><div><dt>Читання оцінок</dt><dd data-field="can_export">{% if card.can_export %}Дозволено{% elif card.can_export == False %}Немає дозволу{% else %}Ще не перевірено{% endif %}</dd></div><div><dt>Приймання учнів</dt><dd data-field="can_import">{% if card.can_import %}Дозволено{% elif card.can_import == False %}Немає дозволу{% else %}Ще не перевірено{% endif %}</dd></div><div><dt>Остання перевірка</dt><dd data-field="last_checked">{{ card.last_checked }}</dd></div><div><dt>Учні передані</dt><dd data-field="last_roster">{{ card.last_roster }}</dd></div><div><dt>Оцінки отримані</dt><dd data-field="last_grades">{{ card.last_grades }}</dd></div></dl>
+      <p class="connection-error" role="status" data-field="error" {% if not card.error %}hidden{% endif %}>{{ card.error }}</p>
+      <div class="connection-actions"><button type="button" class="btn btn-secondary" data-check-connection>Перевірити</button><a class="btn btn-secondary" href="{{ card.edit_url }}">Редагувати</a><a class="btn btn-primary" href="{{ card.matching_url }}">Синхронізувати</a></div>
+      <p class="text-muted">Журналів підключено: {{ card.journal_count }}. <a href="{{ card.matching_url }}">Зіставити клас та учнів →</a></p>
+    </article>
+  {% endfor %}
+  {% for source in missing_sources %}<article class="card connection-card connection-empty"><p class="text-muted">{{ source.label }}</p><h2>Ще не підключено</h2><p>Знадобляться адреса сайту та ключ, створений на ньому для журналу.</p><a class="btn btn-primary" href="{% url 'portal:connect_service' %}?source={{ source.source }}">Підключити {{ source.label }}</a></article>{% endfor %}
+  </div>
+  <section class="card"><div class="connections-heading"><h2>Мережеві профілі</h2><a href="{% url 'portal:connection_profile_new' %}">+ Додати мережу</a></div><p>У кожній мережі достатньо одного хоста сервера. Адреси сервісів і їхні сталі прив’язки зберігаються окремо.</p><ul class="profile-list">{% for profile in profiles %}<li><div><strong>{{ profile.name }}</strong><p class="text-muted">{% if profile.use_journal_host %}Поточна адреса відкритого журналу{% else %}{{ profile.host }}{% endif %}{% if not profile.enabled %} · вимкнена{% endif %}</p></div><a href="{% url 'portal:connection_profile_edit' profile.pk %}" class="btn btn-secondary">Редагувати</a></li>{% empty %}<li>Додайте «Дім», «Школа» або свою мережу.</li>{% endfor %}</ul></section>
+  {% if legacy_groups %}<section class="card"><h2>Підключення попереднього налаштування</h2><p>Історію й прив’язки збережено. Ці налаштування доступні для перевірки зі свого журналу.</p>{% for group in legacy_groups %}<p><a href="{{ group.setup_url }}">{{ group.journal.student_class.name }} · {{ group.journal.subject.name }} — {{ group.name }}</a></p>{% endfor %}</section>{% endif %}
+  <form id="connection-csrf" hidden>{% csrf_token %}</form>
+</main>
+{% endblock %}
+{% block extra_js %}<script src="{% static 'js/connections.js' %}?v={{ site_version }}" defer></script>{% endblock %}

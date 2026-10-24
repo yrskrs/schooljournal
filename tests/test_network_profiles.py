@@ -21,8 +21,8 @@ class NetworkProfileTests(TestCase):
         self.service = ServiceConnection(owner=self.teacher, source='schooltest', name='Синтетичні тести',
             instance_id=uuid.UUID('11111111-1111-4111-8111-111111111111'), identity_key='synthetic-service')
         self.service.set_token('synthetic-source-key'); self.service.save()
-        self.home = NetworkProfile.objects.create(owner=self.teacher, name='Дім', host='10.44.1.13')
-        self.school = NetworkProfile.objects.create(owner=self.teacher, name='Школа', host='10.44.0.13')
+        self.home = NetworkProfile.objects.create(owner=self.teacher, name='Дім', host='10.44.1.13', schooltest_port=8000)
+        self.school = NetworkProfile.objects.create(owner=self.teacher, name='Школа', host='10.44.0.13', schooltest_port=8000)
         self.home_endpoint = ServiceEndpoint.objects.create(connection=self.service, profile=self.home)
         self.school_endpoint = ServiceEndpoint.objects.create(connection=self.service, profile=self.school)
         self.service.last_endpoint = self.home_endpoint; self.service.save(update_fields=['last_endpoint'])

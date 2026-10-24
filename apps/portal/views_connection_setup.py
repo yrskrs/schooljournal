@@ -54,7 +54,7 @@ def _initial_context(connection):
 @login_required
 @require_http_methods(['GET', 'POST'])
 @sensitive_post_parameters('api_key', 'connection_code')
-def connect_source(request, journal_id):
+def connect_source(request, journal_id, allow_legacy_address_form=False):
     journal = _get_journal_or_403(request.user, journal_id, write=True)
     from apps.journals.services.extra_students import extra_parent
     parent = extra_parent(journal)
@@ -70,6 +70,14 @@ def connect_source(request, journal_id):
     connection = get_object_or_404(journal.grade_apis, pk=connection_id, contract_version=2) if str(connection_id or '').isdigit() else None
     if connection_id and connection is None:
         raise PermissionDenied('Некоректне підключення.')
+    if request.method == 'GET' and not connection and not backup and not allow_legacy_address_form:
+        return redirect(reverse('portal:connections_matching') + f'?journal={journal.pk}')
+    if backup and backup.service_connection_id and not allow_legacy_address_form:
+        return redirect('portal:connection_edit', service_id=backup.service_connection_id)
+    if (connection and connection.service_connection_id and request.method == 'POST'
+            and request.POST.get('action') in ('connect', 'reuse')):
+        messages.info(request, 'Адреса й ключ налаштовуються один раз на сторінці «Підключення».')
+        return redirect('portal:connection_edit', service_id=connection.service_connection_id)
     setup = ConnectSourceForm(initial={'source': request.GET.get('source', 'schooltest')})
     if backup:
         setup = ConnectSourceForm(initial={'source': backup.source, 'key_name': backup.name[:80] + ' (резервна)'})
@@ -416,6 +424,7 @@ def connect_source(request, journal_id):
     response = render(request, 'portal/journal/connect_source.html', {'journal': journal, 'connection': connection,
         'backup_connection': backup, 'notice_log': notice_log, 'notice_errors': log_error_rows(notice_log),
         'setup_form': setup, 'context_form': context, 'mapping_form': mapping,
+        'allow_legacy_address_form': allow_legacy_address_form,
         'source_class_name': source_class_name, 'is_class_mismatched': is_class_mismatched,
         'connections': journal.grade_apis.filter(contract_version=2).order_by('source', 'pk'), 'available_sources': available,
         'needs_mapping': bool(connection and any(row['id'] not in mapped_keys for row in selected_students(connection)))})
@@ -708,54 +717,7 @@ def teacher_api_keys(request):
     if request.user.is_superadmin_user:
         return redirect('portal:superadmin_dashboard')
 
-    journals = get_user_journals(request.user).filter(
-        Q(teacher=request.user) | Q(nz_owner__user=request.user) | Q(local_profile=request.user)
-    ).select_related('student_class', 'subject', 'academic_year', 'school').order_by('academic_year', 'student_class__name', 'subject__name')
-
-    all_conns = GradeAPIConnection.objects.filter(journal__in=journals).select_related(
-        'journal', 'journal__student_class', 'journal__subject'
-    ).order_by('source', 'name', 'pk')
-
-    # Групуємо унікальні ключі за (source, url, api_key)
-    key_groups = {}
-    for conn in all_conns:
-        ident = (conn.source, conn.url, conn.api_key)
-        if ident not in key_groups:
-            key_groups[ident] = {
-                'id': conn.pk,
-                'source': conn.source,
-                'source_display': conn.get_source_display(),
-                'name': conn.name or conn.get_source_display(),
-                'url': conn.url,
-                'api_key': conn.api_key,
-                'masked_key': conn.masked_key,
-                'capabilities_description': conn.capabilities_description,
-                'can_send': 'journal_roster_import' in (conn.roster_cache.get('capabilities', []) if isinstance(conn.roster_cache, dict) else []),
-                'connections': [],
-                'journals_count': 0,
-                'last_checked': conn.roster_checked_at,
-                'last_pulled': conn.last_pulled_at,
-            }
-        grp = key_groups[ident]
-        grp['connections'].append(conn)
-        grp['journals_count'] += 1
-        if conn.roster_checked_at and (not grp['last_checked'] or conn.roster_checked_at > grp['last_checked']):
-            grp['last_checked'] = conn.roster_checked_at
-        if conn.last_pulled_at and (not grp['last_pulled'] or conn.last_pulled_at > grp['last_pulled']):
-            grp['last_pulled'] = conn.last_pulled_at
-
-    student_grants = StudentAPIGrant.objects.filter(journal__in=journals).select_related(
-        'journal', 'journal__student_class', 'journal__subject'
-    ).order_by('journal__student_class__name')
-
-    return render(request, 'portal/teacher/api_keys.html', {
-        'key_groups': list(key_groups.values()),
-        'all_connections': all_conns,
-        'student_grants': student_grants,
-        'journals': journals,
-        'total_connections_count': all_conns.count(),
-        'unique_keys_count': len(key_groups),
-    })
+    return redirect('portal:connections')
 
 
 @login_required

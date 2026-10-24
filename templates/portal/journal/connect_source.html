@@ -14,7 +14,7 @@
       <a class="btn btn-outline-primary" href="{% url 'portal:journal_detail' journal.pk %}">До журналу</a>
     </div>
   </div>
-  <p>Вставте адресу й ключ. Журнал передасть копію свого класу та учнів у місцеву базу сайту. Надалі оцінки отримуються двома кнопками у журналі. Підключення необов’язкове для роботи будь-якого сайту.</p>
+  {% if allow_legacy_address_form %}<p>Параметри збереженого підключення. Класи й учні налаштовуються після перевірки сайту.</p>{% else %}<p>Тут обираються клас, предмет та відповідності учнів. Адреси, ключі й мережі налаштовуються на сторінці <a href="{% url 'portal:connections' %}">«Підключення»</a>.</p>{% endif %}
   {% if backup_connection %}<div class="alert alert-info">Основне підключення: <strong>{{ backup_connection.name }}</strong> ({{ backup_connection.host_display }}). Вкажіть іншу адресу цього самого сайту та чинний для неї ключ. Клас, предмет і підтверджені учні перенесуться автоматично. Під час обміну журнал сам вибере доступну адресу.</div>{% endif %}
   {% if connections and not backup_connection %}
     <details>
@@ -118,8 +118,9 @@
       <button name="action" value="students" class="btn btn-primary">Зберегти підключення</button>
     </form>
   </details>{% endif %}
-  <details class="schedule-card" id="address" {% if setup_form.errors or notice_log and notice_log.counts.operation != 'roster' %}open{% endif %}><summary>Змінити IP, порт або ключ цього підключення</summary>
-  {% else %}<section class="schedule-card" id="address"><h2>1. Вкажіть адресу та ключ</h2><p>У тестах відкрийте «Підключення до журналу», у завданнях — «Налаштування → API та журнал». Натисніть «Створити ключ API». Скопіюйте адресу сайту та ключ у відповідні поля нижче.</p>{% endif %}
+  {% if allow_legacy_address_form %}<details class="schedule-card" id="address" {% if setup_form.errors or notice_log and notice_log.counts.operation != 'roster' %}open{% endif %}><summary>Змінити IP, порт або ключ цього підключення</summary>
+  {% endif %}{% else %}{% if allow_legacy_address_form %}<section class="schedule-card" id="address"><h2>1. Вкажіть адресу та ключ</h2><p>У тестах відкрийте «Підключення до журналу», у завданнях — «Налаштування → API та журнал». Натисніть «Створити ключ API». Скопіюйте адресу сайту та ключ у відповідні поля нижче.</p>{% endif %}{% endif %}
+  {% if allow_legacy_address_form %}
     <form method="post">{% csrf_token %}{% if backup_connection %}<input type="hidden" name="backup_for" value="{{ backup_connection.pk }}">{% endif %}{% if connection %}<input type="hidden" name="connection_id" value="{{ connection.pk }}">{% endif %}{{ setup_form.non_field_errors }}
       <p>{{ setup_form.source.label_tag }} {{ setup_form.source }} {{ setup_form.source.errors }}</p>
       <p>{{ setup_form.key_name.label_tag }} {{ setup_form.key_name }} {{ setup_form.key_name.errors }}<small>{{ setup_form.key_name.help_text }}</small></p>
@@ -148,7 +149,8 @@
   {% else %}
   </section>
   {% endif %}
+  {% else %}<section class="schedule-card" id="address"><h2>Мережа й ключ</h2><p>Мережа визначається перед синхронізацією. Повторно вводити ключ для цього класу не потрібно.</p>{% if connection.service_connection_id %}<a class="btn btn-secondary" href="{% url 'portal:connection_edit' connection.service_connection_id %}">Налаштувати підключення сервісу</a>{% elif connection %}<a class="btn btn-secondary" href="{% url 'portal:connection_legacy_edit' connection.pk %}">Перевірити збережені параметри підключення</a>{% else %}<a class="btn btn-primary" href="{% url 'portal:connect_service' %}">Підключити сервіс</a>{% endif %}</section>{% endif %}
   <p>Ця сторінка не імпортує оцінок. Відкрийте журнал і натисніть «Синхронізувати з тестами» або «Синхронізувати із завданнями» за потрібний період.</p>
-  <p>Для ще однієї адреси цього самого сайту відкрийте «API та обмін → Резервна адреса». Якщо змінилася єдина адреса, виправте її тут. Коли жодна адреса недоступна, місцеві списки й оцінки зберігаються. Відкрийте «Сповіщення», виправте причину та повторіть дію.</p>
+  <p>Коли жодна адреса недоступна, місцеві списки й оцінки зберігаються. Причину відкрийте у «Сповіщеннях» або перевірте сервіс на сторінці «Підключення».</p>
 </div>
 {% endblock %}

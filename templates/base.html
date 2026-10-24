@@ -52,7 +52,7 @@
               <li><a href="{% url 'portal:nz_journals_list' %}" class="nav-link" style="display: inline-flex; align-items: center; gap: 0.35rem;"><span style="color: #2563eb; font-weight: bold;">&#8644;</span> nz.ua</a></li>
               <li><a href="{% url 'portal:create_journal' %}" class="nav-link">+ Новий журнал</a></li>
             {% endif %}
-            <li><a href="{% url 'portal:api_workspace' %}" class="nav-link">API та обмін</a></li>
+            <li><a href="{% url 'portal:api_workspace' %}" class="nav-link">Підключення</a></li>
             <li><a href="{% url 'portal:api_notifications' %}" class="nav-link" data-api-notifications>Сповіщення{% if api_notification_count %} <span class="api-notice-count">{{ api_notification_count }}</span>{% endif %}</a></li>
             <li><a href="{% url 'portal:roster_sync' %}" class="nav-link">Списки та синхронізація</a></li>
             <li><a href="{% url 'portal:weekly_schedule' %}" class="nav-link">Розклад на тиждень</a></li>

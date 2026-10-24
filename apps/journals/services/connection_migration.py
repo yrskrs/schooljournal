@@ -55,6 +55,9 @@ def migrate_legacy_connections(apps, schema_editor=None):
                 label = f'{base_label[:90]} · {counter}'
                 counter += 1
             profile = Profile.objects.create(owner_id=owner_id, name=label, host=parsed.hostname, scheme=parsed.scheme)
+        if not Endpoint.objects.filter(profile_id=profile.pk, connection__source=binding.source).exists():
+            Profile.objects.filter(pk=profile.pk).update(**{
+                binding.source + '_port': parsed.port or (443 if parsed.scheme == 'https' else 80)})
         endpoint, _ = Endpoint.objects.get_or_create(connection_id=service.pk, profile_id=profile.pk,
             port_override=parsed.port or (443 if parsed.scheme == 'https' else 80), path_prefix=path[:-len(suffix)],
             defaults={'enabled': binding.enabled})

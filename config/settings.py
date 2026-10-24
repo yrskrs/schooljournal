@@ -18,6 +18,8 @@ INITIAL_SETUP_RECOVERY_USER_ID = int(os.getenv('INITIAL_SETUP_RECOVERY_USER_ID',
 ALLOWED_HOSTS = [h.strip() for h in os.getenv('ALLOWED_HOSTS', 'localhost,127.0.0.1').split(',') if h.strip()]
 ALLOW_PRIVATE_NETWORK_HOSTS = os.getenv('ALLOW_PRIVATE_NETWORK_HOSTS', 'True').lower() in ('true', '1')
 LOCAL_SERVER_PROFILE_ENABLED = os.getenv('LOCAL_SERVER_PROFILE_ENABLED', '0') == '1'
+LOCAL_SCHOOLTEST_PORT = int(os.getenv('LOCAL_SCHOOLTEST_PORT', '8080'))
+LOCAL_SCHOOLWORK_PORT = int(os.getenv('LOCAL_SCHOOLWORK_PORT', '8000'))
 
 csrf_origins = os.getenv('CSRF_TRUSTED_ORIGINS', '')
 if csrf_origins:

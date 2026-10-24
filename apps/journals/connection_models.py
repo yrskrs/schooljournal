@@ -18,8 +18,8 @@ class NetworkProfile(models.Model):
     name = models.CharField(max_length=100)
     host = models.CharField(max_length=253, blank=True)
     scheme = models.CharField(max_length=5, choices=[('http', 'HTTP'), ('https', 'HTTPS')], default='http')
-    schooltest_port = models.PositiveIntegerField(default=8000, validators=PORT_VALIDATORS)
-    schoolwork_port = models.PositiveIntegerField(default=8080, validators=PORT_VALIDATORS)
+    schooltest_port = models.PositiveIntegerField(default=8080, validators=PORT_VALIDATORS)
+    schoolwork_port = models.PositiveIntegerField(default=8000, validators=PORT_VALIDATORS)
     use_journal_host = models.BooleanField(default=False)
     enabled = models.BooleanField(default=True)
 

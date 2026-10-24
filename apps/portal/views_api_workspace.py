@@ -20,7 +20,7 @@ def render_workspace(request, journal=None, notifications=False):
         journal = _get_journal_or_403(request.user, selected)
     if request.GET.get('action') == 'connect' and journal:
         _get_journal_or_403(request.user, journal.pk, write=True)
-        return redirect('portal:connect_source', journal_id=journal.pk)
+        return redirect(reverse('portal:connections_matching') + f'?journal={journal.pk}')
     overview = build_overview([journal.pk]) if journal else request_overview(request)
     tab = 'notifications' if notifications else request.GET.get('tab', 'connections')
     if tab not in ('connections', 'notifications', 'roster'):
@@ -39,6 +39,9 @@ def render_workspace(request, journal=None, notifications=False):
 @login_required
 @require_GET
 def api_workspace(request):
+    if request.GET.get('tab', 'connections') == 'connections' and not request.GET.get('journal'):
+        from .views_connections import dashboard
+        return dashboard(request)
     return render_workspace(request)
 
 

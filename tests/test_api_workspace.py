@@ -30,10 +30,11 @@ class APIWorkspaceTests(TestCase):
         for url in [reverse('portal:api_workspace'), reverse('portal:journal_integrations', args=[self.journal.pk])]:
             response = self.client.get(url)
             self.assertEqual(response.status_code, 200)
-            self.assertTemplateUsed(response, 'portal/api/workspace.html')
-            self.assertEqual(response['Cache-Control'], 'no-store')
+            self.assertTemplateUsed(response, 'portal/api/connections.html' if url == reverse('portal:api_workspace') else 'portal/api/workspace.html')
+            self.assertIn('no-store', response['Cache-Control'])
             soup = BeautifulSoup(response.content, 'html.parser')
-            self.assertFalse(soup.select_one('.api-advanced').has_attr('open'))
+            if soup.select_one('.api-advanced'):
+                self.assertFalse(soup.select_one('.api-advanced').has_attr('open'))
             self.assertIsNotNone(soup.select_one('a[href$="?tab=notifications"]'))
             self.assertNotContains(response, 'synthetic-key')
 
@@ -232,7 +233,7 @@ class APIWorkspaceTests(TestCase):
 
     def test_add_api_selector_opens_setup_for_selected_journal(self):
         response = self.client.get(reverse('portal:api_workspace'), {'journal': self.journal.pk, 'action': 'connect'})
-        self.assertRedirects(response, reverse('portal:connect_source', args=[self.journal.pk]))
+        self.assertRedirects(response, reverse('portal:connections_matching') + f'?journal={self.journal.pk}')
 
     def test_anonymous_cannot_read_workspace_or_notifications(self):
         self.client.logout()

@@ -40,7 +40,7 @@ class ConnectionSetupTests(TestCase):
     def test_new_lan_ip_accepts_own_origin_csrf_and_rejects_foreign_origin(self):
         client = Client(enforce_csrf_checks=True, HTTP_HOST='10.35.2.7:8085')
         client.force_login(self.teacher)
-        self.assertEqual(client.get(self.url).status_code, 200)
+        self.assertEqual(client.get(reverse('portal:connect_service')).status_code, 200)
         data = {'action': 'connect', 'source': 'schooltest', 'site_url': 'http://192.168.8.25:8000',
             'api_key': 'synthetic-ip-key', 'csrfmiddlewaretoken': client.cookies[settings.CSRF_COOKIE_NAME].value}
         with patch('apps.portal.views_connection_setup.fetch_source_roster', return_value=self.payload) as remote:
@@ -51,8 +51,9 @@ class ConnectionSetupTests(TestCase):
             remote.assert_not_called()
 
     def test_plain_key_and_ip_address_are_visible_and_used_directly(self):
-        page = self.client.get(self.url)
-        self.assertContains(page, 'IP і порт')
+        self.assertRedirects(self.client.get(self.url), reverse('portal:connections_matching') + f'?journal={self.journal.pk}')
+        page = self.client.get(reverse('portal:connect_service'))
+        self.assertContains(page, 'Адреса, IP або hostname')
         with patch('apps.portal.views_connection_setup.fetch_source_roster', return_value=self.payload) as remote:
             response = self.client.post(self.url, {'action': 'connect', 'source': 'schooltest',
                 'site_url': 'http://10.25.4.21:8000', 'api_key': '  synthetic-ip-key  '})
@@ -99,12 +100,12 @@ class ConnectionSetupTests(TestCase):
         original = self.client.cookies[settings.SESSION_COOKIE_NAME].value
         self.client.cookies['sessionid'] = original
         del self.client.cookies[settings.SESSION_COOKIE_NAME]
-        response = self.client.get(self.url)
+        response = self.client.get(reverse('portal:connections'))
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.wsgi_request.user, self.teacher)
         self.assertEqual(response.cookies[settings.SESSION_COOKIE_NAME].value, original)
         self.client.cookies['sessionid'] = 'foreign-service-session-that-is-not-ours'
-        self.assertEqual(self.client.get(self.url).status_code, 200)
+        self.assertEqual(self.client.get(reverse('portal:connections')).status_code, 200)
         outsider = Client(); outsider.cookies['sessionid'] = 'foreign-service-session-that-is-not-ours'
         self.assertEqual(outsider.get(self.url).status_code, 302)
 
@@ -369,10 +370,11 @@ class ConnectionSetupTests(TestCase):
         StudentAPIGrant.objects.create(journal=self.journal, enabled=True, fields=['id', 'name'])
 
         keys_url = reverse('portal:teacher_api_keys')
-        resp = self.client.get(keys_url)
+        self.assertRedirects(self.client.get(keys_url), reverse('portal:connections'))
+        resp = self.client.get(reverse('portal:connections'))
         self.assertEqual(resp.status_code, 200)
-        self.assertContains(resp, 'Підключені API ключі')
-        self.assertContains(resp, conn1.masked_key)
+        self.assertContains(resp, 'Підключення')
+        self.assertNotContains(resp, conn1.api_key)
         self.assertContains(resp, self.group.name)
         self.assertContains(resp, '10-А клас')
 

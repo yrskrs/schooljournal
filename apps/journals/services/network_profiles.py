@@ -21,13 +21,15 @@ def ensure_automatic_profiles(owner):
     profile = NetworkProfile.objects.filter(owner=owner, use_journal_host=True).first()
     if profile is None:
         name = unique_name(owner, 'Поточна адреса журналу')
-        profile = NetworkProfile.objects.create(owner=owner, name=name, use_journal_host=True)
+        profile = NetworkProfile.objects.create(owner=owner, name=name, use_journal_host=True,
+            schooltest_port=settings.LOCAL_SCHOOLTEST_PORT, schoolwork_port=settings.LOCAL_SCHOOLWORK_PORT)
     profiles.append(profile)
     if settings.LOCAL_SERVER_PROFILE_ENABLED:
         profile = NetworkProfile.objects.filter(owner=owner, host='host.docker.internal', use_journal_host=False).first()
         if profile is None:
             profile = NetworkProfile.objects.create(owner=owner, host='host.docker.internal',
-                name=unique_name(owner, 'Цей сервер'))
+                name=unique_name(owner, 'Цей сервер'), schooltest_port=settings.LOCAL_SCHOOLTEST_PORT,
+                schoolwork_port=settings.LOCAL_SCHOOLWORK_PORT)
         profiles.append(profile)
     for service in ServiceConnection.objects.filter(owner=owner):
         for profile in profiles:

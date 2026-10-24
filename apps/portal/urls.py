@@ -2,6 +2,7 @@ from django.urls import path
 from . import views_integrations
 from . import views_connection_setup
 from . import views_api_workspace
+from . import views_connections
 from . import views_api_inbox
 from . import views_grade_placement
 from . import views_extra_students
@@ -20,6 +21,17 @@ def root_redirect(request):
     return redirect('portal:teacher_dashboard')
 
 urlpatterns = [
+    path('connections/', views_connections.dashboard, name='connections'),
+    path('connections/network/', views_connections.choose_network, name='connections_network'),
+    path('connections/new/', views_connections.connect_service, name='connect_service'),
+    path('connections/previous/<int:connection_id>/', views_connections.legacy_edit, name='connection_legacy_edit'),
+    path('connections/profiles/new/', views_connections.profile_edit, name='connection_profile_new'),
+    path('connections/profiles/<int:profile_id>/', views_connections.profile_edit, name='connection_profile_edit'),
+    path('connections/service/<int:service_id>/check/', views_connections.connection_check, name='connection_check'),
+    path('connections/service/<int:service_id>/edit/', views_connections.connection_edit, name='connection_edit'),
+    path('connections/service/<int:service_id>/address/<int:endpoint_id>/', views_connections.endpoint_edit, name='connection_endpoint_edit'),
+    path('connections/matching/', views_connections.matching, name='connections_matching'),
+    path('connections/journal/<int:journal_id>/bind/', views_connections.bind_service, name='connection_bind'),
     path('teacher-portal/api/', views_api_workspace.api_workspace, name='api_workspace'),
     path('notifications/', views_api_workspace.api_notifications, name='api_notifications'),
     path('outside-students/', views_extra_students.outside_students, name='outside_students'),

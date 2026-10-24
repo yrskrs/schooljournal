@@ -1,0 +1,13 @@
+{% extends 'base.html' %}{% load static %}
+{% block title %}Підключити сервіс | Шкільний журнал{% endblock %}
+{% block extra_head %}<link rel="stylesheet" href="{% static 'css/connections.css' %}?v={{ site_version }}">{% endblock %}
+{% block content %}<main class="connections-page connection-narrow"><a href="{% url 'portal:connections' %}">← Усі підключення</a><h1>Підключити сервіс</h1><p>Адреса → ключ → перевірка → готово. Дані журналів і наявні відповідності залишаються на місці.</p>
+<ol class="connection-steps" aria-label="Кроки підключення"><li data-step-label="1">1. Адреса</li><li data-step-label="2">2. Ключ</li><li data-step-label="3">3. Перевірка</li><li>4. Готово</li></ol>
+<form method="post" class="card" data-connection-wizard>{% csrf_token %}<div role="alert">{{ form.non_field_errors }}</div>
+<fieldset data-wizard-step="1"><legend>Адреса сайту</legend><p>{{ form.source.label_tag }}{{ form.source }}{{ form.source.errors }}</p><p>{{ form.profile.label_tag }}{{ form.profile }}{{ form.profile.errors }}</p><p>{{ form.address.label_tag }}{{ form.address }}<small>{{ form.address.help_text }}</small>{{ form.address.errors }}</p><p>Якщо обрали свою мережу, повторно вводити адресу не потрібно.</p></fieldset>
+<fieldset data-wizard-step="2"><legend>Ключ для журналу</legend><p>{{ form.api_key.label_tag }}{{ form.api_key }}<small>{{ form.api_key.help_text }}</small>{{ form.api_key.errors }}</p><p>Ключ має дозволяти читання оцінок і приймання списків учнів. Збережені ключі приховані.</p></fieldset>
+<fieldset data-wizard-step="3"><legend>Перевірити підключення</legend><p>Перевіримо сайт, його ідентичність і права ключа. Учнів та оцінки цей крок не передає.</p><p role="status" data-wizard-summary></p></fieldset>
+<details><summary>Додатково</summary><p>{{ form.name.label_tag }}{{ form.name }}{{ form.name.errors }}</p><p>{{ form.profile_name.label_tag }}{{ form.profile_name }}<small>{{ form.profile_name.help_text }}</small>{{ form.profile_name.errors }}</p></details>
+<div class="connection-actions"><button type="button" class="btn btn-secondary" data-wizard-back hidden>Назад</button><button type="button" class="btn btn-primary" data-wizard-next hidden>Далі</button><button class="btn btn-primary" data-wizard-submit>Перевірити й підключити</button></div><p role="status" data-wizard-status></p>
+</form></main>{% endblock %}
+{% block extra_js %}<script src="{% static 'js/connections.js' %}?v={{ site_version }}" defer></script>{% endblock %}
