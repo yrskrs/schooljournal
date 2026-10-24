@@ -370,7 +370,9 @@ def journal_detail(request, journal_id):
 
     from apps.portal.api_workspace import request_overview
     journal_api_notices = [n for n in request_overview(request)['notices'] if n['journal_id'] == journal.pk]
+    from apps.journals.services.journal_sync import source_panels
     context = {
+        'sync_sources': source_panels(journal, request.user, (integration_start, integration_end) if request.GET.get('month') or request.GET.get('semester_id') else None),
         'journal_api_notices': journal_api_notices,
         'integration_date_from': integration_start.isoformat(),
         'integration_date_to': integration_end.isoformat(),

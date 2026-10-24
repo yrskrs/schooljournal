@@ -38,7 +38,7 @@ def build_overview(journals):
         journal = primary.journal
         hub = reverse('portal:journal_integrations', args=[journal.pk])
         setup = (reverse('portal:connect_source', args=[journal.pk]) + f'?connection={primary.pk}'
-                 if primary.contract_version == 2 else hub + f'?advanced=1&edit={primary.pk}')
+                 if primary.contract_version == 2 else reverse('portal:connection_legacy_edit', args=[primary.pk]) + f'?edit={primary.pk}')
         group.update(journal=journal, primary=primary, setup_url=setup,
                      hub_url=hub, notices=[], enabled=any(c.enabled for c in items),
                      automatic=len([c for c in items if c.enabled]) > 1)
@@ -78,7 +78,7 @@ def build_overview(journals):
                         detail = detail.replace(connection.api_key, '••••')
             error_connection = next(c for c in items if c.pk == log.connection_id)
             error_setup = (reverse('portal:connect_source', args=[journal.pk]) + f'?connection={error_connection.pk}'
-                           if error_connection.contract_version == 2 else hub + f'?advanced=1&edit={error_connection.pk}')
+                           if error_connection.contract_version == 2 else reverse('portal:connection_legacy_edit', args=[error_connection.pk]) + f'?edit={error_connection.pk}')
             target = error_setup + f'&notice_log={log.pk}' + (f'#sync-log-{log.pk}' if error_connection.contract_version == 2 else '#custom-api')
             action = 'Перевірити адресу та ключ'
             if operation == 'roster':
@@ -101,7 +101,7 @@ def build_overview(journals):
                                  if str(row.get('id')) == primary.source_class_id), '')
             def normalized(value):
                 return ''.join(c for c in value.casefold().translate(str.maketrans('aceikmox', 'асеікмох')) if c.isalnum())
-            if source_class and normalized(source_class) != normalized(journal.student_class.name):
+            if source_class and not primary.service_connection_id and normalized(source_class) != normalized(journal.student_class.name):
                 notice('class', 'Перевірте підключений клас',
                        f'У журналі «{journal.student_class.name}», на джерелі «{source_class}».',
                        'Перевірити клас', setup + '#context')

@@ -364,8 +364,9 @@ class APIWorkspaceTests(TestCase):
         self.connection()
         response = self.client.get(reverse('portal:journal_detail', args=[self.journal.pk]))
         soup = BeautifulSoup(response.content, 'html.parser')
-        self.assertEqual(soup.select_one('#selectTestEndpoint option[selected]')['value'], '')
-        self.assertEqual(soup.select_one('#testConnectionId')['value'], '')
+        self.assertIsNone(soup.select_one('#selectTestEndpoint'))
+        self.assertEqual(len(soup.select('#journal-sync form[data-sync-operation=grades]')), 1)
+        self.assertContains(response, 'Налаштувати підключення')
 
     def test_actual_roster_api_failure_retries_backup(self):
         first, backup = self.connection(), self.connection()

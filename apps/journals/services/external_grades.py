@@ -211,6 +211,9 @@ def import_grade_records(connection, rows, user, date_from, date_to):
     from .grade_placement import assignment_map, peer_connections, work_key, validate_lesson
     placement_peers = peer_connections(connection)
     assigned_lessons = assignment_map(connection, peers=placement_peers)
+    prior_work_keys = {work_key(connection, payload) for payload in
+        ExternalGrade.objects.filter(connection__in=placement_peers).values_list('source_payload', flat=True)
+        if payload} if connection.default_lesson_id else set()
     ignored_student_ids = set(journal.ignored_students.values_list('pk', flat=True))
     students = {}
     for student in journal_students(journal):
@@ -364,6 +367,9 @@ def import_grade_records(connection, rows, user, date_from, date_to):
             selected_lesson = assigned_lessons.get(selected_key)
             if selected_key in assigned_lessons and selected_lesson is None:
                 raise ValueError('Збережено різні уроки для цієї роботи. Відкрийте «Обрати урок» і підтвердьте потрібний.')
+            if (connection.contract_version == 2 and selected_key not in assigned_lessons
+                    and selected_key not in prior_work_keys and connection.default_lesson_id):
+                selected_lesson = connection.default_lesson
             previous = ExternalGrade.objects.filter(connection__in=placement_peers, external_id=external_id).select_related('lesson').order_by('pk').first() if selected_lesson else None
             if selected_lesson:
                 validate_lesson(journal, selected_lesson)

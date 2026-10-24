@@ -29,11 +29,11 @@
   </div>
 
   {% if selected_log and active_tab != 'diagnostics' %}<section class="schedule-card" role="status"><h2>Причина сповіщення</h2><p>Звіт від {{ selected_log.created_at|date:'d.m.Y H:i:s' }}.</p>{% for error in selected_log.display_errors %}<p>{{ error.message }}</p>{% endfor %}</section>{% endif %}
-  {% if can_edit %}{% if not editing_connection or editing_connection.contract_version == 1 %}
+  {% if can_edit and central_settings %}{% if not editing_connection or editing_connection.contract_version == 1 %}
   <details class="schedule-card" id="custom-api" {% if editing_connection or connection_form.is_bound %}open{% endif %}>
     <summary>Нестандартне API · {% if editing_connection %}редагувати підключення{% else %}налаштувати вручну{% endif %}</summary>
     <p>Для систем із власним форматом JSON. Повну адресу API та назви полів візьміть із документації цієї системи. Тести й завдання підключайте кнопкою «Додати API» у простому вигляді.</p>
-    <form method="post" action="{% url 'portal:journal_integrations' journal.pk %}">
+    <form method="post" action="{% if editing_connection %}{% url 'portal:connection_legacy_edit' editing_connection.pk %}{% else %}{% url 'portal:connection_custom' journal.pk %}{% endif %}">
       {% csrf_token %}{% if editing_connection %}<input type="hidden" name="connection_id" value="{{ editing_connection.pk }}">{% endif %}
       {{ connection_form.as_p }}
       <button class="btn btn-primary" name="action" value="connection">Зберегти API</button>
@@ -41,6 +41,7 @@
   </details>
   {% endif %}{% endif %}
 
+  {% if can_edit and not central_settings %}<p><a href="{% url 'portal:connection_custom' journal.pk %}">Налаштувати нестандартне API на сторінці «Підключення»</a></p>{% endif %}
   <!-- Попередження про невідповідність класу, якщо є -->
   {% for api in journal_apis %}
     {% if api.is_class_mismatched %}
@@ -286,61 +287,9 @@
                   <h4 style="margin: 0; font-size: 1.05rem; font-weight: 700;">Редагування підключення «{{ api.name }}»</h4>
                   <button type="button" class="btn btn-sm btn-outline-secondary" onclick="toggleEditDetails('editSection_{{ api.id }}')">✕ Закрити</button>
                 </div>
-                <form method="post" action="{% url 'portal:edit_source_connection' journal.id api.id %}">
-                  {% csrf_token %}
-                  <input type="hidden" name="next" value="{{ request.get_full_path }}">
-                  <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 1rem; margin-bottom: 1rem;">
-                    <div>
-                      <label style="font-weight: 600; font-size: 0.85rem; display: block; margin-bottom: 0.25rem;">Назва підключення:</label>
-                      {{ api.edit_form.name }}
-                    </div>
-                    <div>
-                      <label style="font-weight: 600; font-size: 0.85rem; display: block; margin-bottom: 0.25rem;">Тип сервісу (Тести / Завдання):</label>
-                      {{ api.edit_form.source }}
-                    </div>
-                    <div>
-                      <label style="font-weight: 600; font-size: 0.85rem; display: block; margin-bottom: 0.25rem;">Адреса сайту (IP і порт):</label>
-                      {{ api.edit_form.site_url }}
-                      <small class="text-muted">{{ api.edit_form.site_url.help_text }}</small>
-                    </div>
-                    <div>
-                      <label style="font-weight: 600; font-size: 0.85rem; display: block; margin-bottom: 0.25rem;">Новий ключ API (залиште порожнім, щоб не змінювати):</label>
-                      {{ api.edit_form.api_key }}
-                    </div>
-                    <div>
-                      <label style="font-weight: 600; font-size: 0.85rem; display: block; margin-bottom: 0.25rem;">Клас на сайті джерела:</label>
-                      {{ api.edit_form.source_class_id }}
-                    </div>
-                    <div>
-                      <label style="font-weight: 600; font-size: 0.85rem; display: block; margin-bottom: 0.25rem;">Предмет на сайті джерела:</label>
-                      {{ api.edit_form.source_subject_id }}
-                    </div>
-                    <div>
-                      <label style="font-weight: 600; font-size: 0.85rem; display: block; margin-bottom: 0.25rem;">Група сервера (об'єднання IP):</label>
-                      {{ api.edit_form.server_group }}
-                      <small class="text-muted">{{ api.edit_form.server_group.help_text }}</small>
-                    </div>
-                    <div>
-                      <label style="font-weight: 600; font-size: 0.85rem; display: block; margin-bottom: 0.25rem;">Локація / Мережа:</label>
-                      {{ api.edit_form.location_tag }}
-                      <small class="text-muted">{{ api.edit_form.location_tag.help_text }}</small>
-                    </div>
-                    <div style="display: flex; flex-direction: column; gap: 0.5rem; justify-content: center; padding-top: 0.5rem;">
-                      <label style="display: inline-flex; align-items: center; gap: 0.5rem; cursor: pointer; font-weight: 600; font-size: 0.88rem;">
-                        {{ api.edit_form.is_default_for_group }}
-                        Основна адреса в групі
-                      </label>
-                      <label style="display: inline-flex; align-items: center; gap: 0.5rem; cursor: pointer; font-weight: 600; font-size: 0.88rem;">
-                        {{ api.edit_form.enabled }}
-                        Підключення активне
-                      </label>
-                    </div>
-                  </div>
-                  <div style="display: flex; gap: 0.5rem; justify-content: flex-end;">
-                    <button type="button" class="btn btn-secondary btn-sm" onclick="toggleEditDetails('editSection_{{ api.id }}')">Скасувати</button>
-                    <button type="submit" class="btn btn-primary btn-sm">Зберегти налаштування</button>
-                  </div>
-                </form>
+                <p>Адреси й ключі керуються на сторінці «Підключення».</p>
+                <a class="btn btn-secondary" href="{% url 'portal:connection_legacy_edit' api.id %}">Налаштувати підключення</a>
+                <a class="btn btn-secondary" href="{% url 'portal:connect_source' journal.pk %}?connection={{ api.id }}#context">Зіставити клас і учнів</a>
               </div>
 
             </div>

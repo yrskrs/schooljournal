@@ -638,6 +638,8 @@ def edit_source_connection(request, journal_id, connection_id):
     """Зручне редагування параметрів підключення: назва, адреса, ключ, активність, клас, предмет."""
     journal = _get_journal_or_403(request.user, journal_id, write=True)
     connection = get_object_or_404(journal.grade_apis, pk=connection_id)
+    if connection.service_connection_id:
+        return redirect('portal:connection_edit', service_id=connection.service_connection_id)
     form = EditConnectionForm(request.POST, connection=connection)
 
     if form.is_valid():

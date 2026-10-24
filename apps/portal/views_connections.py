@@ -172,7 +172,8 @@ def connect_service(request):
                     if (e.port_override or getattr(profile, service.source + '_port')) == port), None)
                 if endpoint is None:
                     endpoint = ServiceEndpoint.objects.create(connection=service, profile=profile,
-                        port_override=port, path_prefix=prefix)
+                        port_override=port if port != getattr(profile, service.source + '_port') else None,
+                        path_prefix=prefix)
                 endpoint.enabled, endpoint.last_status = True, 'online'
                 endpoint.last_checked_at = timezone.now()
                 endpoint.save(update_fields=['enabled', 'last_status', 'last_checked_at'])
@@ -204,7 +205,8 @@ def profile_edit(request, profile_id=None):
                     template = service.endpoints.exclude(profile__use_journal_host=True).exclude(
                         profile__host='host.docker.internal').first()
                     ServiceEndpoint.objects.create(connection=service, profile=profile,
-                        port_override=template.port_override if template else None,
+                        port_override=(template.port_override if template and template.port_override !=
+                            getattr(template.profile, service.source + '_port') else None),
                         path_prefix=template.path_prefix if template else '')
         messages.success(request, 'Мережу збережено. Ключі й відповідності учнів залишилися чинними.')
         return redirect('portal:connections')
@@ -330,12 +332,32 @@ def legacy_edit(request, connection_id):
     binding = get_object_or_404(GradeAPIConnection.objects.filter(journal__in=get_user_journals(request.user)), pk=connection_id)
     if binding.service_connection_id:
         return redirect('portal:connection_edit', service_id=binding.service_connection_id)
+    if binding.contract_version != 2:
+        data = (request.POST if request.method == 'POST' else request.GET).copy()
+        data['edit'], data['advanced'] = str(binding.pk), '1'
+        if request.method == 'POST':
+            data['connection_id'] = str(binding.pk); request.POST = data
+        else: request.GET = data
+        from .views_integrations import journal_integrations
+        return journal_integrations(request, binding.journal_id, allow_technical_form=True)
     from .views_connection_setup import connect_source
     if request.method == 'POST':
         data = request.POST.copy(); data['connection_id'] = str(binding.pk); request.POST = data
     else:
         data = request.GET.copy(); data['connection'] = str(binding.pk); request.GET = data
     return connect_source(request, binding.journal_id, allow_legacy_address_form=True)
+
+
+@login_required
+@never_cache
+@sensitive_post_parameters('api_key')
+@require_http_methods(['GET', 'POST'])
+def custom_connection(request, journal_id):
+    from .views_integrations import journal_integrations
+    _get_journal_or_403(request.user, journal_id, write=True)
+    if request.method == 'GET':
+        data = request.GET.copy(); data['advanced'] = '1'; request.GET = data
+    return journal_integrations(request, journal_id, allow_technical_form=True)
 
 
 @login_required
@@ -395,3 +417,21 @@ def bind_service(request, journal_id):
     except ExternalAPIError as error:
         messages.error(request, str(error))
         return redirect('portal:connections_matching')
+
+
+@login_required
+@never_cache
+@require_POST
+def journal_sync_settings(request, journal_id, connection_id):
+    from .forms_connections import JournalSyncSettingsForm
+    from .views_connection_setup import _lock
+    journal = _get_journal_or_403(request.user, journal_id, write=True)
+    with transaction.atomic():
+        journal = _lock(journal, request.user)
+        binding = get_object_or_404(journal.grade_apis.select_for_update(), pk=connection_id)
+        form = JournalSyncSettingsForm(request.POST, instance=binding, prefix=f'connection-{binding.pk}')
+        if form.is_valid():
+            form.save()
+            messages.success(request, 'Налаштування синхронізації збережено. Наявні оцінки та їхні уроки не змінено.')
+        else: messages.error(request, 'Перевірте урок цього журналу та період від 1 до 366 днів. Попередні налаштування збережено.')
+    return redirect(reverse('portal:journal_detail', args=[journal.pk]) + '#journal-sync')

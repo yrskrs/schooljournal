@@ -1,5 +1,6 @@
 {% extends 'base.html' %}
-{% load journal_tags %}
+{% load journal_tags static %}
+{% block extra_head %}<link rel="stylesheet" href="{% static 'css/connections.css' %}?v={{ site_version }}">{% endblock %}
 
 {% block title %}{{ journal.student_class.name }} — {{ journal.subject.name }} | Журнал{% endblock %}
 
@@ -204,121 +205,7 @@
     </div>
   {% endif %}
 
-  <!-- Панель швидкого статусу та синхронізації підключених API -->
-  <div class="journal-api-bar">
-    <span class="api-bar-label">
-      <span>⚡ Статус API:</span>
-    </span>
-
-    <!-- SchoolTest (Тести) -->
-    {% if test_connection %}
-      <div class="api-status-chip {% if test_connection.status == 'ok' %}chip-ok{% elif test_connection.status == 'mismatch' %}chip-warn{% elif test_connection.status == 'disabled' %}chip-disabled{% else %}chip-setup{% endif %}" title="Адреса: {{ test_connection.url }} · Ключ: {{ test_connection.masked_key }}">
-        <span class="chip-dot"></span>
-        <span style="font-weight: 600;">Тести:</span>
-        {% if test_connection.has_multiple_endpoints %}
-          <select id="selectTestEndpoint" onchange="const cid = this.value; document.getElementById('testConnectionId').value = cid; const targetId = cid || '{{ test_connection.id }}'; document.getElementById('testCheckBtn').dataset.connId = targetId; const rf = document.getElementById('formSendTestRoster'); if (rf) rf.action = `/journal/{{ journal.id }}/connection/${targetId}/send-roster/`;" style="font-size: 0.78rem; font-weight: 600; border-radius: 4px; border: 1px solid var(--border); padding: 0.12rem 0.35rem; background: white; max-width: 190px;" title="Оберіть активну мережу сервера (дім/школа) або залиште авто-вибір">
-            <option value="" selected>⚡ Автоматично</option>
-            {% for ep in test_connection.all_endpoints %}
-              <option value="{{ ep.id }}">
-                {{ ep.location_display|default:ep.name }} ({{ ep.host_display }})
-              </option>
-            {% endfor %}
-          </select>
-        {% else %}
-          <span>{{ test_connection.source_class_name|default:journal.student_class.name }}</span>
-          {% if test_connection.location_display %}
-            <span class="location-tag-pill {% if 'дім' in test_connection.location_display|lower or 'дом' in test_connection.location_display|lower %}location-tag-home{% elif 'школ' in test_connection.location_display|lower or 'кабінет' in test_connection.location_display|lower %}location-tag-school{% endif %}">{{ test_connection.location_display }}</span>
-          {% endif %}
-        {% endif %}
-        <div class="chip-actions">
-          <form method="post" id="formPullTestGrades" data-sync-operation="grades" action="{% url 'portal:pull_source_grades' journal.id 'schooltest' %}" style="display: inline;">
-            {% csrf_token %}
-            <input type="hidden" name="date_from" value="{{ integration_date_from }}">
-            <input type="hidden" name="date_to" value="{{ integration_date_to }}">
-            <input type="hidden" name="connection_id" id="testConnectionId" value="{% if not test_connection.has_multiple_endpoints %}{{ test_connection.id }}{% endif %}">
-            <input type="hidden" name="next" value="{{ request.get_full_path }}">
-            <button type="submit" form="formPullTestGrades" class="btn-chip" title="Синхронізувати з тестами: отримати оцінки за період ({{ integration_date_from }} — {{ integration_date_to }})" aria-label="Синхронізувати з тестами">📥 Оцінки</button>
-          </form>
-          <a class="btn-chip" href="{% url 'portal:choose_grade_lesson' journal.pk 'schooltest' %}?date_from={{ integration_date_from }}&amp;date_to={{ integration_date_to }}" title="Обрати урок для оцінок певного тесту">Обрати урок</a>
-          {% if test_connection.can_send_roster %}
-            <form method="post" id="formSendTestRoster" data-sync-operation="roster" action="{% url 'portal:quick_send_roster' journal.id test_connection.id %}" style="display: inline;" onsubmit="return confirm('Передати актуальний список учнів класу {{ journal.student_class.name }} на сайт тестів?');">
-              {% csrf_token %}
-              <input type="hidden" name="next" value="{{ request.get_full_path }}">
-              <button type="submit" form="formSendTestRoster" class="btn-chip" title="Передати учнів журналу на сайт тестів">📤 Учні</button>
-            </form>
-          {% endif %}
-          <button type="button" id="testCheckBtn" class="btn-chip btn-chip-test" data-conn-id="{{ test_connection.id }}" onclick="testConnectionAjax({{ journal.id }}, this.dataset.connId, this)" title="Перевірити зв'язок з сервером тестів">🔍 Тест</button>
-        </div>
-      </div>
-    {% else %}
-      <a href="{% url 'portal:connect_source' journal.id %}?source=schooltest" class="api-status-chip chip-empty" title="Підключити тести (щоб синхронізувати з тестами SchoolTest)" aria-label="Синхронізувати з тестами">
-        <span class="chip-dot dot-gray"></span>
-        <span>+ Підключити тести</span>
-      </a>
-    {% endif %}
-
-    <!-- SchoolWork (Завдання) -->
-    {% if work_connection %}
-      <div class="api-status-chip {% if work_connection.status == 'ok' %}chip-ok{% elif work_connection.status == 'mismatch' %}chip-warn{% elif work_connection.status == 'disabled' %}chip-disabled{% else %}chip-setup{% endif %}" title="Адреса: {{ work_connection.url }} · Ключ: {{ work_connection.masked_key }}">
-        <span class="chip-dot"></span>
-        <span style="font-weight: 600;">Завдання:</span>
-        {% if work_connection.has_multiple_endpoints %}
-          <select id="selectWorkEndpoint" onchange="const cid = this.value; document.getElementById('workConnectionId').value = cid; const targetId = cid || '{{ work_connection.id }}'; document.getElementById('workCheckBtn').dataset.connId = targetId; const rf = document.getElementById('formSendWorkRoster'); if (rf) rf.action = `/journal/{{ journal.id }}/connection/${targetId}/send-roster/`;" style="font-size: 0.78rem; font-weight: 600; border-radius: 4px; border: 1px solid var(--border); padding: 0.12rem 0.35rem; background: white; max-width: 190px;" title="Оберіть активну мережу сервера (дім/школа) або залиште авто-вибір">
-            <option value="" selected>⚡ Автоматично</option>
-            {% for ep in work_connection.all_endpoints %}
-              <option value="{{ ep.id }}">
-                {{ ep.location_display|default:ep.name }} ({{ ep.host_display }})
-              </option>
-            {% endfor %}
-          </select>
-        {% else %}
-          <span>{{ work_connection.source_class_name|default:journal.student_class.name }}</span>
-          {% if work_connection.location_display %}
-            <span class="location-tag-pill {% if 'дім' in work_connection.location_display|lower or 'дом' in work_connection.location_display|lower %}location-tag-home{% elif 'школ' in work_connection.location_display|lower or 'кабінет' in work_connection.location_display|lower %}location-tag-school{% endif %}">{{ work_connection.location_display }}</span>
-          {% endif %}
-        {% endif %}
-        <div class="chip-actions">
-          <form method="post" id="formPullWorkGrades" data-sync-operation="grades" action="{% url 'portal:pull_source_grades' journal.id 'schoolwork' %}" style="display: inline;">
-            {% csrf_token %}
-            <input type="hidden" name="date_from" value="{{ integration_date_from }}">
-            <input type="hidden" name="date_to" value="{{ integration_date_to }}">
-            <input type="hidden" name="connection_id" id="workConnectionId" value="{% if not work_connection.has_multiple_endpoints %}{{ work_connection.id }}{% endif %}">
-            <input type="hidden" name="next" value="{{ request.get_full_path }}">
-            <button type="submit" form="formPullWorkGrades" class="btn-chip" title="Синхронізувати із завданнями: отримати оцінки за період ({{ integration_date_from }} — {{ integration_date_to }})" aria-label="Синхронізувати із завданнями">📥 Оцінки</button>
-          </form>
-          <a class="btn-chip" href="{% url 'portal:choose_grade_lesson' journal.pk 'schoolwork' %}?date_from={{ integration_date_from }}&amp;date_to={{ integration_date_to }}" title="Обрати урок для оцінок певного завдання">Обрати урок</a>
-          {% if work_connection.can_send_roster %}
-            <form method="post" id="formSendWorkRoster" data-sync-operation="roster" action="{% url 'portal:quick_send_roster' journal.id work_connection.id %}" style="display: inline;" onsubmit="return confirm('Передати актуальний список учнів класу {{ journal.student_class.name }} на сайт завдань?');">
-              {% csrf_token %}
-              <input type="hidden" name="next" value="{{ request.get_full_path }}">
-              <button type="submit" form="formSendWorkRoster" class="btn-chip" title="Передати учнів журналу на сайт завдань">📤 Учні</button>
-            </form>
-          {% endif %}
-          <button type="button" id="workCheckBtn" class="btn-chip btn-chip-test" data-conn-id="{{ work_connection.id }}" onclick="testConnectionAjax({{ journal.id }}, this.dataset.connId, this)" title="Перевірити зв'язок з сервером завдань">🔍 Тест</button>
-        </div>
-      </div>
-    {% else %}
-      <a href="{% url 'portal:connect_source' journal.id %}?source=schoolwork" class="api-status-chip chip-empty" title="Підключити завдання (щоб синхронізувати із завданнями SchoolWork)" aria-label="Синхронізувати із завданнями">
-        <span class="chip-dot dot-gray"></span>
-        <span>+ Підключити завдання</span>
-      </a>
-    {% endif %}
-
-    <!-- Нові знання nz.ua -->
-    {% if journal.nz_journal_id %}
-      <div class="api-status-chip chip-ok" title="Журнал зв'язано з онлайн-платформою Нові Знання (nz.ua)">
-        <span class="chip-dot"></span>
-        <span style="font-weight: 600;">nz.ua:</span>
-        <span>підключено</span>
-      </div>
-    {% endif %}
-
-    <a href="{% url 'portal:journal_integrations' journal.id %}?tab=notifications" class="btn btn-outline-primary btn-sm">Сповіщення{% if journal_api_notices %} ({{ journal_api_notices|length }}){% endif %}</a>
-    <!-- Посилання в Центр API -->
-    <a href="{% url 'portal:journal_integrations' journal.id %}" class="btn btn-outline-primary btn-sm" style="margin-left: auto; display: inline-flex; align-items: center; gap: 0.35rem; font-size: 0.82rem; padding: 0.2rem 0.6rem;" title="Відкрити повний Центр керування API та синхронізації">
-      <span>⚙️ Центр керування API</span>
-    </a>
-  </div>
+  {% include 'portal/journal/sync_panel.html' %}
   <div id="journalSyncAttention" aria-live="polite">{% if journal_api_notices %}<a class="api-attention-banner" href="{% url 'portal:journal_integrations' journal.id %}?tab=notifications"><strong>Питання API: {{ journal_api_notices|length }}</strong><span>Переглянути причину та виправити →</span></a>{% endif %}</div>
 </div>
 

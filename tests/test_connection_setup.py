@@ -504,9 +504,9 @@ class ConnectionSetupTests(TestCase):
         detail_url = reverse('portal:journal_detail', kwargs={'journal_id': self.journal.pk})
         resp = self.client.get(detail_url)
         self.assertEqual(resp.status_code, 200)
-        self.assertContains(resp, 'journal-api-bar')
-        self.assertContains(resp, 'api-status-chip')
-        self.assertContains(resp, 'Центр API')
+        self.assertContains(resp, 'id="journal-sync"')
+        self.assertContains(resp, 'SchoolTest · Тести')
+        self.assertContains(resp, 'Налаштувати підключення')
 
         int_url = reverse('portal:journal_integrations', kwargs={'journal_id': self.journal.pk})
         resp_int = self.client.get(int_url)
@@ -599,7 +599,6 @@ class ConnectionSetupTests(TestCase):
 
         mock_payload = []
         with patch('apps.portal.views_integrations.find_online_connection_in_group', return_value=(conn2, {conn1.pk: (False, 'Тайм-аут'), conn2.pk: (True, 'В мережі')})), \
-             patch('apps.portal.views_integrations._reconcile_source_roster') as mock_reconcile, \
              patch('apps.portal.views_integrations.fetch_grade_payload', return_value=mock_payload), \
              patch('apps.portal.views_integrations.import_grade_records') as mock_import:
 
@@ -613,8 +612,8 @@ class ConnectionSetupTests(TestCase):
             }, follow=True)
 
             self.assertEqual(resp.status_code, 200)
-            # Reconcile was called for conn2 (online), not conn1 (offline)
-            mock_reconcile.assert_called_once_with(ANY, conn2)
+            # Only the selected online endpoint supplies grades.
+            self.assertEqual(mock_import.call_args.args[0], conn2)
             # Success message is displayed for conn2 / group
             self.assertContains(resp, 'Сервер тестування')
             self.assertContains(resp, 'додано 2')

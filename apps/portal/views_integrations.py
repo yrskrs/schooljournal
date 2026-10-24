@@ -61,7 +61,7 @@ def student_list_api(request, journal_id):
 @login_required
 @require_http_methods(['GET', 'POST'])
 @sensitive_post_parameters('api_key', 'password')
-def journal_integrations(request, journal_id):
+def journal_integrations(request, journal_id, allow_technical_form=False):
     journal = _get_journal_or_403(request.user, journal_id, write=request.method == 'POST')
     if (request.method == 'GET' and not request.GET.get('advanced') and not request.GET.get('edit')
             and request.GET.get('tab') not in ('diagnostics', 'mapping', 'grants')
@@ -75,6 +75,8 @@ def journal_integrations(request, journal_id):
     instance = get_object_or_404(connections, pk=edit) if edit and str(edit).isdigit() else None
     if edit and instance is None:
         return HttpResponseBadRequest('Некоректне підключення.')
+    if request.method == 'GET' and instance and not allow_technical_form:
+        return redirect('portal:connection_legacy_edit', connection_id=instance.pk)
     api_form = StudentAPIForm(initial={'enabled': grant.enabled if grant else False,
         'fields': grant.fields if grant else ['id', 'name'], 'expires_at': grant.expires_at if grant else None})
     connection_form = GradeAPIConnectionForm(instance=instance)
@@ -283,6 +285,7 @@ def journal_integrations(request, journal_id):
 
     response = render(request, 'portal/journal/integrations.html', {
         'journal': journal, 'grant': grant, 'api_form': api_form, 'connections': connections,
+        'central_settings': allow_technical_form,
         'grouped_connections': grouped_connections,
         'journal_apis': journal_apis, 'available_sources': available, 'recent_logs': recent_logs, 'selected_log': selected_log,
         'external_review_count': external_review_count, 'inbox_count': inbox_count,
@@ -312,36 +315,10 @@ def integration_diagnostics(request, journal_id):
     return response
 
 
-def _reconcile_source_roster(request, connection):
-    """Retry membership changes and return notices for the chosen address."""
-    if not connection.enabled or connection.contract_version != 2 or (
-            'journal_roster_import' not in connection.roster_cache.get('capabilities', [])):
-        return []
-    notices = []
-    try:
-        report = send_journal_roster(connection, request.user)
-        if report['counts'].get('conflicts') or report['counts'].get('needs_review'):
-            notices.append(f'{connection.name}: список потребує перевірки відповідностей на сторінці підключення.')
-        connection.refresh_from_db()
-    except ExternalAPIError as error:
-        notices.append(f'{connection.name}: список учнів не синхронізовано. {error}')
-    return notices
-
-
 def _fetch_group_grades(request, connections, start, end, preferred_id=None):
-    notices = []
-
-    def exchange(candidate):
-        nonlocal notices
-        notices = _reconcile_source_roster(request, candidate)
-        return fetch_grade_payload(candidate, start, end)
-
-    connection, rows = exchange_with_fallback(connections, exchange,
+    # Reading grades is independent from the teacher's explicit roster transfer.
+    return exchange_with_fallback(connections, lambda candidate: fetch_grade_payload(candidate, start, end),
         preferred_id=preferred_id, selector=find_online_connection_in_group)
-    # Only show roster notices from the address that completed the operation.
-    for text in notices or []:
-        messages.warning(request, text)
-    return connection, rows
 
 
 def _grade_sync_json(view):
@@ -431,7 +408,7 @@ def pull_source_grades(request, journal_id, source):
         groups = [group for group in groups if any(str(c.pk) == target_conn_id for c in group['connections'])]
 
     if not groups:
-        messages.info(request, 'Спершу підключіть сайт: вставте його адресу та ключ API.')
+        messages.info(request, 'Спершу налаштуйте сервіс на сторінці «Підключення» та зіставте клас.')
         return redirect(reverse('portal:connect_source', kwargs={'journal_id': journal.pk}) + '?source=' + source)
 
     preferred_id = request.POST.get('preferred_connection_id') or target_conn_id
@@ -445,7 +422,7 @@ def pull_source_grades(request, journal_id, source):
                 f"📥 Оцінки {group['name']} ({connection.host_display}): додано {counts['added']}, "
                 f"оновлено {counts['updated']}, очікують схвалення {counts.get('pending', 0)}, "
                 f"без змін {counts['unchanged']}, ігноровано {counts.get('ignored', 0)}, "
-                f"конфлікти {counts['conflicts']}, помилки {counts['errors']}.", counts)
+                f"конфлікти {counts['conflicts']}, позакласні {counts.get('outside', 0)}, помилки {counts['errors']}.", counts)
         except ExternalAPIError as error:
             GradePullLog.objects.create(connection=group['connections'][0], user=request.user,
                 counts={'operation': 'grades', 'errors': 1}, errors=[{'message': str(error)}])

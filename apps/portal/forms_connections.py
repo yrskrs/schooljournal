@@ -138,3 +138,21 @@ class EndpointForm(StyledForm, forms.ModelForm):
         super().__init__(*args, **kwargs)
         self.fields['profile'].queryset = NetworkProfile.objects.filter(owner_id=service.owner_id)
         self.style_fields()
+
+
+class JournalSyncSettingsForm(StyledForm, forms.ModelForm):
+    default_period_days = forms.IntegerField(label='Період за замовчуванням, днів', min_value=1, max_value=366)
+
+    class Meta:
+        from apps.journals.models import GradeAPIConnection
+        model = GradeAPIConnection
+        fields = ['enabled', 'default_lesson', 'default_period_days']
+        labels = {'enabled': 'Джерело увімкнене для цього журналу', 'default_lesson': 'Урок за замовчуванням'}
+        help_texts = {'default_lesson': 'Лише для нових робіт без окремого вибору уроку. Вже отримані оцінки не переміщуються.'}
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        from apps.journals.services.scheduling import SUMMARY_TYPES
+        self.fields['default_lesson'].queryset = self.instance.journal.lessons.exclude(lesson_type__in=SUMMARY_TYPES)
+        self.fields['default_lesson'].empty_label = 'За датою або окремим вибором роботи'
+        self.style_fields()

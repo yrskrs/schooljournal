@@ -422,7 +422,7 @@ class ExternalIntegrationTests(TestCase):
 
     def test_saved_outgoing_key_not_exposed_or_erased_on_edit(self):
         self.connection.api_key = 'synthetic-outgoing-secret'; self.connection.save()
-        response = self.client.get(self.url('journal_integrations') + f'?edit={self.connection.pk}')
+        response = self.client.get(reverse('portal:connection_legacy_edit', args=[self.connection.pk]))
         self.assertNotContains(response, 'synthetic-outgoing-secret')
         data = {name: getattr(self.connection, name) for name in GradeAPIConnectionForm.Meta.fields}
         data['api_key'] = ''

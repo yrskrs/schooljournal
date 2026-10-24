@@ -44,8 +44,8 @@ class ConnectionsUITests(TestCase):
         self.assertEqual(response.status_code, 302)
         self.assertEqual(NetworkProfile.objects.filter(host='10.44.1.13').count(), 1)
         profile = NetworkProfile.objects.get(host='10.44.1.13')
-        self.assertEqual(set(profile.endpoints.values_list('connection__source', 'port_override')),
-            {('schooltest', 8080), ('schoolwork', 8000)})
+        self.assertEqual({(e.connection.source, e.site_url()) for e in profile.endpoints.select_related('connection', 'profile')},
+            {('schooltest', 'http://10.44.1.13:8080'), ('schoolwork', 'http://10.44.1.13:8000')})
 
     def test_failed_probe_does_not_store_key_or_echo_it_in_html(self):
         with patch('apps.portal.views_connections.inspect_address', side_effect=ConnectionFailure('Сайт недоступний')):

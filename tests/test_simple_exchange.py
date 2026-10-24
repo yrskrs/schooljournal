@@ -132,7 +132,7 @@ class SimpleExchangeTests(TestCase):
         self.assertContains(self.client.get(response.url), 'value="send_roster"')
         self.assertFalse(Grade.objects.exists())
 
-    def test_grade_sync_retries_roster_before_reading_grades_on_both_routes(self):
+    def test_grade_sync_only_reads_grades_on_both_routes(self):
         self.connection(mappings=True)
         self.journal.ignored_students.add(self.student)
         connection = GradeAPIConnection.objects.get()
@@ -147,17 +147,18 @@ class SimpleExchangeTests(TestCase):
                        side_effect=lambda *args: events.append('grades') or []):
                 response = self.client.post(path, {'date_from': self.year.start_date, 'date_to': self.year.end_date})
             self.assertEqual(response.status_code, 302)
-            self.assertEqual(events, ['roster', 'grades'])
+            self.assertEqual(events, ['grades'])
 
-    def test_failed_roster_retry_is_visible_and_does_not_block_grade_read(self):
+    def test_grade_read_does_not_retry_roster_or_report_a_false_roster_failure(self):
         from apps.journals.services.external_grades import ExternalAPIError
         connection = self.connection(mappings=True)
         path = reverse('portal:pull_external_grades', args=[self.journal.pk, connection.pk])
-        with patch('apps.portal.views_integrations.send_journal_roster', side_effect=ExternalAPIError('Синтетично недоступний')), \
+        with patch('apps.portal.views_integrations.send_journal_roster', side_effect=ExternalAPIError('Синтетично недоступний')) as roster, \
              patch('apps.portal.views_integrations.fetch_grade_payload', return_value=[]) as grades:
             response = self.client.post(path, {'date_from': self.year.start_date, 'date_to': self.year.end_date}, follow=True)
         grades.assert_called_once()
-        self.assertContains(response, 'список учнів не синхронізовано')
+        roster.assert_not_called()
+        self.assertNotContains(response, 'список учнів не синхронізовано')
 
     def test_ignore_acknowledgement_rejects_active_missing_or_omitted_mapping(self):
         from apps.journals.services.external_grades import ExternalAPIError

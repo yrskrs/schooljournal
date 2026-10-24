@@ -227,6 +227,8 @@ def group_connections_by_server(connections):
             instance = ''
         identity = ('instance:' + instance if instance and conn.contract_version == 2 else
                     'group:' + conn.server_group.strip() if conn.server_group.strip() else f'single:{conn.pk}')
+        if conn.service_connection_id:
+            identity = f'service:{conn.service_connection_id}'
         # Addresses may substitute for one another only within the same journal
         # and source context. A known instance takes precedence over a label.
         group_key = f'{conn.source}:{conn.journal_id}:{conn.source_class_id}:{conn.source_subject_id}:{identity}'
