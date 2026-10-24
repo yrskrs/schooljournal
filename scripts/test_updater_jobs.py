@@ -43,6 +43,28 @@ class UpdaterJobTests(unittest.TestCase):
         self.assertIn('synthetic/app:9.2.0', environment.read_text())
         self.assertFalse(environment.with_suffix('.image-update').exists())
 
+    def test_refresh_adopts_new_services_without_losing_rollback_config(self):
+        from unittest.mock import Mock
+        import copy
+        deployment = updater.Deployment.__new__(updater.Deployment)
+        old = {'services': {'app': {'environment': {'OLD': '1'}}}, 'volumes': {'real': {}}}
+        deployment.config = copy.deepcopy(old)
+        deployment.original_config = copy.deepcopy(old)
+        deployment.path = self.root / 'compose.json'
+        replacement = Mock()
+        replacement.config = {'services': {'app': {'environment': {'NEW': '1'}}, 'code_runner': {}},
+                              'volumes': {'real': {}}}
+        with patch.object(updater, 'Deployment', return_value=replacement):
+            deployment.refresh()
+        self.assertIn('code_runner', deployment.config['services'])
+        self.assertEqual(deployment.config['services']['app']['environment'], {'NEW': '1'})
+        self.assertEqual(json.loads(deployment.path.read_text()), replacement.config)
+        replacement.close.assert_called_once()
+        self.assertEqual(deployment.original_config, old)
+        deployment.restore_config()
+        self.assertEqual(deployment.config, old)
+        self.assertEqual(json.loads(deployment.path.read_text()), old)
+
     def test_output_is_visible_before_command_finishes(self):
         finished = threading.Event()
         def run():
