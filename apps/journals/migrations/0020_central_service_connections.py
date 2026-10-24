@@ -5,7 +5,6 @@ import django.core.validators
 import django.db.models.deletion
 from django.conf import settings
 from django.db import migrations, models
-from apps.journals.services.connection_migration import migrate_legacy_connections, restore_plaintext_legacy_tokens
 
 
 class Migration(migrations.Migration):
@@ -121,5 +120,4 @@ class Migration(migrations.Migration):
             model_name='serviceconnection',
             constraint=models.UniqueConstraint(fields=('owner', 'source', 'identity_key'), name='service_identity_unique'),
         ),
-        migrations.RunPython(migrate_legacy_connections, restore_plaintext_legacy_tokens),
     ]

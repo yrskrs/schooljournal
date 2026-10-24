@@ -153,7 +153,7 @@ class LegacyConnectionMigrationTests(TransactionTestCase):
         from django.db.migrations.executor import MigrationExecutor
         executor = MigrationExecutor(connection)
         old_target = [('journals', '0019_gradelessonassignment')]
-        new_target = [('journals', '0020_central_service_connections')]
+        new_target = [('journals', '0022_migrate_legacy_service_connections')]
         executor.migrate(old_target)
         fixtures.JournalWorkflowsTests.setUp(self)
         old_apps = executor.loader.project_state(old_target).apps
