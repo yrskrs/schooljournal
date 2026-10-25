@@ -84,4 +84,12 @@ class JournalSyncSettingsTests(TestCase):
         self.assertFalse(soup.select('input[name=api_key],input[name=url],input[name=site_url]'))
         self.assertContains(response, '📥 Забрати оцінки')
         self.assertContains(response, 'SchoolNet · Завдання')
+        details = soup.select_one('#journalSyncDetails')
+        self.assertNotIn('open', details.attrs)
+        quick = soup.select_one('.journal-sync-quick')
+        form = quick.select_one('form[data-sync-operation=grades]')
+        self.assertIsNotNone(form)
+        self.assertEqual(form.select_one('[name=connection_id]')['value'], str(self.connection.pk))
+        self.assertFalse(quick.select('input[type=date]'))
+        self.assertEqual(len({n['id'] for n in soup.select('[id]')}), len(soup.select('[id]')))
 

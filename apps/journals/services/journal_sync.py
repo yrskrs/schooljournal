@@ -24,7 +24,8 @@ def source_panels(journal, user, filtered_range=None):
             end = max(journal.academic_year.start_date, min(today, journal.academic_year.end_date))
             start = max(journal.academic_year.start_date, end - dt.timedelta(days=max(1, binding.default_period_days) - 1))
             if filtered_range: start, end = filtered_range
-            logs = binding.pull_logs.order_by('-created_at', '-pk')
+            logs = binding.pull_logs.filter(Q(counts__connection_replaced__isnull=True) |
+                Q(counts__connection_replaced=False)).order_by('-created_at', '-pk')
             grade_log = logs.filter(Q(counts__operation__isnull=True) | Q(counts__operation='grades')).first()
             counts = grade_log.counts if grade_log else {}
             address = ''

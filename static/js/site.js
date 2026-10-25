@@ -103,9 +103,12 @@ function applyJournalPage(html) {
   const position = capturePagePosition();
   const search = document.getElementById('studentSearchInput')?.value || '';
   const toolsOpen = document.getElementById('journalTools')?.open || false;
+  const syncOpen = document.getElementById('journalSyncDetails')?.open || false;
   const focusedId = document.activeElement?.id;
   document.querySelectorAll('body > .student-action-dropdown').forEach(menu => menu.remove());
   current.replaceWith(incoming);
+  const syncDetails = document.getElementById('journalSyncDetails');
+  if (syncDetails) syncDetails.open = syncOpen;
   const noticeLink = document.querySelector('[data-api-notifications]');
   const newNoticeLink = parsed.querySelector('[data-api-notifications]');
   if (noticeLink && newNoticeLink) noticeLink.replaceChildren(...Array.from(newNoticeLink.childNodes));

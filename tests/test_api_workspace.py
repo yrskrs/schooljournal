@@ -63,6 +63,15 @@ class APIWorkspaceTests(TestCase):
         notice, = self.overview()['notices']
         self.assertIn('оцінки', notice['title'])
 
+    def test_replaced_connection_history_is_not_a_current_failure_but_new_failure_is(self):
+        connection = self.connection()
+        old = self.log(connection, errors=1, connection_replaced=True)
+        self.assertEqual(self.overview()['notices'], [])
+        self.assertTrue(connection.pull_logs.filter(pk=old.pk).exists())
+        current = self.log(connection, errors=1)
+        notice, = self.overview()['notices']
+        self.assertIn(f'notice_log={current.pk}', notice['url'])
+
     def test_grade_success_cannot_hide_failed_roster(self):
         connection = self.connection()
         self.log(connection, 'roster', errors=1)
@@ -365,7 +374,8 @@ class APIWorkspaceTests(TestCase):
         response = self.client.get(reverse('portal:journal_detail', args=[self.journal.pk]))
         soup = BeautifulSoup(response.content, 'html.parser')
         self.assertIsNone(soup.select_one('#selectTestEndpoint'))
-        self.assertEqual(len(soup.select('#journal-sync form[data-sync-operation=grades]')), 1)
+        self.assertEqual(len(soup.select('.journal-sync-quick form[data-sync-operation=grades]')), 1)
+        self.assertEqual(len(soup.select('#journalSyncDetails form[data-sync-operation=grades]')), 1)
         self.assertContains(response, 'Налаштувати підключення')
 
     def test_actual_roster_api_failure_retries_backup(self):

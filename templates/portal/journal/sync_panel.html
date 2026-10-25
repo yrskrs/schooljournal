@@ -1,5 +1,14 @@
 <section id="journal-sync" class="journal-sync" aria-labelledby="journal-sync-title">
-<header class="connections-heading"><h2 id="journal-sync-title">Синхронізація</h2><a href="{% url 'portal:connections' %}">Налаштувати підключення</a></header>
+<div class="journal-sync-quick" aria-label="Швидка синхронізація">
+<strong id="journal-sync-title">⚡ Швидка синхронізація</strong>
+{% for panel in sync_sources %}<div class="sync-quick-source"><span>{{ panel.label }}</span>
+{% for row in panel.connections %}{% if row.available and can_edit %}
+<form method="post" id="quickPullGrades-{{ row.binding.pk }}" data-sync-operation="grades" action="{% url 'portal:pull_source_grades' journal.pk panel.source %}">{% csrf_token %}<input type="hidden" name="connection_id" value="{{ row.binding.pk }}"><input type="hidden" name="date_from" value="{{ integration_date_from }}"><input type="hidden" name="date_to" value="{{ integration_date_to }}"><input type="hidden" name="next" value="{{ request.get_full_path }}"><button type="submit" form="quickPullGrades-{{ row.binding.pk }}" class="btn-chip" {% if not row.connected %}disabled{% endif %} title="Отримати оцінки за відкритий період журналу: {{ integration_date_from }} — {{ integration_date_to }}" aria-label="{{ panel.old_label }}">📥 Оцінки</button></form>
+{% if row.can_send %}<form method="post" id="quickSendRoster-{{ row.binding.pk }}" data-sync-operation="roster" action="{% url 'portal:quick_send_roster' journal.pk row.binding.pk %}">{% csrf_token %}<input type="hidden" name="next" value="{{ request.get_full_path }}"><button type="submit" form="quickSendRoster-{{ row.binding.pk }}" class="btn-chip" title="Передати актуальний список учнів цього журналу">📤 Учні</button></form>{% endif %}
+{% endif %}{% empty %}<a href="{% url 'portal:connections_matching' %}?journal={{ journal.pk }}">Підключити</a>{% endfor %}</div>{% endfor %}
+</div>
+<details id="journalSyncDetails" class="journal-sync-details"><summary>Період, налаштування та стан синхронізації{% if journal_api_notices %}<span class="sync-notice-count">{{ journal_api_notices|length }}</span>{% endif %}</summary>
+<header class="connections-heading"><h2>Синхронізація за періодом</h2><a href="{% url 'portal:connections' %}">Налаштувати підключення</a></header>
 <div class="connection-grid">{% for panel in sync_sources %}<section class="card"><h3>{{ panel.label }}</h3>
 {% for row in panel.connections %}<div class="sync-source-row" data-sync-source="{{ panel.source }}">
 <p><strong>{{ row.binding.name }}</strong> · {% if row.connected %}<a href="{% url 'portal:connections_matching' %}?journal={{ journal.pk }}#class-{{ journal.student_class_id }}">{{ row.class_name }} · ID {{ row.class_id }}</a>{% else %}<a href="{% url 'portal:connections_matching' %}?journal={{ journal.pk }}">Зіставити клас</a>{% endif %}{% if not row.available %} · вимкнено{% endif %}</p>
@@ -15,4 +24,5 @@
 </div>{% empty %}<p>Сервіс ще не пов’язаний із цим журналом.</p><a class="btn btn-secondary" href="{% url 'portal:connections_matching' %}?journal={{ journal.pk }}" title="{{ panel.old_label }}">Зіставити клас і джерело</a>{% endfor %}
 </section>{% endfor %}</div>
 <nav class="connection-actions"><a href="{% url 'portal:external_grade_review' journal.pk %}">Конфлікти й погодження оцінок</a><a href="{% url 'portal:api_inbox' journal.pk %}">Позакласні учні та результати</a><a href="{% url 'portal:journal_integrations' journal.pk %}?tab=notifications">Сповіщення{% if journal_api_notices %} ({{ journal_api_notices|length }}){% endif %}</a></nav>
+</details>
 </section>

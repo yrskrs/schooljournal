@@ -8,7 +8,9 @@ from apps.portal.permissions import get_user_journals, has_journal_access
 
 
 def operation_logs():
-    logs = GradePullLog.objects.filter(connection_id=OuterRef('pk')).order_by('-created_at', '-pk')
+    logs = GradePullLog.objects.filter(connection_id=OuterRef('pk')).filter(
+        Q(counts__connection_replaced__isnull=True) | Q(counts__connection_replaced=False)
+    ).order_by('-created_at', '-pk')
     return {
         'grades': logs.filter(Q(counts__operation__isnull=True) | Q(counts__operation='grades')),
         'roster': logs.filter(counts__operation='roster'),
