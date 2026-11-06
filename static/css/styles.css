@@ -1958,3 +1958,11 @@ body {
   .api-actions .form-select { flex-basis: 100%; }
   .api-source-card .api-actions .btn { flex-grow: 1; text-align: center; }
 }
+
+/* Secondary navigation stays available without filling the main header. */
+.nav-tools { position:relative; }
+.nav-tools > summary { cursor:pointer; list-style:none; }
+.nav-tools > summary::-webkit-details-marker { display:none; }
+.nav-tools-menu { position:absolute; right:0; top:100%; z-index:120; display:grid; gap:4px; min-width:240px; padding:8px; background:var(--bg-card); border:1px solid var(--border); border-radius:var(--radius-sm); box-shadow:var(--shadow-md); }
+.nav-tools-menu .nav-link { white-space:normal; }
+@media(max-width:768px) { .nav-tools-menu { position:static; min-width:0; box-shadow:none; } }

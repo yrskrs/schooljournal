@@ -262,3 +262,17 @@ function showSyncAttention(url) {
   link.textContent = 'Є питання після обміну. Відкрити сповіщення та виправити →';
   container.replaceChildren(link);
 }
+
+// Native disclosure navigation: close on outside click and return focus on Escape.
+document.addEventListener('click', event => {
+  document.querySelectorAll('.nav-tools[open]').forEach(menu => {
+    if (!menu.contains(event.target) || event.target.closest('a')) menu.open = false;
+  });
+});
+document.addEventListener('keydown', event => {
+  if (event.key !== 'Escape') return;
+  document.querySelectorAll('.nav-tools[open]').forEach(menu => {
+    menu.open = false;
+    menu.querySelector('summary').focus();
+  });
+});

@@ -45,6 +45,7 @@ INSTALLED_APPS = [
 MIDDLEWARE = [
     'config.middleware.PrivateNetworkHostMiddleware',
     'django.middleware.security.SecurityMiddleware',
+    'django.middleware.gzip.GZipMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'config.middleware.LegacySessionCookieMiddleware',
     'django.middleware.common.CommonMiddleware',

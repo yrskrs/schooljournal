@@ -986,3 +986,5 @@ function testConnectionAjax(journalId, connectionId, btn) {
 {{ lesson_choices|json_script:"journal-lesson-data" }}
 </div>
 {% endblock %}
+
+{% block journal_script %}<script src="/static/js/journal.js?v={{ site_version }}"></script>{% endblock %}
