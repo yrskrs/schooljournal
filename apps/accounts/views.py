@@ -138,6 +138,7 @@ def login_view(request):
     context = {
         'form': form,
         'saved_nz_accounts': saved_nz_accounts,
+        'login_method': 'local' if request.method == 'POST' else ('saved' if saved_nz_accounts else 'nz'),
     }
     return render(request, 'accounts/login.html', context)
 

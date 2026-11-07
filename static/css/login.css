@@ -1,0 +1,22 @@
+.login-card { max-width:460px; margin:12px auto; padding:24px; }
+.login-card header { display:grid; grid-template-columns:36px 1fr; align-items:center; gap:2px 12px; text-align:left; margin-bottom:16px; }
+.login-card header .brand-icon { grid-row:1 / span 2; margin:0; width:36px; height:36px; }
+.login-card h1 { font-size:1.35rem; margin:0; }
+.login-card header p { margin:0; }
+.login-card h2 { font-size:1rem; margin:0 0 8px; }
+.login-card header p,.login-hint { color:var(--text-muted); font-size:.85rem; line-height:1.5; }
+.login-tabs { display:flex; gap:4px; padding:4px; margin-bottom:20px; border:1px solid var(--border); border-radius:10px; background:var(--bg); }
+.login-tabs[hidden],.login-card [data-login-panel][hidden] { display:none!important; }
+.login-tabs button { flex:1; border:0; border-radius:7px; padding:10px 6px; background:transparent; color:var(--text-muted); font:inherit; font-size:.85rem; cursor:pointer; }
+.login-tabs button[aria-selected="true"] { background:var(--primary); color:white; font-weight:700; }
+.login-tabs button:focus-visible { outline:2px solid var(--primary); outline-offset:2px; }
+.login-card .form-group { margin:14px 0; }
+.login-card label:not(.login-remember) { display:block; font-size:.88rem; font-weight:600; margin-bottom:6px; }
+.login-card form > .btn { width:100%; }
+.login-remember { display:flex; align-items:flex-start; gap:8px; font-size:.83rem; margin:16px 0 8px; }
+.login-remember input { margin-top:3px; flex-shrink:0; }
+.login-registration { border-top:1px solid var(--border); margin-top:20px; padding-top:14px; font-size:.85rem; }
+.login-registration summary { cursor:pointer; color:var(--text-muted); }
+.login-saved { padding:12px; border:1px solid var(--border); border-radius:8px; margin-bottom:10px; }
+.login-saved p { font-size:.85rem; color:var(--text-muted); overflow-wrap:anywhere; }
+@media(max-width:520px) { .login-card { margin:12px auto; padding:18px; } }
