@@ -6,7 +6,7 @@ import time
 import hashlib
 from collections import defaultdict
 from datetime import datetime, date, timedelta
-from urllib.parse import parse_qsl, urlencode, urlsplit
+from urllib.parse import parse_qsl, urlencode, urlsplit, urljoin, urlunsplit
 from bs4 import BeautifulSoup
 import requests
 from django.utils import timezone
@@ -21,6 +21,19 @@ from apps.journals.models import Journal, Lesson, Grade, Attendance, NZAccount, 
 from .journal_lifecycle import clear_journal_content
 
 logger = logging.getLogger(__name__)
+
+
+def _nz_https_redirect(response, *args, **kwargs):
+    """Keep NZ's HTTP Location headers on HTTPS before requests follows them."""
+    location = response.headers.get('Location')
+    if response.is_redirect and location:
+        target = urlsplit(urljoin(response.url, location))
+        if (target.hostname != 'nz.ua' or target.username or target.password
+                or target.scheme not in ('http', 'https')
+                or target.port not in (None, 80 if target.scheme == 'http' else 443)):
+            raise requests.RequestException('nz.ua повернув перенаправлення на сторонню адресу.')
+        response.headers['Location'] = urlunsplit(('https', 'nz.ua', target.path, target.query, target.fragment))
+    return response
 
 
 class NZServiceError(Exception):
@@ -117,6 +130,7 @@ class NZService:
     def __init__(self, phpsessid=None, cookies_dict=None):
         self.session = requests.Session()
         self.session.headers.update(self.DEFAULT_HEADERS)
+        self.session.hooks['response'].append(_nz_https_redirect)
         self.csrf_token = None
 
         if phpsessid:
@@ -198,10 +212,10 @@ class NZService:
 
     def login(self, login_str: str, password_str: str) -> tuple[bool, str]:
         """
-        Вхід на nz.ua через форму /login.
+        Отримати форму з головної сторінки та надіслати її на POST-only /login.
         """
         try:
-            get_resp = self.session.get(f"{self.BASE_URL}/login", timeout=12)
+            get_resp = self.session.get(f"{self.BASE_URL}/", timeout=12)
             if error := self._availability_error(get_resp):
                 return False, error
             if get_resp.status_code != 200:
@@ -221,6 +235,7 @@ class NZService:
             post_resp = self.session.post(
                 f"{self.BASE_URL}/login",
                 data=payload,
+                headers={'Origin': self.BASE_URL, 'Referer': get_resp.url},
                 allow_redirects=True,
                 timeout=15
             )
@@ -229,10 +244,12 @@ class NZService:
                 return False, error
 
             if post_resp.status_code in [200, 302]:
-                if "/login" in post_resp.url and "LoginForm" in post_resp.text:
-                    soup = BeautifulSoup(post_resp.text, 'html.parser')
+                soup = BeautifulSoup(post_resp.text, 'html.parser')
+                if soup.find('input', attrs={'name': 'LoginForm[password]'}) or (
+                    '/login' in post_resp.url and 'LoginForm' in post_resp.text
+                ):
                     err = soup.select_one('.help-block-error, .alert-danger')
-                    err_msg = err.get_text(strip=True) if err else "Невірний логін або пароль."
+                    err_msg = (err.get_text(strip=True) if err else '') or "Невірний логін або пароль."
                     return False, err_msg
 
                 self.extract_csrf(post_resp.text)
