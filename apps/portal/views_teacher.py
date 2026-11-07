@@ -89,6 +89,10 @@ def teacher_dashboard(request):
 
     class_blocks = list(class_groups.values())
 
+    teacher_display_name = request.user.get_full_name_ukr()
+    if not teacher_display_name or teacher_display_name in ['Вчитель nz.ua', 'nz.ua', 'Вчитель']:
+        teacher_display_name = (nz_account.login if nz_account and nz_account.login else request.user.username)
+
     context = {
         'my_journals': my_journals,
         'extra_journals': extra_journals,
@@ -98,6 +102,7 @@ def teacher_dashboard(request):
         'uncreated_assignments': uncreated_assignments,
         'school': request.user.school,
         'nz_account': nz_account,
+        'teacher_display_name': teacher_display_name,
     }
     return render(request, 'portal/teacher/dashboard.html', context)
 

@@ -99,11 +99,19 @@ class NZService:
 
     DEFAULT_HEADERS = {
         'User-Agent': (
-            'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 '
-            '(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36'
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
+            '(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36'
         ),
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
         'Accept-Language': 'uk-UA,uk;q=0.9,en-US;q=0.8,en;q=0.7',
+        'Sec-Ch-Ua': '"Google Chrome";v="131", "Chromium";v="131", "Not_A Brand";v="24"',
+        'Sec-Ch-Ua-Mobile': '?0',
+        'Sec-Ch-Ua-Platform': '"Windows"',
+        'Sec-Fetch-Dest': 'document',
+        'Sec-Fetch-Mode': 'navigate',
+        'Sec-Fetch-Site': 'same-origin',
+        'Sec-Fetch-User': '?1',
+        'Upgrade-Insecure-Requests': '1',
     }
 
     def __init__(self, phpsessid=None, cookies_dict=None):
@@ -126,6 +134,8 @@ class NZService:
 
     def extract_csrf(self, html_text: str) -> str:
         """Витягти CSRF токен з мета-тегу або прихованого поля сторінки."""
+        if not html_text:
+            return ""
         soup = BeautifulSoup(html_text, 'html.parser')
         meta = soup.find('meta', attrs={'name': 'csrf-token'})
         if meta and meta.get('content'):
@@ -135,6 +145,16 @@ class NZService:
         inp = soup.find('input', attrs={'name': '_csrf'})
         if inp and inp.get('value'):
             self.csrf_token = inp['value']
+            return self.csrf_token
+
+        m = re.search(r'["\']_csrf["\']\s*:\s*["\']([^"\']+)["\']', html_text)
+        if m:
+            self.csrf_token = m.group(1)
+            return self.csrf_token
+
+        m_meta = re.search(r'name=["\']csrf-token["\']\s+content=["\']([^"\']+)["\']', html_text)
+        if m_meta:
+            self.csrf_token = m_meta.group(1)
             return self.csrf_token
 
         return self.csrf_token or ""
@@ -157,9 +177,13 @@ class NZService:
                 soup = BeautifulSoup(resp.text, 'html.parser')
                 if not soup.find('a', href=re.compile(r'^(?:https://nz\.ua)?/logout(?:\?|$)')):
                     return False, 'Не вдалося підтвердити авторизовану сторінку nz.ua.'
-                user_elem = soup.select_one('.user-menu-box, .profile-name, .username, .user-name, header .dropdown-toggle')
+                user_elem = soup.select_one('.user-menu-box, .profile-name, .username, .user-name, header .dropdown-toggle, .navbar-nav .dropdown-toggle, a[href*="/user/profile"], a[href*="/profile"]')
                 user_info = user_elem.get_text(strip=True) if user_elem else "Авторизовано"
                 return True, user_info
+            if resp.status_code in [521, 502, 503, 504, 520] or "роботи з оновлення" in resp.text or "Web server is down" in resp.text:
+                return False, f"Сервер nz.ua тимчасово недоступний (технічні роботи на порталі nz.ua, код HTTP {resp.status_code})."
+            if resp.status_code == 403 or "challenges.cloudflare.com" in resp.text:
+                return False, "Доступ до nz.ua тимчасово обмежено захистом Cloudflare. Спробуйте пізніше."
             return False, f"Сервер nz.ua повернув код {resp.status_code}"
         except requests.RequestException as e:
             return False, f"Помилка з'єднання з nz.ua: {str(e)}"
@@ -170,6 +194,13 @@ class NZService:
         """
         try:
             get_resp = self.session.get(f"{self.BASE_URL}/login", timeout=12)
+            if get_resp.status_code in [521, 502, 503, 504, 520] or "роботи з оновлення" in get_resp.text or "Web server is down" in get_resp.text:
+                return False, f"Портал nz.ua тимчасово недоступний (ведуться технічні роботи або збій на сервері nz.ua, код HTTP {get_resp.status_code}). Будь ласка, спробуйте пізніше."
+            if get_resp.status_code == 403 or "challenges.cloudflare.com" in get_resp.text or "_cf_chl_opt" in get_resp.text:
+                return False, "Доступ до форми входу nz.ua тимчасово обмежено захистом Cloudflare. Спробуйте пізніше або зверніться до адміністратора."
+            if get_resp.status_code != 200:
+                return False, f"Сервер nz.ua повернув помилку з кодом {get_resp.status_code}."
+
             csrf = self.extract_csrf(get_resp.text)
             if not csrf:
                 return False, "Не вдалося отримати CSRF-токен зі сторінки входу nz.ua."
@@ -197,6 +228,8 @@ class NZService:
 
                 self.extract_csrf(post_resp.text)
                 return True, "Успішний вхід на nz.ua"
+            if post_resp.status_code in [521, 502, 503, 504, 520] or "роботи з оновлення" in post_resp.text or "Web server is down" in post_resp.text:
+                return False, f"Портал nz.ua тимчасово недоступний під час авторизації (код HTTP {post_resp.status_code}). Спробуйте пізніше."
             return False, f"Помилка відповіді nz.ua: код {post_resp.status_code}"
         except requests.RequestException as e:
             return False, f"Помилка з'єднання: {str(e)}"

@@ -323,3 +323,86 @@ class NZIntegrationTests(TestCase):
         })
         self.assertEqual(response.status_code, 302)
         self.assertEqual(response.url, reverse('portal:nz_journals_list'))
+
+    @patch('apps.journals.services.nz_service.requests.Session.get')
+    def test_login_handles_maintenance_521_and_cloudflare(self, mock_get):
+        """Сервіс nz.ua коректно сповіщає про технічні роботи або блокування Cloudflare замість технічної помилки CSRF."""
+        service = NZService()
+
+        # Тест на HTTP 521 / роботи з оновлення
+        mock_resp_521 = MagicMock()
+        mock_resp_521.status_code = 521
+        mock_resp_521.text = '<html><body>Ведуться роботи з оновлення ПЗ. Web server is down</body></html>'
+        mock_get.return_value = mock_resp_521
+
+        ok, msg = service.login('test_login', 'test_password')
+        self.assertFalse(ok)
+        self.assertIn('недоступний', msg)
+        self.assertNotIn('Не вдалося отримати CSRF-токен', msg)
+
+        # Тест на Cloudflare challenge 403
+        mock_resp_403 = MagicMock()
+        mock_resp_403.status_code = 403
+        mock_resp_403.text = '<html><head><title>Just a moment...</title><script src="https://challenges.cloudflare.com/chl.js"></script></head></html>'
+        mock_get.return_value = mock_resp_403
+
+        ok, msg = service.login('test_login', 'test_password')
+        self.assertFalse(ok)
+        self.assertIn('Cloudflare', msg)
+        self.assertNotIn('Не вдалося отримати CSRF-токен', msg)
+
+    @patch('apps.journals.services.nz_service.NZService.login')
+    @patch('apps.journals.services.nz_service.NZService.verify_session')
+    def test_nz_account_connect_credentials_updates_teacher_name(self, mock_verify, mock_login):
+        """Підключення nz.ua з логіном та паролем оновлює ПІБ вчителя і прибирає плейсхолдер nz.ua."""
+        self.teacher.last_name = 'Вчитель'
+        self.teacher.first_name = 'nz.ua'
+        self.teacher.patronymic = ''
+        self.teacher.save()
+
+        mock_login.return_value = (True, 'ok')
+        mock_verify.return_value = (True, 'Шевченко Тарас Григорович')
+
+        self.client.force_login(self.teacher)
+        url = reverse('portal:nz_connect')
+        response = self.client.post(url, {
+            'auth_method': 'credentials',
+            'login': 'shevchenko_t',
+            'password': 'secret_password_123',
+        })
+        self.assertEqual(response.status_code, 302)
+
+        self.teacher.refresh_from_db()
+        self.assertEqual(self.teacher.last_name, 'Шевченко')
+        self.assertEqual(self.teacher.first_name, 'Тарас')
+        self.assertEqual(self.teacher.patronymic, 'Григорович')
+        self.assertEqual(self.teacher.get_full_name_ukr(), 'Шевченко Тарас Григорович')
+        self.assertNotIn('nz.ua', self.teacher.get_full_name_ukr())
+
+    def test_user_name_never_outputs_nz_ua_placeholder(self):
+        """Користувач із плейсхолдером 'nz.ua' у імені ніколи не відображає nz.ua як ім'я."""
+        placeholder_user = User.objects.create_user(
+            username='temp_teacher',
+            password='Password123!',
+            first_name='nz.ua',
+            last_name='Вчитель'
+        )
+        self.assertNotIn('nz.ua', placeholder_user.get_full_name_ukr())
+        self.assertNotIn('nz.ua', placeholder_user.get_short_name_ukr())
+
+    def test_teacher_dashboard_renders_compact_integration_bar(self):
+        """Кабінет вчителя не містить згадки про PHPSESSID у модальному вікні та рендерить панель nz.ua."""
+        self.client.force_login(self.teacher)
+        response = self.client.get(reverse('portal:teacher_dashboard'))
+        self.assertEqual(response.status_code, 200)
+        content = response.content.decode('utf-8')
+
+        # Відсутність застарілого вибору PHPSESSID
+        self.assertNotIn('Кука PHPSESSID (Рекомендовано)', content)
+        self.assertNotIn('phpsessidInput', content)
+
+        # Присутність форми логіну та паролю в модальному вікні
+        self.assertIn('name="login"', content)
+        self.assertIn('name="password"', content)
+        self.assertIn('nzConnectModal', content)
+        self.assertIn('nz.ua', content)

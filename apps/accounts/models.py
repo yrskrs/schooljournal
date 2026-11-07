@@ -62,8 +62,23 @@ class User(AbstractUser):
 
     def get_full_name_ukr(self):
         """ПІБ українською: Прізвище Ім'я По-батькові"""
-        parts = [self.last_name, self.first_name, self.patronymic]
+        first = "" if self.first_name == 'nz.ua' else self.first_name
+        last = self.last_name
+        parts = [last, first, self.patronymic]
         full = " ".join([p for p in parts if p]).strip()
+        if not full or full == 'Вчитель':
+            return self.username
+        return full
+
+    def get_short_name_ukr(self):
+        """Коротке ім'я: Прізвище І.Б. або Ім'я"""
+        first = "" if self.first_name == 'nz.ua' else self.first_name
+        if first and self.last_name and self.last_name != 'Вчитель':
+            initials = f"{first[0]}."
+            if self.patronymic:
+                initials += f"{self.patronymic[0]}."
+            return f"{self.last_name} {initials}"
+        full = self.get_full_name_ukr()
         return full if full else self.username
 
     def __str__(self):

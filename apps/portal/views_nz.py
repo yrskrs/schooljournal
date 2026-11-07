@@ -18,6 +18,7 @@ from apps.curriculum.models import AcademicYear, StudentClass, Subject, TeacherA
 from apps.journals.models import Journal, Lesson, Grade, Attendance, NZAccount, NZSyncLog
 from apps.journals.services.nz_service import NZService, NZServiceError, NZAuthError
 from apps.accounts.personal import journal_nz_account
+from apps.accounts.models import User
 
 logger = logging.getLogger(__name__)
 
@@ -52,17 +53,51 @@ def nz_account_status_view(request):
     })
 
 
+def _sync_user_name_from_nz(user, info, fallback_login=None):
+    """Оновити ім'я користувача на основі даних із nz.ua або зв'язаного профілю вчителя."""
+    if info and info != "Авторизовано":
+        parts = [p.strip() for p in info.split() if p.strip()]
+        if len(parts) >= 2:
+            user.last_name = parts[0]
+            user.first_name = parts[1]
+            user.patronymic = parts[2] if len(parts) > 2 else ""
+            user.save(update_fields=['last_name', 'first_name', 'patronymic'])
+            return
+        elif len(parts) == 1:
+            if user.last_name == 'Вчитель' or not user.last_name:
+                user.last_name = 'Вчитель'
+            user.first_name = parts[0]
+            user.save(update_fields=['last_name', 'first_name'])
+            return
+
+    # Якщо ім'я містить службову заглушку 'nz.ua'
+    if user.first_name == 'nz.ua':
+        login_to_check = fallback_login or user.username
+        matched = None
+        if login_to_check:
+            matched = User.objects.filter(
+                Q(username=login_to_check) | Q(nz_accounts__login=login_to_check)
+            ).exclude(first_name='nz.ua').exclude(first_name='').first()
+        if matched and matched.first_name:
+            user.first_name = matched.first_name
+            user.last_name = matched.last_name
+            user.patronymic = matched.patronymic
+            user.save(update_fields=['last_name', 'first_name', 'patronymic'])
+        else:
+            user.first_name = ""
+            user.save(update_fields=['first_name'])
+
+
 @login_required
 @require_POST
 @sensitive_post_parameters('password', 'phpsessid')
 def nz_account_connect_view(request):
     """
     Підключення або оновлення сесії nz.ua:
-    Підтримує 2 режими:
-    1. Через сесійну куку PHPSESSID (найбезпечніше, коли користувач вже увійшов у браузері)
-    2. Через логін та пароль на nz.ua
+    Основний спосіб — логін та пароль на nz.ua.
+    Також підтримується перевірка збереженої сесійної куки PHPSESSID.
     """
-    auth_method = request.POST.get('auth_method', 'cookie')
+    auth_method = request.POST.get('auth_method', 'credentials')
     next_url = request.POST.get('next', 'portal:teacher_dashboard')
 
     account, _ = NZAccount.objects.get_or_create(user=request.user)
@@ -85,8 +120,10 @@ def nz_account_connect_view(request):
         account.is_active = True
         account.last_synced_at = timezone.now()
         account.save()
+        _sync_user_name_from_nz(request.user, info)
 
-        messages.success(request, f"Успішно підключено до nz.ua! Користувач: {info}")
+        user_display = info if info != "Авторизовано" else (account.login or request.user.get_full_name_ukr())
+        messages.success(request, f"Успішно підключено до nz.ua! Користувач: {user_display}")
         return redirect(next_url)
 
     elif auth_method == 'credentials':
@@ -104,9 +141,9 @@ def nz_account_connect_view(request):
             messages.error(request, f"Помилка авторизації на nz.ua: {msg}")
             return redirect(next_url)
 
-        valid, _ = service.verify_session()
+        valid, info = service.verify_session()
         if not valid:
-            messages.error(request, 'Не вдалося підтвердити сесію nz.ua після входу.')
+            messages.error(request, f"Не вдалося підтвердити сесію nz.ua після входу: {info}")
             return redirect(next_url)
 
         cookies = service.get_cookies_dict()
@@ -116,8 +153,10 @@ def nz_account_connect_view(request):
         account.is_active = True
         account.last_synced_at = timezone.now()
         account.save()
+        _sync_user_name_from_nz(request.user, info, fallback_login=login_str)
 
-        messages.success(request, "Успішно авторизовано на порталі nz.ua!")
+        user_display = info if info != "Авторизовано" else (login_str or request.user.get_full_name_ukr())
+        messages.success(request, f"Успішно авторизовано на порталі nz.ua! Користувач: {user_display}")
         return redirect(next_url)
 
     messages.error(request, "Невідомий метод автентифікації.")
