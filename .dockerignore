@@ -49,3 +49,7 @@ test_media*/
 # Runtime updater files
 .maintenance.lock
 .release-image.yaml
+
+# Optional PC launchers and historical documentation are not runtime code.
+/desktop/
+/docs/

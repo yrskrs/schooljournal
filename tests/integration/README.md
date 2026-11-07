@@ -1,6 +1,6 @@
 # Три образи, реальний HTTP і окремий PostgreSQL
 
-Потрібні локально зібрані version-tagged образи з INTEGRATION.md та Docker Compose. Це окремий проєкт `school-api-checks`, без робочих `.env`, томів чи БД. Дані вигадані, PostgreSQL у tmpfs. Порти 19000/19080/19085 слухають лише 127.0.0.1; перевірте, що вони вільні.
+Потрібні локально зібрані version-tagged образи з docs/guides/INTEGRATION.md та Docker Compose. Це окремий проєкт `school-api-checks`, без робочих `.env`, томів чи БД. Дані вигадані, PostgreSQL у tmpfs. Порти 19000/19080/19085 слухають лише 127.0.0.1; перевірте, що вони вільні.
 
 ```bash
 docker compose -f tests/integration/compose.yaml up -d --wait

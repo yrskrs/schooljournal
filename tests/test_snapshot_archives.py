@@ -50,6 +50,20 @@ class SnapshotSafetyTests(unittest.TestCase):
         destination.mkdir()
         snapshot.extract(self.pack(), destination)
 
+    def test_reorganized_docs_are_archived_and_restored(self):
+        guide = self.root / 'docs/guides'
+        guide.mkdir(parents=True)
+        (guide / 'DEPLOYMENT.md').write_text('Synthetic deployment guide')
+        (guide / '.env').write_text('must-not-be-archived')
+        snapshot.create(self.work, self.root, 'sha256:' + 'a' * 64)
+        with tarfile.open(self.work / 'source.tar.gz') as archive:
+            self.assertIn('docs/guides/DEPLOYMENT.md', archive.getnames())
+            self.assertNotIn('docs/guides/.env', archive.getnames())
+        target = Path(self.tmp.name) / 'restored-docs'
+        target.mkdir()
+        snapshot.install_source(self.work / 'source.tar.gz', target)
+        self.assertEqual((target / 'docs/guides/DEPLOYMENT.md').read_text(), 'Synthetic deployment guide')
+
     def test_corruption_is_rejected(self):
         (self.work / 'database.dump').write_bytes(b'corrupted')
         destination = Path(self.tmp.name) / 'rejected'

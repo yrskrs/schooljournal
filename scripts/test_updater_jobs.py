@@ -1,14 +1,17 @@
 """Regression tests for concurrency, streaming, timeouts and persistent updater state."""
 import json
+import copy
+import subprocess
 from pathlib import Path
 import sys
 import tempfile
 import threading
 import time
 import unittest
-from unittest.mock import patch
+from unittest.mock import patch, Mock
 
 import scripts.updater_service as updater
+from scripts import image_retention as retention
 from scripts.update_metadata import check_remote, parse_changelog_markdown
 
 
@@ -140,6 +143,219 @@ class UpdaterJobTests(unittest.TestCase):
         self.assertEqual(releases[0]['date'], '2026-10-12')
         self.assertEqual(releases[0]['changes'], ['Work'])
         self.assertEqual(releases[1]['changes'], ['Test'])
+
+
+
+# Scoped image history and post-verification cleanup regressions.
+PROJECT = next(name for name, data in retention.PROJECTS.items()
+               if data[0] == updater.REPO and name != 'school_test')
+PREFIX = retention.PROJECTS[PROJECT][1][0]
+
+
+def image(number, tags=None, source=None):
+    return {'Id': 'sha256:' + f'{number:064x}', 'Created': f'2026-11-{number:02d}T12:00:00Z',
+            'RepoTags': [f'{PREFIX}:v{number}'] if tags is None else tags,
+            'Config': {'Labels': {'org.opencontainers.image.source': source or 'https://github.com/' + updater.REPO,
+                                  'org.opencontainers.image.version': f'1.0.{number}'}}}
+
+
+class FakeDocker:
+    def __init__(self, images, referenced=()):
+        self.inventory = copy.deepcopy(images)
+        self.used = set(referenced)
+        self.commands = []
+        self.moved = {}
+        self.fail_remove = False
+
+    def images(self):
+        return self.inventory
+
+    def referenced_images(self):
+        return set(self.used)
+
+    def resolve(self, ref):
+        if ref in self.moved:
+            return self.moved[ref]
+        for entry in self.inventory:
+            if entry['Id'] == ref or ref in entry.get('RepoTags', []):
+                return entry['Id']
+        raise ValueError('missing reference')
+
+    def run(self, *args):
+        self.commands.append(args)
+        if self.fail_remove:
+            raise subprocess.CalledProcessError(1, ['docker', *args])
+        return ''
+
+
+class ImageRetentionTests(unittest.TestCase):
+    def test_eight_versions_keep_latest_five_and_dry_run_never_deletes(self):
+        images = [image(n) for n in range(1, 9)]
+        docker = FakeDocker(images)
+        result = retention.cleanup(PROJECT, docker=docker, log=lambda _: None)
+        self.assertEqual(set(result['keep']), {image(n)['Id'] for n in range(4, 9)})
+        self.assertEqual(len(result['remove']), 3)
+        self.assertEqual(docker.commands, [])
+
+    def test_current_and_old_rollback_count_inside_five(self):
+        images = [image(n) for n in range(1, 9)]
+        result = retention.plan(images, PROJECT, [image(1)['Id'], image(8)['Id']])
+        self.assertEqual(set(result['keep']), {image(n)['Id'] for n in (1, 5, 6, 7, 8)})
+
+    def test_aliases_are_one_version_and_foreign_alias_is_not_removed(self):
+        old = image(1, [f'{PREFIX}:old', f'{PREFIX}:rollback', 'unrelated/shared:keep'])
+        images = [old] + [image(n) for n in range(2, 8)]
+        docker = FakeDocker(images)
+        result = retention.cleanup(PROJECT, apply=True, docker=docker, log=lambda _: None)
+        removed = [args[-1] for args in docker.commands]
+        self.assertIn(f'{PREFIX}:old', removed)
+        self.assertIn(f'{PREFIX}:rollback', removed)
+        self.assertNotIn('unrelated/shared:keep', removed)
+        self.assertEqual(result['total'], 7)
+        self.assertTrue(all(args[:3] == ('image', 'rm', '--no-prune') for args in docker.commands))
+
+    def test_other_projects_and_unlabelled_dangling_layers_are_untouched(self):
+        images = [image(n) for n in range(1, 8)]
+        foreign = image(10, ['other-app:1'], 'https://github.com/other/repo')
+        base = image(11, [], 'https://github.com/other/repo')
+        runner = image(12, ['schoolwork2-python-runner:1'])
+        docker = FakeDocker(images + [foreign, base, runner])
+        result = retention.cleanup(PROJECT, apply=True, docker=docker, log=lambda _: None)
+        self.assertEqual(result['total'], 7)
+        self.assertTrue(all(args[-1].startswith(PREFIX + ':') for args in docker.commands))
+
+    def test_identifiable_dangling_old_app_build_can_be_removed(self):
+        old = image(1, [])
+        docker = FakeDocker([old] + [image(n) for n in range(2, 8)])
+        retention.cleanup(PROJECT, apply=True, docker=docker, log=lambda _: None)
+        self.assertIn(('image', 'rm', '--no-prune', old['Id']), docker.commands)
+
+    def test_images_used_by_running_or_stopped_containers_are_protected(self):
+        docker = FakeDocker([image(n) for n in range(1, 8)], [image(1)['Id'], image(2)['Id']])
+        result = retention.cleanup(PROJECT, apply=True, docker=docker, log=lambda _: None)
+        self.assertTrue({image(1)['Id'], image(2)['Id']}.issubset(result['keep']))
+        self.assertNotIn(f'{PREFIX}:v1', [c[-1] for c in docker.commands])
+
+    def test_more_than_five_required_images_never_forces_deletion(self):
+        protected = {image(n)['Id'] for n in range(1, 7)}
+        result = retention.plan([image(n) for n in range(1, 9)], PROJECT, protected)
+        self.assertTrue(result['protected_overflow'])
+        self.assertEqual(set(result['keep']), protected)
+
+    def test_inventory_failure_deletes_nothing(self):
+        docker = FakeDocker([])
+        docker.images = Mock(side_effect=RuntimeError('daemon unavailable'))
+        with self.assertRaises(RuntimeError):
+            retention.cleanup(PROJECT, apply=True, docker=docker)
+        self.assertEqual(docker.commands, [])
+
+    def test_missing_rollback_reference_fails_closed(self):
+        docker = FakeDocker([image(n) for n in range(1, 9)])
+        with self.assertRaises(ValueError):
+            retention.cleanup(PROJECT, protect=['missing:rollback'], apply=True, docker=docker)
+        self.assertEqual(docker.commands, [])
+
+    def test_stale_missing_record_does_not_block_cleanup_but_existing_rollback_is_kept(self):
+        docker = FakeDocker([image(n) for n in range(1, 8)])
+        result = retention.cleanup(PROJECT, rollback=['missing:old-record', image(1)['Id']],
+                                   apply=True, docker=docker, log=lambda _: None)
+        self.assertIn(image(1)['Id'], result['keep'])
+        self.assertEqual(len(result['keep']), 5)
+        self.assertNotIn(f'{PREFIX}:v1', [c[-1] for c in docker.commands])
+
+    def test_tag_moved_after_inventory_is_not_removed(self):
+        docker = FakeDocker([image(n) for n in range(1, 8)])
+        docker.moved[f'{PREFIX}:v1'] = image(7)['Id']
+        result = retention.cleanup(PROJECT, apply=True, docker=docker, log=lambda _: None)
+        self.assertIn(f'{PREFIX}:v1', result['skipped'])
+        self.assertNotIn(f'{PREFIX}:v1', [c[-1] for c in docker.commands])
+
+    def test_new_container_started_after_plan_is_not_removed(self):
+        docker = FakeDocker([image(n) for n in range(1, 8)])
+        docker.referenced_images = Mock(side_effect=[set(), {image(1)['Id']}, set()])
+        result = retention.cleanup(PROJECT, apply=True, docker=docker, log=lambda _: None)
+        self.assertIn(image(1)['Id'], result['skipped'])
+        self.assertNotIn(f'{PREFIX}:v1', [c[-1] for c in docker.commands])
+
+    def test_delete_failure_does_not_escalate_to_force_or_prune(self):
+        docker = FakeDocker([image(n) for n in range(1, 8)])
+        docker.fail_remove = True
+        result = retention.cleanup(PROJECT, apply=True, docker=docker, log=lambda _: None)
+        self.assertEqual(len(result['errors']), 2)
+        self.assertTrue(all(c[:3] == ('image', 'rm', '--no-prune') for c in docker.commands))
+
+    def test_cleanup_failure_does_not_fail_a_verified_web_update(self):
+        with patch.object(updater, 'run_command', side_effect=RuntimeError('Docker busy')), \
+                patch.object(updater, 'append_log') as log:
+            updater.cleanup_old_images(Mock(env={}), 'old-image', 'new-image')
+        self.assertIn('очищення', log.call_args.args[0])
+
+    def test_full_web_job_cleans_only_after_verified_success(self):
+        for fail_verification in (False, True):
+            with self.subTest(fail_verification=fail_verification), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory); (root / 'backups').mkdir()
+                backup = root / 'fixture-backup'; backup.mkdir()
+                for name in ('VERSION', 'RELEASES.json', 'CHANGELOG.md'):
+                    (root / name).write_text('synthetic')
+                deployment = Mock(env={}, config={'services': {}})
+                deployment.query.return_value = 'synthetic-container'
+                old_commit = 'a' * 40
+                old_image = 'sha256:' + 'b' * 64
+                events = []
+
+                def capture(args, *rest, **kwargs):
+                    if args[:3] == ['git', 'status', '--porcelain']:
+                        return ''
+                    if args[:2] == ['git', 'rev-parse']:
+                        return old_commit
+                    if args[:2] == ['git', 'cat-file']:
+                        return ''
+                    if len(args) == 2 and str(args[1]).endswith('/scripts/source_fingerprint.py'):
+                        return 'd' * 64
+                    if args[:2] == ['docker', 'inspect']:
+                        return old_commit if 'org.opencontainers.image.revision' in args[3] else old_image
+                    if args[:3] == ['docker', 'image', 'inspect']:
+                        return old_image
+                    raise AssertionError(args)
+
+                def run(args, *rest, **kwargs):
+                    if any(str(arg).endswith('/scripts/backup.sh') for arg in args):
+                        return 'Резервна копія перевірена: ' + str(backup) if PROJECT == 'schoolwork2' else str(backup)
+                    return ''
+
+                def verify(*args):
+                    events.append('verified')
+                    if fail_verification:
+                        raise RuntimeError('candidate health check failed')
+
+                def state(**kwargs):
+                    updater.CURRENT_STATE.update(kwargs)
+
+                with patch.dict(updater.CURRENT_STATE, {'state': 'running', 'job_id': 'c' * 32, 'progress': 0, 'logs': []}, clear=True), \
+                     patch.object(updater, 'ROOT', root), \
+                     patch.object(updater, 'Deployment', return_value=deployment), \
+                     patch.object(updater, 'capture', side_effect=capture), \
+                     patch.object(updater, 'installed_health', return_value='9.0.0'), \
+                     patch.object(updater, 'read_version', return_value='9.0.1'), \
+                     patch.object(updater, 'run_command', side_effect=run), \
+                     patch.object(updater, 'verify_deployment', side_effect=verify), \
+                     patch.object(updater, 'cleanup_old_images', side_effect=lambda *a: events.append('cleanup')) as clean, \
+                     patch.object(updater, 'perform_rollback'), \
+                     patch.object(updater, 'append_log'), \
+                     patch.object(updater, 'update_state', side_effect=state):
+                    updater.execute_update_job('HEAD')
+                    if fail_verification:
+                        clean.assert_not_called()
+                        self.assertEqual(updater.CURRENT_STATE['state'], 'error')
+                    else:
+                        self.assertEqual(events, ['verified', 'cleanup'], updater.CURRENT_STATE.get('error'))
+                        self.assertEqual(updater.CURRENT_STATE['state'], 'success')
+
+    def test_cli_reads_immediate_web_rollback(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory);(root / 'backups').mkdir()
+            (root / 'backups/update_status.json').write_text('{"rollback":{"image":"old:1"}}')
+            self.assertEqual(retention.rollback_references(root), ['old:1'])
 
 
 if __name__ == '__main__':

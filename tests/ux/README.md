@@ -30,7 +30,7 @@ docker run --rm --network host --security-opt label=disable \
 Очікується 28 успішних перевірок. Знімки залишаються в каталозі артефактів.
 Зупиніть сервер через Ctrl+C для видалення його тимчасової бази й сесії.
 Серверні регресії: `tests/test_grade_placement.py`; результати:
-[GRADE_PLACEMENT_CHECKS.md](../../GRADE_PLACEMENT_CHECKS.md).
+[docs/audits/GRADE_PLACEMENT_CHECKS.md](../../docs/audits/GRADE_PLACEMENT_CHECKS.md).
 
 ## API та сповіщення — 1.3.34
 
@@ -54,7 +54,7 @@ docker run --rm --network host \
   -lc 'npm install --prefix /tmp/pw playwright@1.56.1 --no-audit --no-fund --silent && node tests/site_lifecycle_check.js && node tests/site_sync_response_check.cjs && NODE_PATH=/tmp/pw/node_modules node tests/ux/api_workspace_check.cjs'
 ```
 
-Після завершення зупиніть перший термінал через Ctrl+C: тимчасова БД і сесія приберуться. Для повторного проходу запустіть сервер знову, щоб відновити початкові невирішені сповіщення. Знімки залишаються в каталозі артефактів. Серверні регресії: `tests/test_api_workspace.py`; результати: `API_WORKSPACE_CHECKS.md`.
+Після завершення зупиніть перший термінал через Ctrl+C: тимчасова БД і сесія приберуться. Для повторного проходу запустіть сервер знову, щоб відновити початкові невирішені сповіщення. Знімки залишаються в каталозі артефактів. Серверні регресії: `tests/test_api_workspace.py`; результати: `docs/audits/API_WORKSPACE_CHECKS.md`.
 
 ## Кнопки оцінок і списків — 1.3.32
 

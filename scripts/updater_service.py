@@ -296,6 +296,16 @@ def perform_rollback(deployment, backup, old_image, old_commit, old_version):
     append_log(f'✅ Відкат перевірено: попередня версія {old_version}, БД та файли відновлені.')
 
 
+def cleanup_old_images(deployment, previous_image, current_image):
+    """Cleanup is best effort after verification; it must never roll back a healthy update."""
+    try:
+        run_command(['python3', str(ROOT / 'scripts/image_retention.py'), '--project', PROJECT,
+                     '--keep', '5', '--protect', previous_image, '--protect', current_image, '--apply'],
+                    deployment.env, 300)
+    except Exception as error:
+        append_log('⚠ Оновлення перевірено, але очищення старих образів не завершено: ' + type(error).__name__)
+
+
 def execute_update_job(target_ref='origin/main', target_ver=None, releases_list=None):
     deployment, backup, worktree = None, None, None
     backup_complete = deploy_started = writers_stopped = False
@@ -439,6 +449,7 @@ def execute_update_job(target_ref='origin/main', target_ver=None, releases_list=
         update_state(step=5, progress=90, step_name='Перевірка БД, версії та запущеного образу')
         append_log('Крок 5/5: Перевіряємо готовність і точний образ кожної служби…')
         verify_deployment(deployment, image, version)
+        cleanup_old_images(deployment, old_image, image)
         append_log(f'✅ Успішно завершено. Встановлено {version}; коміт {commit[:12]}.')
         update_state(state='success', progress=100, step_name='Успішно завершено', current_version=version, error=None)
     except Exception as exc:

@@ -25,7 +25,7 @@
 - **Chromium із Django, Gunicorn та Nginx**: таблиця, реальна CSS-статика, пошук, місяць, скидання, перехід до канонічних робіт і повернення з основного журналу. Екрани 1280×900 і 390×844; ПІБ закріплені, сторінка не виходить за межі екрана, JavaScript-помилок немає.
 - Django system check та перевірка міграцій пройшли; зміни схеми БД не потрібні. Тести допоміжних скриптів оновлення пройшли; одна перевірка пропущена штатно.
 
-Тести використовували синтетичні імена й окрему БД. Перегляд не створив нових класів, учнів, уроків або оцінок. Докази: [результати браузера](reports/outside_gradebook_2026-10-15/browser_checks.json), [ПК](reports/outside_gradebook_2026-10-15/outside_grid_desktop.png), [телефон](reports/outside_gradebook_2026-10-15/outside_grid_mobile.png).
+Тести використовували синтетичні імена й окрему БД. Перегляд не створив нових класів, учнів, уроків або оцінок. Докази: [результати браузера](artifacts/outside_gradebook_2026-10-15/browser_checks.json), [ПК](artifacts/outside_gradebook_2026-10-15/outside_grid_desktop.png), [телефон](artifacts/outside_gradebook_2026-10-15/outside_grid_mobile.png).
 
 ## Відтворення
 

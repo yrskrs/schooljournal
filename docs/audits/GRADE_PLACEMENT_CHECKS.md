@@ -45,7 +45,7 @@
 Горизонтального переповнення та помилок JavaScript не виявлено. Мобільний
 і настільний вигляд перевірені за знімками.
 
-Порядок повторення: [tests/ux/README.md](tests/ux/README.md). Знімки поточного
+Порядок повторення: [tests/ux/README.md](../../tests/ux/README.md). Знімки поточного
 прогону: `/tmp/schooljournal-grade-placement-artifacts/`.
 
 ## Дані й розгортання

@@ -12,7 +12,7 @@ import tempfile
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 
-DIRECTORIES = ('apps', 'config', 'templates', 'static', 'scripts', 'tests', 'nginx', '.github', 'school_sync')
+DIRECTORIES = ('apps', 'config', 'templates', 'static', 'scripts', 'tests', 'nginx', '.github', 'school_sync', 'docs')
 FILES = ('manage.py', 'requirements.txt', 'Dockerfile', 'compose.yaml', 'compose.dev.yaml',
          '.env.example', '.gitignore', '.dockerignore', 'VERSION', 'RELEASES.json', 'LICENSE',
          'setup.sh', 'update.sh', 'backup.sh', 'restore.sh', 'service.sh', 'README.md', 'EXTERNAL_API.md',

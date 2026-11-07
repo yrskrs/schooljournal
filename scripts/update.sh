@@ -17,6 +17,7 @@ main() {
     if [[ "$old_commit" == "$target" ]]; then
         if [[ "$(docker inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$(dc ps -aq web)")" == "$target" ]] && dc exec -T -e EXPECTED_VERSION="$(cat "$JOURNAL_ROOT/VERSION")" web python -c 'import json, os, urllib.request; d=json.load(urllib.request.urlopen("http://localhost:8000/healthz/", timeout=10)); assert d["status"] == "ok" and d["version"] == os.environ["EXPECTED_VERSION"]'; then
             echo "Already at requested revision; running version verified."
+            python3 "$JOURNAL_ROOT/scripts/image_retention.py" --project schooljournal --apply || echo "Warning: image cleanup incomplete." >&2
             return 0
         fi
         echo "Git is current, but the running version needs deployment."
@@ -40,6 +41,8 @@ main() {
     }
     trap cleanup_update EXIT
     local candidate="schooljournal-candidate:${target:0:12}"
+    local previous_image
+    previous_image=$(docker inspect --format '{{.Image}}' "$(dc ps -aq web)")
     docker build --build-arg VCS_REF="$target" -t "$candidate" "$workdir"
     dc config --format json | python3 "$JOURNAL_ROOT/scripts/check_candidate.py" "$candidate"
     python3 "$UPDATE_SCRIPTS_DIR/archive.py" check-target "$JOURNAL_ROOT"
@@ -65,6 +68,7 @@ main() {
         return 1
     fi
     update_started=0
+    python3 "$JOURNAL_ROOT/scripts/image_retention.py" --project schooljournal --protect "$previous_image" --apply || printf 'Warning: image cleanup incomplete; update remains healthy.\n' >&2
     echo "Updated successfully. Version: $(cat "$JOURNAL_ROOT/VERSION")"
 }
 main "$@"
