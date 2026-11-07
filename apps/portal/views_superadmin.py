@@ -427,7 +427,7 @@ def students_management(request):
                         ClassEnrollment.objects.create(
                             student=student,
                             student_class=sc,
-                            start_date=timezone.now().date(),
+                            start_date=timezone.localdate(),
                             is_active=True,
                             transfer_note="Початкове зарахування"
                         )
@@ -458,7 +458,7 @@ def students_management(request):
                 for enr in old_enrollments:
                     old_classes_names.append(enr.student_class.name)
                     enr.is_active = False
-                    enr.end_date = timezone.now().date()
+                    enr.end_date = timezone.localdate()
                     enr.transfer_note = f"Переведено до {new_class.name}: {reason}"
                     enr.save()
 
@@ -466,7 +466,7 @@ def students_management(request):
                 ClassEnrollment.objects.create(
                     student=student,
                     student_class=new_class,
-                    start_date=timezone.now().date(),
+                    start_date=timezone.localdate(),
                     is_active=True,
                     transfer_note=reason
                 )

@@ -102,7 +102,7 @@ def journal_detail(request, journal_id):
         selected_semester = next((s for s in semesters if str(s.id) == str(selected_semester_id)), None)
     if not selected_semester and semesters and selected_semester_id not in (None, 'all'):
         # Default to current by date, or semester that contains lessons, or first semester
-        today = timezone.now().date()
+        today = timezone.localdate()
         selected_semester = next((s for s in semesters if s.start_date <= today <= s.end_date), None)
         if not selected_semester:
             journal_lesson_dates = list(Lesson.objects.filter(journal=journal).values_list('date', flat=True))

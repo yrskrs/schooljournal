@@ -323,7 +323,7 @@ class StudentImportService:
                         student=student,
                         student_class=student_class,
                         defaults={
-                            'start_date': timezone.now().date(),
+                            'start_date': timezone.localdate(),
                             'is_active': True,
                             'transfer_note': 'Імпорт зі списку'
                         }
