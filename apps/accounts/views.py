@@ -20,6 +20,7 @@ from apps.journals.models import NZAccount
 from apps.journals.services.nz_service import NZService
 from .nz_trust import COOKIE, trusted_account, remember_account
 from .personal import ensure_personal_account
+from .nz_profile import nz_name_parts, sync_nz_user_name
 
 logger = logging.getLogger(__name__)
 
@@ -224,25 +225,13 @@ def nz_login_view(request):
             return redirect('login')
         account = ensure_personal_account(account)
         user = account.user
-        # Оновлюємо ім'я, якщо отримано реальні дані з nz.ua або якщо в імені залишився плейсхолдер
-        parts = info.split() if info and info != "Авторизовано" else []
-        if len(parts) >= 2:
-            user.last_name = parts[0]
-            user.first_name = parts[1]
-            user.patronymic = parts[2] if len(parts) > 2 else ""
-            user.save(update_fields=['last_name', 'first_name', 'patronymic'])
-        elif user.first_name == 'nz.ua':
-            user.first_name = parts[0] if len(parts) == 1 else ""
-            user.save(update_fields=['first_name'])
+        sync_nz_user_name(user, info)
     else:
         if not user:
             # A matching name/username never proves local identity. New NZ users
             # receive a separate space, not access to an existing school's data.
             school = School.objects.create(name='Особистий простір журналів nz.ua')
-            parts = info.split() if info and info != "Авторизовано" else []
-            last_name = parts[0] if len(parts) > 0 else "Вчитель"
-            first_name = parts[1] if len(parts) > 1 else ""
-            patronymic = parts[2] if len(parts) > 2 else ""
+            last_name, first_name, patronymic = nz_name_parts(info) or ('Вчитель', '', '')
 
             base_username = (login_str.split('@')[0] if login_str else f"nz_{last_name.lower()}").replace(' ', '_')
             username = base_username

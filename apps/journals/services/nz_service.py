@@ -159,6 +159,16 @@ class NZService:
 
         return self.csrf_token or ""
 
+    @staticmethod
+    def _availability_error(response):
+        """Check error pages before treating HTTP 200/302 as an authenticated page."""
+        text = response.text.casefold()
+        if response.status_code in (520, 521, 502, 503, 504) or 'роботи з оновлення' in text or 'web server is down' in text:
+            return f'Портал nz.ua тимчасово недоступний (технічні роботи або збій, код HTTP {response.status_code}). Спробуйте пізніше.'
+        if response.status_code == 403 or 'challenges.cloudflare.com' in text or '_cf_chl_opt' in text:
+            return 'Доступ до nz.ua тимчасово обмежено захистом Cloudflare. Спробуйте пізніше.'
+        return None
+
     def verify_session(self) -> tuple[bool, str]:
         """
         Перевірити чи дійсна сесія на nz.ua завантаживши /journal/list.
@@ -166,6 +176,8 @@ class NZService:
         """
         try:
             resp = self.session.get(f"{self.BASE_URL}/journal/list", timeout=12)
+            if error := self._availability_error(resp):
+                return False, error
             if resp.status_code == 200:
                 if "/login" in resp.url or "LoginForm" in resp.text:
                     return False, "Сесія недійсна або вичерпана (перенаправлено на вхід)."
@@ -180,10 +192,6 @@ class NZService:
                 user_elem = soup.select_one('.user-menu-box, .profile-name, .username, .user-name, header .dropdown-toggle, .navbar-nav .dropdown-toggle, a[href*="/user/profile"], a[href*="/profile"]')
                 user_info = user_elem.get_text(strip=True) if user_elem else "Авторизовано"
                 return True, user_info
-            if resp.status_code in [521, 502, 503, 504, 520] or "роботи з оновлення" in resp.text or "Web server is down" in resp.text:
-                return False, f"Сервер nz.ua тимчасово недоступний (технічні роботи на порталі nz.ua, код HTTP {resp.status_code})."
-            if resp.status_code == 403 or "challenges.cloudflare.com" in resp.text:
-                return False, "Доступ до nz.ua тимчасово обмежено захистом Cloudflare. Спробуйте пізніше."
             return False, f"Сервер nz.ua повернув код {resp.status_code}"
         except requests.RequestException as e:
             return False, f"Помилка з'єднання з nz.ua: {str(e)}"
@@ -194,10 +202,8 @@ class NZService:
         """
         try:
             get_resp = self.session.get(f"{self.BASE_URL}/login", timeout=12)
-            if get_resp.status_code in [521, 502, 503, 504, 520] or "роботи з оновлення" in get_resp.text or "Web server is down" in get_resp.text:
-                return False, f"Портал nz.ua тимчасово недоступний (ведуться технічні роботи або збій на сервері nz.ua, код HTTP {get_resp.status_code}). Будь ласка, спробуйте пізніше."
-            if get_resp.status_code == 403 or "challenges.cloudflare.com" in get_resp.text or "_cf_chl_opt" in get_resp.text:
-                return False, "Доступ до форми входу nz.ua тимчасово обмежено захистом Cloudflare. Спробуйте пізніше або зверніться до адміністратора."
+            if error := self._availability_error(get_resp):
+                return False, error
             if get_resp.status_code != 200:
                 return False, f"Сервер nz.ua повернув помилку з кодом {get_resp.status_code}."
 
@@ -219,6 +225,9 @@ class NZService:
                 timeout=15
             )
 
+            if error := self._availability_error(post_resp):
+                return False, error
+
             if post_resp.status_code in [200, 302]:
                 if "/login" in post_resp.url and "LoginForm" in post_resp.text:
                     soup = BeautifulSoup(post_resp.text, 'html.parser')
@@ -228,8 +237,6 @@ class NZService:
 
                 self.extract_csrf(post_resp.text)
                 return True, "Успішний вхід на nz.ua"
-            if post_resp.status_code in [521, 502, 503, 504, 520] or "роботи з оновлення" in post_resp.text or "Web server is down" in post_resp.text:
-                return False, f"Портал nz.ua тимчасово недоступний під час авторизації (код HTTP {post_resp.status_code}). Спробуйте пізніше."
             return False, f"Помилка відповіді nz.ua: код {post_resp.status_code}"
         except requests.RequestException as e:
             return False, f"Помилка з'єднання: {str(e)}"
