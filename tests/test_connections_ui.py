@@ -1,6 +1,7 @@
 """Owner boundaries and credential-safe setup with synthetic service responses."""
 import uuid
 from unittest.mock import patch
+from django.conf import settings
 from django.test import TestCase, override_settings, Client
 from django.urls import reverse
 from apps.accounts.models import User
@@ -112,7 +113,7 @@ class ConnectionsUITests(TestCase):
         self.assertRedirects(self.client.get(reverse('portal:teacher_api_keys')), reverse('portal:connections'))
 
     def test_host_and_full_url_ports_are_distinct_and_legacy_code_supported(self):
-        for address, expected in [('schoolserver.local', ':8080'), ('https://schoolserver.local', ''),
+        for address, expected in [('schoolserver.local', f':{settings.LOCAL_SCHOOLTEST_PORT}'), ('https://schoolserver.local', ''),
                 ('https://schoolserver.local:9443/tests', ':9443/tests')]:
             form = ServiceSetupForm({'source': 'schooltest', 'api_key': 'synthetic-form-key', 'address': address},
                 owner=self.teacher)

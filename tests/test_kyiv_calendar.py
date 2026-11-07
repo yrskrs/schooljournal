@@ -45,7 +45,9 @@ class KyivSemesterCalendarTests(TestCase):
     setUp=_Fixture.setUp
 
     def test_current_semester_fallback_uses_kyiv_day(self):
-        with patch('django.utils.timezone.now',return_value=datetime(2026,12,31,22,30,tzinfo=utc_timezone.utc)):
+        self.sem1.end_date=date(2026,11,6);self.sem1.save(update_fields=['end_date'])
+        self.sem2.start_date=date(2026,11,7);self.sem2.save(update_fields=['start_date'])
+        with patch('django.utils.timezone.now',return_value=datetime(2026,11,6,22,30,tzinfo=utc_timezone.utc)):
             response=self.client.get(f'/journal/{self.journal.pk}/',{'semester_id':'999999'})
         self.assertEqual(response.status_code,200)
         self.assertEqual(response.context['selected_semester'].pk,self.sem2.pk)
