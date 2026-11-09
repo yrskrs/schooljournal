@@ -35,6 +35,32 @@ class SchoolAPIV2Tests(TestCase):
         self.client.post(reverse('portal:update_grade',kwargs={'journal_id':self.journal.pk}),{'lesson_id':self.l1.pk,'student_id':self.student.pk,'value':'8'})
         row=self.row();row.update(value='10',points=10,updated_at='2026-10-10T13:00:00+03:00')
         self.assertEqual(self.pull(row).counts['conflicts'],1);self.assertEqual(Grade.objects.get().value,'8')
+
+    def test_best_older_attempt_corrects_last_import_without_duplicate_or_stale_revision(self):
+        # The old exporter sent the last (lower) mark. The corrected exporter
+        # retains that record's revision while selecting the best older attempt.
+        last = self.row(value='6', points=6, attempt_id=20,
+                        updated_at='2026-10-10T13:00:00+03:00')
+        self.assertEqual(self.pull(last).counts['added'], 1)
+        best = self.row(value='10', points=10, attempt_id=10,
+                        updated_at='2026-10-10T13:00:00+03:00')
+        log = self.pull(best)
+        self.assertEqual(log.counts['errors'], 0)
+        self.assertEqual(log.counts['updated'], 1)
+        self.assertEqual(Grade.objects.get().value, '10')
+        self.assertEqual(Grade.objects.count(), 1)
+        self.assertEqual(ExternalGrade.objects.count(), 1)
+        self.assertEqual(ExternalGrade.objects.get().source_payload['attempt_id'], 10)
+        self.assertEqual(self.pull(best).counts['unchanged'], 1)
+
+    def test_best_attempt_correction_preserves_manual_grade(self):
+        self.pull(self.row(value='6', points=6, attempt_id=20))
+        grade = Grade.objects.get()
+        grade.value = '9'
+        grade.save()
+        log = self.pull(self.row(value='10', points=10, attempt_id=10))
+        self.assertEqual(log.counts['conflicts'], 1)
+        self.assertEqual(Grade.objects.get().value, '9')
     def test_only_ready_integer_marks_and_explicit_context(self):
         for changes in ({'value':'8.5'},{'value':'В'},{'value':0},{'grading_scale':100},{'status':'draft'},{'approved_by_teacher':False},{'class_id':8},{'subject_id':4},{'student_id':99}):
             row=self.row();row.update(changes)
