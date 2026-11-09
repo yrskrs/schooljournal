@@ -370,14 +370,24 @@ def import_grade_records(connection, rows, user, date_from, date_to):
             if (connection.contract_version == 2 and selected_key not in assigned_lessons
                     and selected_key not in prior_work_keys and connection.default_lesson_id):
                 selected_lesson = connection.default_lesson
-            previous = ExternalGrade.objects.filter(connection__in=placement_peers, external_id=external_id).select_related('lesson').order_by('pk').first() if selected_lesson else None
+            # An existing result owns its lesson independently of the session's
+            # fallback lesson or a later teacher selection. Historical sessions
+            # can legitimately contain records on more than one lesson.
+            preserve_existing = selected_lesson or (connection.contract_version == 2 and session_id)
+            previous = ExternalGrade.objects.filter(connection=connection,
+                external_id=external_id).select_related('lesson__journal').first() if preserve_existing else None
+            if previous is None and preserve_existing:
+                previous = ExternalGrade.objects.filter(connection__in=placement_peers,
+                    external_id=external_id).select_related('lesson__journal').order_by('pk').first()
             if selected_lesson:
                 validate_lesson(journal, selected_lesson)
-            if selected_lesson and previous:
+            if previous:
                 # Teacher choices place new results; existing grade history is
                 # never moved, cleared or duplicated by changing the selection.
                 if previous.student_id != student.pk:
                     raise ValueError('Цей результат уже належить іншому учню. Історію збережено; перевірте відповідності.')
+                if not has_journal_access(user, previous.lesson.journal, write=True):
+                    raise ValueError('Немає права редагувати урок раніше імпортованої оцінки.')
                 lesson = previous.lesson
             elif selected_lesson and target_journal.pk == journal.pk:
                 lesson = selected_lesson

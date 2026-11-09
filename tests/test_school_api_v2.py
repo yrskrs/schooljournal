@@ -61,6 +61,55 @@ class SchoolAPIV2Tests(TestCase):
         log = self.pull(self.row(value='10', points=10, attempt_id=10))
         self.assertEqual(log.counts['conflicts'], 1)
         self.assertEqual(Grade.objects.get().value, '9')
+
+    def seed_session_on_two_historical_lessons(self):
+        from apps.journals.models import GradeLessonAssignment
+        from apps.journals.services.grade_placement import work_key
+        GradeStudentMapping.objects.create(connection=self.connection, external_id='42', student=self.empty_student)
+        first = self.row(id='schooltest:session:901:student:41', date=self.l1.date.isoformat())
+        second = self.row(id='schooltest:session:901:student:42', student_id=42,
+                          date=self.l2.date.isoformat(), attempt_id=2)
+        self.assertEqual(self.pull(first).counts['added'], 1)
+        choice = GradeLessonAssignment.objects.create(connection=self.connection,
+            work_key=work_key(self.connection, second), lesson=self.l2, selected_by=self.teacher)
+        self.assertEqual(self.pull(second).counts['added'], 1)
+        choice.delete()
+        return first, second
+
+    def test_repeat_preserves_each_existing_lesson_in_historically_split_session(self):
+        first, second = self.seed_session_on_two_historical_lessons()
+        before = list(ExternalGrade.objects.order_by('pk').values_list('pk', 'student_id', 'lesson_id'))
+        for rows in ([first, second], [second, first]):
+            log = import_grade_records(self.connection, rows, self.teacher,
+                self.year.start_date, self.year.end_date)
+            self.assertEqual(log.counts['errors'], 0)
+            self.assertEqual(log.counts['unchanged'], 2)
+            self.assertEqual(list(ExternalGrade.objects.order_by('pk').values_list(
+                'pk', 'student_id', 'lesson_id')), before)
+        self.assertEqual(Grade.objects.count(), 2)
+
+    def test_correction_updates_original_lesson_in_historically_split_session(self):
+        first, _ = self.seed_session_on_two_historical_lessons()
+        first.update(value='10', points=10, attempt_id=3,
+                     updated_at='2026-10-10T14:00:00+03:00')
+        log = self.pull(first)
+        self.assertEqual(log.counts['errors'], 0)
+        self.assertEqual(log.counts['updated'], 1)
+        self.assertEqual(Grade.objects.get(student=self.student).lesson_id, self.l1.pk)
+        self.assertEqual(Grade.objects.get(student=self.student).value, '10')
+        self.assertEqual(Grade.objects.get(student=self.empty_student).lesson_id, self.l2.pk)
+
+    def test_historical_lesson_preservation_does_not_reassign_student_or_manual_mark(self):
+        first, _ = self.seed_session_on_two_historical_lessons()
+        changed = {**first, 'student_id': 42}
+        self.assertEqual(self.pull(changed).counts['errors'], 1)
+        Grade.objects.filter(student=self.student).update(value='11', import_record=None)
+        first.update(value='10', points=10, updated_at='2026-10-10T14:00:00+03:00')
+        log = self.pull(first)
+        self.assertEqual(log.counts['errors'], 0)
+        self.assertEqual(log.counts['conflicts'], 1)
+        grade = Grade.objects.get(student=self.student)
+        self.assertEqual((grade.lesson_id, grade.value), (self.l1.pk, '11'))
     def test_only_ready_integer_marks_and_explicit_context(self):
         for changes in ({'value':'8.5'},{'value':'В'},{'value':0},{'grading_scale':100},{'status':'draft'},{'approved_by_teacher':False},{'class_id':8},{'subject_id':4},{'student_id':99}):
             row=self.row();row.update(changes)
