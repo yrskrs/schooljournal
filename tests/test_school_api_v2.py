@@ -53,6 +53,19 @@ class SchoolAPIV2Tests(TestCase):
         self.assertEqual(ExternalGrade.objects.get().source_payload['attempt_id'], 10)
         self.assertEqual(self.pull(best).counts['unchanged'], 1)
 
+    def test_updated_revision_with_completion_date_change_is_accepted(self):
+        first = self.row(value='7', points=7, attempt_id=1,
+                         date=self.l1.date.isoformat(),
+                         updated_at='2026-09-05T12:00:00+03:00')
+        self.assertEqual(self.pull(first).counts['added'], 1)
+        second = self.row(value='10', points=10, attempt_id=2,
+                          date=self.l2.date.isoformat(),
+                          updated_at='2026-10-10T12:00:00+03:00')
+        log = self.pull(second)
+        self.assertEqual(log.counts['errors'], 0)
+        self.assertEqual(log.counts['updated'], 1)
+        self.assertEqual(Grade.objects.get().value, '10')
+
     def test_best_attempt_correction_preserves_manual_grade(self):
         self.pull(self.row(value='6', points=6, attempt_id=20))
         grade = Grade.objects.get()

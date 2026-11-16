@@ -52,8 +52,8 @@ def keep_result(connection, row, start, end):
     _timestamp(row.get('updated_at'))
     if prior:
         check_revision(prior.payload, row)
-        if student_key(prior.payload) != identity or prior.payload.get('date') != row.get('date'):
-            raise ValueError('Джерело змінило учня або дату відомого результату. Історію збережено.')
+        if student_key(prior.payload) != identity:
+            raise ValueError('Джерело змінило учня відомого результату. Історію збережено.')
     extra = ExtraStudent.objects.filter(connection=connection, external_key=identity).first()
     if not connection.student_mappings.filter(external_id=identity).exists():
         name = row.get('student_name')
